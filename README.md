@@ -29,6 +29,12 @@ Per item class: Raw materials **FIFO**; consumables, packing, spares, scrap **we
 ## Roles
 Administrator, Purchase, Stores, Shop Floor, Production In-charge, Factory Manager, Finance Manager. Shop Floor and Production In-charge do not see costs.
 
+## Desktop icon (any staff PC)
+```
+powershell -ExecutionPolicy Bypass -File tools/create-shortcut.ps1
+```
+Creates a **Citi Homes IMS** icon on the desktop that opens the live app in its own window (Edge app mode, Chrome as fallback).
+
 ## Run locally
 ```
 powershell -ExecutionPolicy Bypass -File tools/serve.ps1
