@@ -1,7 +1,7 @@
 # Minimal static file server for local testing (no Node/Python needed)
 param([int]$Port = 8080, [string]$Root = (Join-Path $PSScriptRoot '..\web'))
 $Root = (Resolve-Path $Root).Path
-$types = @{ '.html'='text/html; charset=utf-8'; '.js'='text/javascript; charset=utf-8'; '.css'='text/css; charset=utf-8'; '.json'='application/json'; '.svg'='image/svg+xml'; '.png'='image/png'; '.ico'='image/x-icon' }
+$types = @{ '.html'='text/html; charset=utf-8'; '.js'='text/javascript; charset=utf-8'; '.css'='text/css; charset=utf-8'; '.json'='application/json'; '.svg'='image/svg+xml'; '.png'='image/png'; '.webmanifest'='application/manifest+json'; '.ico'='image/x-icon' }
 $listener = [System.Net.HttpListener]::new()
 $listener.Prefixes.Add("http://localhost:$Port/")
 $listener.Start()

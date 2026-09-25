@@ -1,12 +1,13 @@
 ﻿# Creates a "Citi Homes IMS" desktop icon that opens the live app in its own window (Edge app mode).
 # Run on any staff PC:  powershell -ExecutionPolicy Bypass -File create-shortcut.ps1
-param([string]$Url = 'https://ch-ims-production.up.railway.app')
+# Developer use:  -WebIcons  writes the PNG app icons for the web manifest (web/img) and exits.
+param([string]$Url = 'https://ch-ims-production.up.railway.app', [switch]$WebIcons)
 
 Add-Type -AssemblyName System.Drawing
 $dir = Join-Path $env:LOCALAPPDATA 'CitiHomesIMS'
 New-Item -ItemType Directory -Force $dir | Out-Null
 # a fresh file name each time, so Windows never shows a cached older icon
-Get-ChildItem $dir -Filter 'citihomes*.ico' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+$oldIcons = @(Get-ChildItem $dir -Filter 'citihomes*.ico' -ErrorAction SilentlyContinue)
 $ico = Join-Path $dir ('citihomes-ims-' + (Get-Date -Format 'yyyyMMddHHmmss') + '.ico')
 
 # --- Citi Homes IMS logo (approved option B), drawn in a 200 x 200 design space ---
@@ -73,6 +74,17 @@ function New-Logo([int]$size) {
   return $bmp
 }
 
+if ($WebIcons) {
+  $out = Join-Path $PSScriptRoot '..\web\img'
+  foreach ($sz in 192, 512) { $b = New-Logo $sz; $b.Save((Join-Path $out "icon-$sz.png"), [System.Drawing.Imaging.ImageFormat]::Png); $b.Dispose() }
+  # maskable: logo inside the safe zone on a navy square
+  $m = New-Object System.Drawing.Bitmap 512, 512; $g = [System.Drawing.Graphics]::FromImage($m)
+  $g.Clear([System.Drawing.Color]::FromArgb(15, 33, 67)); $l = New-Logo 360; $g.DrawImage($l, 76, 76, 360, 360); $g.Dispose(); $l.Dispose()
+  $m.Save((Join-Path $out 'icon-maskable-512.png'), [System.Drawing.Imaging.ImageFormat]::Png); $m.Dispose()
+  Write-Host "Web icons written to $out"
+  return
+}
+
 # --- icon image as a classic 32-bit DIB (BITMAPINFOHEADER + BGRA rows bottom-up + AND mask) ---
 function Get-DibBytes([System.Drawing.Bitmap]$bmp) {
   $n = $bmp.Width
@@ -100,7 +112,8 @@ foreach ($im in $images) {
   $offset += $im[1].Length
 }
 foreach ($im in $images) { $bw.Write([byte[]]$im[1]) }
-$bw.Close()
+$bw.Flush(); $fs.Flush($true); $bw.Close()
+Start-Sleep -Milliseconds 1500      # let the file settle before Explorer is asked to read it
 
 # --- browser: Edge (preferred), else Chrome ---
 $browser = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
@@ -118,4 +131,6 @@ $s.IconLocation = "$ico,0"
 $s.Description = 'Citi Homes Inventory Management'
 $s.WorkingDirectory = Split-Path $browser
 $s.Save()
+# old icon files are removed only after the shortcut points at the new one
+$oldIcons | Where-Object { $_.FullName -ne $ico } | Remove-Item -Force -ErrorAction SilentlyContinue
 Write-Host "Created: $lnk"

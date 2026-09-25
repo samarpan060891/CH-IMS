@@ -11,6 +11,8 @@
 		X-Frame-Options DENY
 		Referrer-Policy strict-origin-when-cross-origin
 	}
+	@manifest path *.webmanifest
+	header @manifest Content-Type application/manifest+json
 	@static path *.js *.css
 	header @static Cache-Control "public, max-age=300"
 	try_files {path} /index.html
