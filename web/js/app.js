@@ -22,6 +22,7 @@ const MENU = [
     { to: 'd/issue', t: '📤 Material issues', roles: ['stores', 'factory_manager', 'production_incharge'], badge: 'issue' },
     { to: 'd/ret', t: '↩ Returns from floor', roles: ['stores', 'factory_manager', 'production_incharge'] },
     { to: 'd/trf', t: '🔀 Stock transfers', roles: ['stores', 'factory_manager'] },
+    { to: 'd/rel', t: '🔓 Project stock releases', roles: ['stores', 'factory_manager', 'production_incharge'], badge: 'rel' },
     { to: 'd/adj', t: '⚖ Stock adjustments', roles: ['stores', 'factory_manager', 'finance'], badge: 'adj' },
     { to: 'assets', t: '🛠 Tool crib & assets', roles: ['stores', 'factory_manager', 'finance', 'production_incharge'] },
     { to: 'd/disposal', t: '🚚 Scrap disposals', roles: ['stores', 'factory_manager', 'finance'], badge: 'disposal' },

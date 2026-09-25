@@ -172,6 +172,7 @@ export async function refreshPending() {
     p.adj = await count('stock_adjustments', q => q.eq('status', 'PENDING_APPROVAL'));
     p.scrap = await count('scrap_notes', q => q.eq('status', 'PENDING_APPROVAL'));
     p.disposal = await count('scrap_disposals', q => q.eq('status', 'PENDING_APPROVAL'));
+    p.rel = await count('stock_releases', q => q.eq('status', 'PENDING_APPROVAL'));
   }
   if (hasRole('finance')) {
     p.po = (p.po || 0) + await count('purchase_orders', q => q.eq('status', 'PENDING_FINANCE'));

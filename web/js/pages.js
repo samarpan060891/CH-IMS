@@ -125,11 +125,18 @@ const Z = { k: 'buffer_zone', label: 'Zone', fmt: 'badge' };
 const REPORTS = {
   stock: { title: 'Stock in hand', src: 'v_item_stock', filter: q => q.gt('on_hand', 0), columns: [
     { k: 'code', label: 'Code' }, { k: 'name', label: 'Item' }, { k: 'class_code', label: 'Class' }, { k: 'category_name', label: 'Category' }, { k: 'uom', label: 'UoM' },
-    { k: 'on_hand', label: 'On hand', fmt: 'qty' }, { k: 'available', label: 'Available', fmt: 'qty' }, { k: 'on_order', label: 'On order', fmt: 'qty' }, { k: 'open_demand', label: 'Open requests', fmt: 'qty' },
+    { k: 'on_hand', label: 'On hand', fmt: 'qty' }, { k: 'available', label: 'Free stock', fmt: 'qty' }, { k: 'reserved_qty', label: 'Reserved for projects', fmt: 'qty' },
+    { k: 'on_order', label: 'On order (stock)', fmt: 'qty' }, { k: 'on_order_projects', label: 'On order (projects)', fmt: 'qty' }, { k: 'open_demand', label: 'Open requests', fmt: 'qty' },
     { k: 'stock_value', label: 'Value AED', fmt: 'money', cost: true, sum: true }, { k: 'avg_daily_consumption', label: 'Avg/day', fmt: 'qty' }, { k: 'stock_cover_days', label: 'Cover days', n: true },
     { k: 'last_receipt', label: 'Last receipt', fmt: 'date' }, { k: 'last_issue', label: 'Last issue', fmt: 'date' }, { k: 'stock_status', label: 'Status', fmt: 'badge' }, Z] },
+  reserved: { title: 'Reserved stock by project', src: 'v_project_reserved', order: 'project_code', columns: [
+    { k: 'project_code', label: 'Project' }, { k: 'project_name', label: 'Name' }, { k: 'project_status', label: 'Status', fmt: 'badge' },
+    { k: 'item_code', label: 'Item' }, { k: 'item_name', label: 'Description' }, { k: 'class_code', label: 'Class' }, { k: 'location_code', label: 'Location' }, { k: 'lot_no', label: 'Lot' },
+    { k: 'received_date', label: 'Received', fmt: 'date' }, { k: 'age_days', label: 'Age days', n: true }, { k: 'qty_on_hand', label: 'Qty', fmt: 'qty' }, { k: 'uom', label: 'UoM' },
+    { k: 'value', label: 'Value AED', fmt: 'money', cost: true, sum: true }] },
   lots: { title: 'Stock by lot & location', src: 'v_lot_values', columns: [
     { k: 'item_code', label: 'Code' }, { k: 'item_name', label: 'Item' }, { k: 'class_code', label: 'Class' }, { k: 'location_code', label: 'Location' }, { k: 'lot_no', label: 'Lot' }, { k: 'batch_no', label: 'Batch' },
+    { k: r => r.project_id ? (refRow('projects', r.project_id)?.code || 'Project') : 'Free', label: 'Reserved for' },
     { k: 'received_date', label: 'Received', fmt: 'date' }, { k: 'expiry_date', label: 'Expiry', fmt: 'date' }, { k: 'qty_on_hand', label: 'Qty', fmt: 'qty' }, { k: 'uom', label: 'UoM' },
     { k: 'value_rate', label: 'Rate', fmt: 'money', cost: true }, { k: 'value', label: 'Value', fmt: 'money', cost: true, sum: true }, { k: 'age_days', label: 'Age (days)', n: true }, { k: 'lot_status', label: 'Status', fmt: 'badge' }] },
   stockout: { title: 'Stock-out & below safety', src: 'v_item_stock', filter: q => q.in('stock_status', ['STOCK_OUT', 'BELOW_SAFETY', 'REORDER']).eq('is_active', true), columns: [
