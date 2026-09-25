@@ -136,7 +136,7 @@ export const Dashboard = {
 // REPORTS
 // ======================================================================
 const Z = { k: 'buffer_zone', label: 'Zone', fmt: 'badge' };
-const REPORTS = {
+export const REPORTS = {
   stock: { title: 'Stock in hand', src: 'v_item_stock', filter: q => q.gt('on_hand', 0), columns: [
     { k: 'code', label: 'Code' }, { k: 'name', label: 'Item' }, { k: 'class_code', label: 'Class' }, { k: 'category_name', label: 'Category' }, { k: 'uom', label: 'UoM' },
     { k: 'on_hand', label: 'On hand', fmt: 'qty' }, { k: 'available', label: 'Free stock', fmt: 'qty' }, { k: 'reserved_qty', label: 'Reserved for projects', fmt: 'qty' },
@@ -257,9 +257,6 @@ export const Reports = {
     },
   },
   template: `<div>
-    <div class="tabs">
-      <a v-for="r in list" :href="'#/r/' + r.k" :class="{on: rkey===r.k}">{{ r.t }}</a>
-    </div>
     <div v-if="rkey==='ledger'" class="card">
       <div class="grid" style="margin-bottom:12px">
         <label class="f wide">Item<RefSelect v-model="ledger.item_id" refName="items" /></label>

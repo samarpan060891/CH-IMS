@@ -5,7 +5,7 @@ import { dialog, FieldInput, Modal, Icon } from './components.js';
 import { DocList, DocEditor } from './docengine.js';
 import { DOCS } from './documents.js';
 import { MASTERS, MasterPage } from './masters.js';
-import { Dashboard, Reports, Replenishment, Assets, Users, Settings, BufferReview, ConsolidatePR, Holds } from './pages.js';
+import { Dashboard, Reports, REPORTS, Replenishment, Assets, Users, Settings, BufferReview, ConsolidatePR, Holds } from './pages.js';
 import { CONFIG } from './config.js';
 import { Importer } from './importer.js';
 import { Logo } from './logo.js';
@@ -14,6 +14,10 @@ import { Labels } from './labels.js';
 import { Scanner, describeCode } from './scan.js';
 
 const ALL = null;
+// short menu names for reports (full titles show on the report page)
+const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', reserved: 'Reserved for projects', stockout: 'Stock-outs', overstock: 'Overstock & non-moving',
+  expiry: 'Expiring stock', buffer: 'Buffer status', aging: 'Aging', abc: 'ABC analysis', valuation: 'Valuation', projects: 'Project consumption',
+  invoices: 'Open invoices', grni: 'Received, not invoiced', tools: 'Tools with workers', calibration: 'Calibration due' };
 // Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
 const MENU = [
@@ -52,10 +56,19 @@ const MENU = [
     { to: 'd/dn', t: 'Debit notes', roles: ['finance'] },
     { to: 'r/payables', t: 'Net payables', roles: ['finance', 'factory_manager', 'purchase'] },
   ] },
-  { g: 'Reports & setup', icon: 'settings', items: [
-    { to: 'r/stock', t: 'Reports', roles: ALL },
+  { g: 'Reports', icon: 'chart-bar', items: [
+    { sep: 'Stock' },
+    ...['stock', 'lots', 'reserved', 'stockout', 'overstock', 'expiry'].map(rep),
+    { to: 'r/ledger', t: 'Stock ledger', roles: ALL },
+    { sep: 'Analysis' },
+    ...['buffer', 'aging', 'abc', 'valuation'].map(rep),
+    { sep: 'Projects & purchasing' },
+    ...['projects', 'invoices', 'grni'].map(rep),
+    { sep: 'Tools & assets' },
+    ...['tools', 'calibration'].map(rep),
+  ] },
+  { g: 'Masters', icon: 'database', items: [
     { to: 'import/items', t: 'Excel import', roles: ['stores', 'purchase', 'finance'] },
-    { sep: 'Masters' },
     { to: 'm/items', t: 'Items', roles: ALL },
     { to: 'm/locations', t: 'Locations', roles: ['stores', 'factory_manager'] },
     { to: 'm/projects', t: 'Projects & MTS', roles: ALL },
@@ -65,11 +78,14 @@ const MENU = [
     { to: 'm/item_categories', t: 'Categories', roles: ['stores', 'purchase'] },
     { to: 'm/item_classes', t: 'Item classes', roles: ['stores', 'purchase', 'finance'] },
     { to: 'm/uoms', t: 'Units of measure', roles: ['stores', 'purchase'] },
-    { sep: 'Administration' },
+  ] },
+  { g: 'Administration', icon: 'settings', items: [
     { to: 'users', t: 'Users & roles', roles: [] },
     { to: 'settings', t: 'Settings', roles: [] },
   ] },
 ];
+// a report menu entry, honouring the report's own role and cost visibility
+function rep(k) { const r = REPORTS[k]; return { to: 'r/' + k, t: REP_SHORT[k] || r.title, roles: r.roles || ALL, cost: !!r.cost }; }
 const OPEN_KEY = 'ims.menu.open';
 
 const Login = {
@@ -126,7 +142,7 @@ const App = {
     unread() { return state.notifs.filter(n => !n.read).length; },
     menu() {
       return MENU.map(g => {
-        const allowed = g.items.filter(i => i.sep || i.roles === null || hasRole(...i.roles));
+        const allowed = g.items.filter(i => i.sep || ((i.roles === null || hasRole(...i.roles)) && !(i.cost && !canSeeCost())));
         // drop sub-headings with nothing under them
         const items = allowed.filter((i, n) => !i.sep || (allowed[n + 1] && !allowed[n + 1].sep));
         return { ...g, items };
@@ -137,7 +153,7 @@ const App = {
       const [a, b, c] = route.parts;
       if (a === 'd' && DOCS[b]) return c ? { comp: 'DocEditor', props: { cfg: DOCS[b], id: c }, title: DOCS[b].title } : { comp: 'DocList', props: { cfg: DOCS[b] }, title: DOCS[b].title };
       if (a === 'm' && MASTERS[b]) return { comp: 'MasterPage', props: { cfg: MASTERS[b] }, title: MASTERS[b].title };
-      if (a === 'r') return { comp: 'Reports', props: { rkey: b || 'stock' }, title: 'Reports' };
+      if (a === 'r') return { comp: 'Reports', props: { rkey: b || 'stock' }, title: b === 'ledger' ? 'Stock ledger / item card' : (REPORTS[b || 'stock']?.title || 'Reports') };
       if (a === 'import') return { comp: 'Importer', props: { tkey: b || 'items' }, title: 'Excel import' };
       if (a === 'count' && b) return { comp: 'CountSheet', props: { id: b }, title: 'Stock count' };
       if (a === 'labels') return { comp: 'Labels', props: { mode: b || 'lots', ref_id: c }, title: 'Labels & QR codes' };
@@ -152,7 +168,7 @@ const App = {
     hasRole, canSeeCost, dtm,
     async openNotif(n) { this.bellOpen = false; await run(() => markRead([n.id])); if (n.link) go(n.link); },
     async readAll() { await run(() => markRead(state.notifs.map(n => n.id))); },
-    active(to) { return route.path === to || route.path.startsWith(to + '/') || (to === 'r/stock' && route.parts[0] === 'r' && route.path !== 'r/payables') || (to.startsWith('import') && route.parts[0] === 'import') || (to.startsWith('labels') && route.parts[0] === 'labels')
+    active(to) { return route.path === to || route.path.startsWith(to + '/') || (to.startsWith('import') && route.parts[0] === 'import') || (to.startsWith('labels') && route.parts[0] === 'labels')
         || (to === 'd/cnt' && route.parts[0] === 'count'); },
     nav(to) { go(to); this.sideOpen = false; },
     toggle(g) {
