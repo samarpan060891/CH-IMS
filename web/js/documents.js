@@ -931,14 +931,30 @@ async function importGrnLines(ctx, grnId) {
   if (grnId) q = q.eq('grn_id', grnId);
   const rows = must(await q.order('grn_date'));
   if (!rows.length) throw new Error('No un-invoiced GRN lines for this vendor');
-  const gl = must(await sb.from('grn_lines').select('id,rate,vat_rate,item_id').in('id', rows.map(r => r.grn_line_id)));
+  const gl = must(await sb.from('grn_lines').select('id,rate,vat_rate,item_id,dn_qty,received_qty').in('id', rows.map(r => r.grn_line_id)));
   for (const r of rows) {
     if (ctx.grids.lines.some(l => l.grn_line_id === r.grn_line_id)) continue;
     const g = gl.find(x => x.id === r.grn_line_id);
-    ctx.grids.lines.push({ grn_line_id: r.grn_line_id, item_id: r.item_id ?? g?.item_id, description: `${r.grn_no}: ${r.item_name}`, qty: num(r.pending_qty), rate: num(g?.rate), vat_rate: num(g?.vat_rate) });
+    // billed default = what the supplier delivered per DN (or received), less anything already invoiced
+    const delivered = Math.max(num(g?.dn_qty), num(g?.received_qty));
+    const billed = Math.max(num(r.pending_qty), delivered - num(r.invoiced_qty));
+    ctx.grids.lines.push({ grn_line_id: r.grn_line_id, item_id: r.item_id ?? g?.item_id, description: `${r.grn_no}: ${r.item_name}`,
+      qty: billed, rate: num(g?.rate), vat_rate: num(g?.vat_rate), _pend: num(r.pending_qty) });
   }
   ctx.dirty = true;
 }
+// accepted-but-not-yet-invoiced qty per GRN line, for the claim preview on draft invoices
+async function fillInvoicePending(ctx) {
+  const ids = ctx.grids.lines.map(l => l.grn_line_id).filter(Boolean);
+  if (!ids.length || ctx.doc.status !== 'DRAFT') return;
+  const gl = must(await sb.from('grn_lines').select('id,accepted_qty').in('id', ids));
+  const billed = must(await sb.from('vendor_invoice_lines').select('grn_line_id,qty,vendor_invoices!inner(status)').in('grn_line_id', ids).eq('vendor_invoices.status', 'POSTED'));
+  ctx.grids.lines.forEach(l => {
+    const g = gl.find(x => x.id === l.grn_line_id); if (!g) return;
+    l._pend = num(g.accepted_qty) - billed.filter(b => b.grn_line_id === l.grn_line_id).reduce((s, b) => s + num(b.qty), 0);
+  });
+}
+const invClaim = r => r.grn_line_id && r._pend !== undefined ? Math.max(num(r.qty) - Math.max(num(r._pend), 0), 0) : 0;
 export const inv = {
   key: 'inv', title: 'Vendor Invoices', single: 'Vendor Invoice', table: 'vendor_invoices', noField: 'inv_no', dateField: 'invoice_date',
   statuses: ['DRAFT', 'POSTED', 'CANCELLED'], createRoles: ['finance'], refs: ['items', 'vendors', 'payment_terms'],
@@ -954,7 +970,11 @@ export const inv = {
       await importGrnLines(ctx, parts[1]);
     }
   },
-  async afterLoad(ctx) { await loadVendorPos(ctx.doc.vendor_id); },
+  async afterLoad(ctx) {
+    await loadVendorPos(ctx.doc.vendor_id);
+    await fillInvoicePending(ctx);
+    ctx.extra.dns = must(await sb.from('vendor_debit_notes').select('id,dn_no,status,total_aed,auto_generated').eq('invoice_id', ctx.doc.id));
+  },
   header: [
     { k: 'vendor_id', label: 'Vendor', type: 'ref', ref: 'vendors', required: true, wide: true,
       onChange: async (d, v) => { const vd = refRow('vendors', v); if (vd) { d.currency = vd.currency; d.payment_term_id = vd.payment_term_id; } await loadVendorPos(v); } },
@@ -969,7 +989,8 @@ export const inv = {
     { k: 'has_variance', label: 'Price variance vs PO', type: 'ro', fmt: v => v ? 'YES — check' : 'No', show: d => d.status === 'POSTED' },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: () => 'Load the goods received but not yet invoiced for this vendor (3-way match: PO → GRN → Invoice). The due date is calculated from the payment terms when posted.',
+  headerNote: () => 'Load the goods received but not yet invoiced for this vendor (3-way match: PO → GRN → Invoice). Enter the <b>billed qty exactly as on the supplier invoice</b> — ' +
+    'anything billed above the accepted qty (short / damaged / excess) becomes an automatic <b>draft debit note</b> on posting. The due date comes from the payment terms.',
   grids: [{ key: 'lines', title: 'Invoice lines', table: 'vendor_invoice_lines', fk: 'invoice_id', lineNo: false, saveKeys: ['grn_line_id', 'grn_charge_id'],
     newRow: () => ({ qty: 1, vat_rate: 5 }),
     importers: [
@@ -984,7 +1005,11 @@ export const inv = {
           ctx.dirty = true;
         } },
     ],
-    fields: [{ ...itemF({ required: false }), width: '200px' }, { k: 'description', label: 'Description', width: '220px' }, { k: 'qty', label: 'Qty', type: 'number', required: true },
+    fields: [{ ...itemF({ required: false }), width: '200px' }, { k: 'description', label: 'Description', width: '220px' },
+             { k: '_pend', label: 'Accepted (GRN)', type: 'ro', virtual: true, fmt: v => v === undefined ? '' : qty(v), show: d => d.status === 'DRAFT' },
+             { k: 'qty', label: 'Billed qty', type: 'number', required: true },
+             { k: '_claim', label: 'Claim qty', type: 'ro', virtual: true, fmt: (v, r) => { const c = invClaim(r); return c > 0 ? '⚠ ' + qty(c) : ''; }, show: d => d.status === 'DRAFT' },
+             { k: 'claim_qty', label: 'Claim qty', type: 'ro', fmt: v => num(v) ? '⚠ ' + qty(v) : '', show: d => d.status === 'POSTED' },
              { k: 'rate', label: 'Rate', type: 'number', required: true }, { k: 'vat_rate', label: 'VAT %', type: 'number' },
              { k: '_amt', label: 'Amount', type: 'ro', virtual: true, fmt: (v, r) => money(num(r.qty) * num(r.rate)) },
              { k: '_vat', label: 'VAT', type: 'ro', virtual: true, fmt: (v, r) => money(num(r.qty) * num(r.rate) * num(r.vat_rate) / 100) }] }],
@@ -996,10 +1021,15 @@ export const inv = {
   async loadInfo(ctx) {
     if (ctx.doc.status !== 'POSTED') return [];
     const b = must(await sb.from('v_invoice_balances').select('*').eq('id', ctx.doc.id));
-    return [{ title: 'Payment status', rows: b, columns: [{ k: 'total_aed', label: 'Total', fmt: 'money' }, { k: 'paid_aed', label: 'Paid', fmt: 'money' }, { k: 'dn_aed', label: 'Debit notes', fmt: 'money' },
+    const out = [{ title: 'Payment status', rows: b, columns: [{ k: 'total_aed', label: 'Total', fmt: 'money' }, { k: 'paid_aed', label: 'Paid', fmt: 'money' }, { k: 'dn_aed', label: 'Debit notes', fmt: 'money' },
       { k: 'balance_aed', label: 'Balance', fmt: 'money' }, { k: 'due_date', label: 'Due', fmt: 'date' }, { k: 'aging_bucket', label: 'Aging', fmt: 'badge' }] }];
+    if (ctx.extra.dns?.length) out.push({ title: 'Debit notes on this invoice', rows: ctx.extra.dns, columns: [{ k: 'dn_no', label: 'Debit note' },
+      { k: r => r.auto_generated ? 'Automatic claim' : 'Manual', label: 'Type' }, { k: 'total_aed', label: 'Total AED', fmt: 'money' }, { k: 'status', label: 'Status', fmt: 'badge' }] });
+    return out;
   },
   actions: ctx => [
+    { label: '➖ Review suggested debit note', cls: 'primary', show: (ctx.extra.dns || []).some(d => d.auto_generated && d.status === 'DRAFT') && hasRole('finance'), reload: false,
+      run: c => go('d/dn/' + c.extra.dns.find(d => d.auto_generated && d.status === 'DRAFT').id) },
     { label: '✔ Post invoice', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('finance'), confirm: 'Post this invoice to payables?', done: 'Invoice posted', run: c => rpc('post_vendor_invoice', { p_inv: c.doc.id }) },
     { label: '💳 Make payment', show: statusIs(ctx, 'POSTED') && hasRole('finance'), reload: false, run: c => go(`d/pay/new/vendor/${c.doc.vendor_id}`) },
     { label: 'Cancel', show: statusIs(ctx, 'DRAFT') && hasRole('finance'), confirm: 'Cancel this draft invoice?', run: c => upd('vendor_invoices', c.doc.id, { status: 'CANCELLED' }) },
@@ -1019,8 +1049,10 @@ async function loadVendorDocs(vendorId) {
 export const dn = {
   key: 'dn', title: 'Debit Notes', single: 'Debit Note', table: 'vendor_debit_notes', noField: 'dn_no', dateField: 'dn_date',
   statuses: ['DRAFT', 'POSTED', 'CANCELLED'], createRoles: ['finance'], refs: ['vendors'],
-  list: { select: '*, vendors(name)', columns: [{ k: r => r.vendors?.name, label: 'Vendor' }, { k: 'reason', label: 'Reason' }, { k: 'total_aed', label: 'Total AED', fmt: 'money', sum: true }] },
+  list: { select: '*, vendors(name)', columns: [{ k: r => r.vendors?.name, label: 'Vendor' }, { k: r => r.auto_generated ? 'Auto claim' : 'Manual', label: 'Source' },
+          { k: 'reason', label: 'Reason' }, { k: 'total_aed', label: 'Total AED', fmt: 'money', sum: true }] },
   defaults: () => ({ dn_date: today(), vat_amount: 0 }),
+  headerNote: ctx => ctx.doc.auto_generated ? 'Suggested automatically when the invoice was posted: the supplier billed more than was accepted. Check the amount against the supplier\'s credit / claim, adjust if needed, then post.' : '',
   async onNew(ctx, parts) {
     if (parts[0] === 'prt' && parts[1]) {
       const p = must(await sb.from('purchase_returns').select('*').eq('id', parts[1]).single());
