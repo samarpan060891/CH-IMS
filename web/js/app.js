@@ -88,25 +88,19 @@ const MENU = [
 function rep(k) { const r = REPORTS[k]; return { to: 'r/' + k, t: REP_SHORT[k] || r.title, roles: r.roles || ALL, cost: !!r.cost }; }
 const OPEN_KEY = 'ims.menu.open';
 
+// Sign-in only: the Administrator creates users and resets passwords (Users & roles),
+// so no self sign-up or reset emails are needed.
 const Login = {
-  data: () => ({ mode: 'in', email: '', password: '', name: '', busy: false, msg: '' }),
+  data: () => ({ email: '', password: '', busy: false, msg: '' }),
   methods: {
     async submit() {
       this.busy = true; this.msg = '';
       try {
-        if (this.mode === 'in') {
-          const { error } = await sb.auth.signInWithPassword({ email: this.email.trim(), password: this.password });
-          if (error) throw error;
-        } else if (this.mode === 'up') {
-          const { error } = await sb.auth.signUp({ email: this.email.trim(), password: this.password, options: { data: { full_name: this.name } } });
-          if (error) throw error;
-          this.msg = 'Account requested. If email confirmation is on, confirm your email; then ask the administrator to activate you.';
-        } else {
-          const { error } = await sb.auth.resetPasswordForEmail(this.email.trim(), { redirectTo: location.origin + location.pathname });
-          if (error) throw error;
-          this.msg = 'Password reset email sent.';
-        }
-      } catch (e) { this.msg = errMsg(e); }
+        const { error } = await sb.auth.signInWithPassword({ email: this.email.trim(), password: this.password });
+        if (error) throw error;
+      } catch (e) {
+        this.msg = /invalid login credentials/i.test(errMsg(e)) ? 'Email or password is incorrect.' : errMsg(e);
+      }
       this.busy = false;
     },
   },
@@ -116,16 +110,11 @@ const Login = {
     <h1 style="text-align:center">Citi Homes — Inventory</h1>
     <p style="text-align:center">Kitchen & Wooden Furniture Manufacturing LLC</p>
     <div class="grid" style="grid-template-columns:1fr">
-      <label class="f" v-if="mode==='up'">Full name<input v-model="name" required></label>
       <label class="f">Email<input v-model="email" type="email" required autocomplete="username"></label>
-      <label class="f" v-if="mode!=='reset'">Password<input v-model="password" type="password" required autocomplete="current-password" minlength="8"></label>
-      <button class="btn primary" :disabled="busy" style="justify-content:center">{{ mode==='in' ? 'Sign in' : mode==='up' ? 'Request account' : 'Send reset link' }}</button>
+      <label class="f">Password<input v-model="password" type="password" required autocomplete="current-password"></label>
+      <button class="btn primary" :disabled="busy" style="justify-content:center">{{ busy ? 'Signing in…' : 'Sign in' }}</button>
       <div v-if="msg" class="small" style="color:#b91c1c">{{ msg }}</div>
-      <div class="row small">
-        <a href="javascript:void 0" v-if="mode!=='in'" @click="mode='in'">Sign in</a>
-        <a href="javascript:void 0" v-if="mode!=='up'" @click="mode='up'">Request an account</a>
-        <a href="javascript:void 0" v-if="mode!=='reset'" @click="mode='reset'">Forgot password?</a>
-      </div>
+      <p class="small muted" style="margin:4px 0 0;text-align:center">Contact your administrator for access or a password reset.</p>
     </div>
   </form></div>`,
 };

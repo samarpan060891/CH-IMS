@@ -830,7 +830,7 @@ export const Users = {
     },
   },
   template: `<div>
-    <div class="row" style="margin-bottom:12px"><span class="muted small">New sign-ups stay inactive until an administrator activates them and assigns a role.</span><span class="spacer"></span>
+    <div class="row" style="margin-bottom:12px"><span class="muted small">Create each user here with a temporary password and role — they can sign in straight away (no email needed). Use Reset password when someone forgets theirs.</span><span class="spacer"></span>
       <button class="btn primary" @click="nu={email:'',password:'',full_name:'',role:'shop_floor'}">+ Create user</button></div>
     <div class="card"><DataTable :rows="rows" :loading="loading" clickable @row="open" filename="users"
       :columns="[{k:'full_name',label:'Name'},{k:'email',label:'Email'},{k:r=>$root.ROLES[r.role],label:'Role'},{k:'employee_code',label:'Emp code'},{k:r=>r.is_active?'ACTIVE':'BLOCKED',label:'Status',fmt:'badge'},{k:'created_at',label:'Created',fmt:'date'}]" /></div>
