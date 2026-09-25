@@ -1,26 +1,71 @@
-# Creates a "Citi Homes IMS" desktop icon that opens the live app in its own window (Edge app mode).
+﻿# Creates a "Citi Homes IMS" desktop icon that opens the live app in its own window (Edge app mode).
 # Run on any staff PC:  powershell -ExecutionPolicy Bypass -File create-shortcut.ps1
 param([string]$Url = 'https://ch-ims-production.up.railway.app')
 
 Add-Type -AssemblyName System.Drawing
 $dir = Join-Path $env:LOCALAPPDATA 'CitiHomesIMS'
 New-Item -ItemType Directory -Force $dir | Out-Null
-$ico = Join-Path $dir 'citihomes.ico'
+$ico = Join-Path $dir 'citihomes-ims-b.ico'
 
-# --- draw the logo (brown rounded square with "CH") at a given pixel size ---
+# --- Citi Homes IMS logo (approved option B), drawn in a 200 x 200 design space ---
+# CH monogram geometry is in a 680 x 340 box: thin open C + H whose crossbar starts inside the C.
+function Draw-Monogram($g, [single]$x, [single]$y, [single]$w, [single]$strokeBoost) {
+  $s = $w / 680.0
+  $st = $g.Save()
+  $g.TranslateTransform($x, $y); $g.ScaleTransform($s, $s)
+  $white = [System.Drawing.Color]::White
+  $pen = New-Object System.Drawing.Pen $white, ([single](13 * $strokeBoost))
+  $g.DrawArc($pen, 5, 5, 330, 330, 30, 300)                                   # C: centre (170,170) r 165, open on the right
+  $b = New-Object System.Drawing.SolidBrush $white
+  $bh = 12 * $strokeBoost
+  $g.FillRectangle($b, [single]305, [single](170 - $bh / 2), [single]365, [single]$bh)   # crossbar from inside the C
+  foreach ($cx in 445, 635) {                                                 # slightly flared stems
+    $hw = 11 * $strokeBoost; $mw = 8 * $strokeBoost
+    $pts = @((New-Object System.Drawing.PointF ($cx - $hw), 5), (New-Object System.Drawing.PointF ($cx + $hw), 5),
+             (New-Object System.Drawing.PointF ($cx + $mw), 170), (New-Object System.Drawing.PointF ($cx + $hw), 335),
+             (New-Object System.Drawing.PointF ($cx - $hw), 335), (New-Object System.Drawing.PointF ($cx - $mw), 170))
+    $g.FillPolygon($b, [System.Drawing.PointF[]]$pts)
+  }
+  $g.Restore($st)
+}
+
 function New-Logo([int]$size) {
   $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
+  $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'; $g.PixelOffsetMode = 'HighQuality'
   $g.Clear([System.Drawing.Color]::Transparent)
-  $r = [Math]::Max(4, [int]($size * 0.19))
-  $p = New-Object System.Drawing.Drawing2D.GraphicsPath
-  $p.AddArc(0, 0, $r, $r, 180, 90); $p.AddArc($size - $r - 1, 0, $r, $r, 270, 90)
-  $p.AddArc($size - $r - 1, $size - $r - 1, $r, $r, 0, 90); $p.AddArc(0, $size - $r - 1, $r, $r, 90, 90); $p.CloseFigure()
-  $g.FillPath((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(138, 90, 43))), $p)
-  $font = New-Object System.Drawing.Font 'Segoe UI', ([single]($size * 0.42)), ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+  $k = $size / 200.0
+  $g.ScaleTransform($k, $k)
+  $black = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(17, 17, 17))
+  $brown = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(138, 90, 43))
   $fmt = New-Object System.Drawing.StringFormat; $fmt.Alignment = 'Center'; $fmt.LineAlignment = 'Center'
-  $g.DrawString('CH', $font, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 0, ([single]($size * 0.03)), $size, $size), $fmt)
+  $serif = if ((New-Object System.Drawing.Text.InstalledFontCollection).Families.Name -contains 'Georgia') { 'Georgia' } else { 'Times New Roman' }
+
+  if ($size -le 32) {
+    # tiny: circle + CH only, heavier strokes so it stays visible
+    $g.FillEllipse($black, 4, 4, 192, 192)
+    Draw-Monogram $g 24 62 152 ([single]($(if ($size -le 16) { 2.4 } else { 1.7 })))
+  } elseif ($size -le 64) {
+    # small: circle + CH + IMS badge
+    $g.FillEllipse($black, 4, 0, 192, 192)
+    Draw-Monogram $g 28 38 144 1.4
+    $badge = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $badge.AddArc(52, 150, 44, 44, 90, 180); $badge.AddArc(104, 150, 44, 44, 270, 180); $badge.CloseFigure()
+    $g.FillPath($brown, $badge); $g.DrawPath((New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 4), $badge)
+    $f = New-Object System.Drawing.Font $serif, 26, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+    $g.DrawString('IMS', $f, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 52, 150, 96, 44), $fmt)
+  } else {
+    # full option B
+    $g.FillEllipse($black, 12, 6, 176, 176)
+    Draw-Monogram $g 44 46 112 1
+    $f1 = New-Object System.Drawing.Font $serif, 14, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+    $g.DrawString('C I T I   H O M E S', $f1, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 0, 110, 200, 22), $fmt)
+    $badge = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $badge.AddArc(66, 164, 26, 26, 90, 180); $badge.AddArc(108, 164, 26, 26, 270, 180); $badge.CloseFigure()
+    $g.FillPath($brown, $badge); $g.DrawPath((New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 2), $badge)
+    $f2 = New-Object System.Drawing.Font $serif, 13, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+    $g.DrawString('I M S', $f2, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 66, 164, 68, 26), $fmt)
+  }
   $g.Dispose()
   return $bmp
 }

@@ -8,6 +8,7 @@ import { MASTERS, MasterPage } from './masters.js';
 import { Dashboard, Reports, Replenishment, Assets, Users, Settings, BufferReview } from './pages.js';
 import { CONFIG } from './config.js';
 import { Importer } from './importer.js';
+import { Logo } from './logo.js';
 
 const ALL = null;
 const MENU = [
@@ -78,9 +79,11 @@ const Login = {
       this.busy = false;
     },
   },
+  components: { Logo },
   template: `<div class="login"><form class="box" @submit.prevent="submit">
-    <h1>Citi Homes — Inventory</h1>
-    <p>Kitchen & Wooden Furniture Manufacturing LLC</p>
+    <div style="text-align:center;margin-bottom:10px"><Logo :size="120" /></div>
+    <h1 style="text-align:center">Citi Homes — Inventory</h1>
+    <p style="text-align:center">Kitchen & Wooden Furniture Manufacturing LLC</p>
     <div class="grid" style="grid-template-columns:1fr">
       <label class="f" v-if="mode==='up'">Full name<input v-model="name" required></label>
       <label class="f">Email<input v-model="email" type="email" required autocomplete="username"></label>
@@ -97,7 +100,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, FieldInput, Modal },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, FieldInput, Modal, Logo },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES }),
   computed: {
     company() { return state.company; },
@@ -161,13 +164,14 @@ const App = {
   <div v-if="!ready" class="boot">Loading…</div>
   <Login v-else-if="!state.session" />
   <div v-else-if="!state.profile?.is_active" class="login"><div class="box">
+    <div style="text-align:center;margin-bottom:10px"><Logo :size="96" /></div>
     <h1>Account pending activation</h1>
     <p>Signed in as {{ state.session.user.email }}. An administrator must activate your account and assign your role (Purchase, Stores, Shop Floor, Production In-charge, Factory Manager or Finance).</p>
     <button class="btn" @click="logout">Sign out</button>
   </div></div>
   <div v-else class="shell">
     <nav class="side" :class="{open: sideOpen}">
-      <div class="logo">Citi Homes IMS<small>{{ company?.company_name }}</small></div>
+      <div class="logo"><Logo :size="58" /><div>Citi Homes IMS<small>{{ company?.company_name }}</small></div></div>
       <template v-for="g in menu">
         <div class="grp">{{ g.g }}</div>
         <a v-for="i in g.items" :href="'#/' + i.to" :class="{on: active(i.to)}" @click="sideOpen=false">{{ i.t }}

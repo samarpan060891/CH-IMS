@@ -1,22 +1,25 @@
 // PDF generation (jsPDF + autotable) for issue slips, POs, GRNs, vouchers, gate passes
 import { state, dt, dtm, money } from './lib.js';
+import { logoPng } from './logo.js';
 
 const BRAND = [138, 90, 43];
 
-export function makePdf({ title, no, date, meta = [], columns, rows, totals = [], notes = '', signatures = [], filename, landscape = false, subtitle = '' }) {
+export async function makePdf({ title, no, date, meta = [], columns, rows, totals = [], notes = '', signatures = [], filename, landscape = false, subtitle = '' }) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: landscape ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
   const c = state.company || {};
 
-  // company header
+  // company header with logo
   doc.setFillColor(...BRAND); doc.rect(0, 0, W, 3, 'F');
+  let tx = 14;
+  try { doc.addImage(await logoPng(), 'PNG', 12, 6, 24, 24); tx = 39; } catch (e) { console.warn('logo', e); }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(40);
-  doc.text(c.company_name || 'Citi Homes', 14, 14);
+  doc.text(c.company_name || 'Citi Homes', tx, 14);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(90);
   const addr = [c.address, [c.phone, c.email].filter(Boolean).join('  |  '), c.trn ? 'TRN: ' + c.trn : ''].filter(Boolean);
-  addr.forEach((l, i) => doc.text(String(l), 14, 19 + i * 4));
+  addr.forEach((l, i) => doc.text(String(l), tx, 19 + i * 4));
 
   // title block
   doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...BRAND);

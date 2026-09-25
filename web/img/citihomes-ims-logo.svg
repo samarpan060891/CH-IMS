@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="1000" height="1000">
+  <style>@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&amp;family=Playfair+Display:wght@600&amp;display=swap');</style>
+  <circle cx="100" cy="94" r="88" fill="#111111"/>
+  <svg x="44" y="46" width="112" height="56" viewBox="0 0 680 340">
+    <path d="M 312.9 87.5 A 165 165 0 1 0 312.9 252.5" fill="none" stroke="#ffffff" stroke-width="13"/>
+    <rect x="305" y="164" width="365" height="12" fill="#ffffff"/>
+    <path d="M 434 5 L 456 5 L 453 170 L 456 335 L 434 335 L 437 170 Z" fill="#ffffff"/>
+    <path d="M 624 5 L 646 5 L 643 170 L 646 335 L 624 335 L 627 170 Z" fill="#ffffff"/>
+  </svg>
+  <text x="100" y="126" text-anchor="middle" font-family="'Cormorant Garamond', Georgia, serif" font-size="15" font-weight="600" letter-spacing="2.5" fill="#ffffff">CITI HOMES</text>
+  <rect x="66" y="164" width="68" height="26" rx="13" fill="#8a5a2b" stroke="#ffffff" stroke-width="2"/>
+  <text x="100" y="182" text-anchor="middle" font-family="'Playfair Display', Georgia, serif" font-size="14" font-weight="600" letter-spacing="3" fill="#ffffff">IMS</text>
+</svg>

@@ -16,7 +16,7 @@ const uomF = { k: '_uom', label: 'UoM', type: 'ro', virtual: true, fmt: (v, r) =
 const roMoney = (k, lbl, extra = {}) => ({ k, label: lbl, type: 'ro', fmt: v => money(v), cost: true, ...extra });
 const roQty = (k, lbl, extra = {}) => ({ k, label: lbl, type: 'ro', fmt: v => qty(v), ...extra });
 const statusIs = (ctx, ...s) => s.includes(ctx.doc.status);
-const itemName = id => { const r = refRow('items', id); return r ? `${r.code} — ${r.name}` : ''; };
+const itemName = id => { const r = refRow('items', id); return r ? `${r.code} â€” ${r.name}` : ''; };
 const itemUom = id => refRow('items', id)?.uoms?.code || '';
 const upd = async (table, id, patch) => must(await sb.from(table).update(patch).eq('id', id));
 
@@ -79,7 +79,7 @@ const pr = {
       run: c => go(`d/po/new/pr/${c.doc.id}`) },
     { label: 'Cancel', show: statusIs(ctx, 'DRAFT', 'SUBMITTED') && ctx.editable, confirm: 'Cancel this requisition?',
       run: c => upd('purchase_requisitions', c.doc.id, { status: 'CANCELLED' }) },
-    { label: '🖨 PDF', reload: false, run: c => makePdf({
+    { label: 'ðŸ–¨ PDF', reload: false, run: c => makePdf({
         title: 'Purchase Requisition', no: c.doc.pr_no, date: c.doc.pr_date,
         meta: [['Source', label(c.doc.source)], ['Project', refLabel('projects', c.doc.project_id)], ['Required by', dt(c.doc.required_date)], ['Status', label(c.doc.status)]],
         columns: [{ h: '#', k: (r) => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
@@ -154,7 +154,7 @@ export const po = {
   grids: [{
     key: 'lines', title: 'PO lines', table: 'po_lines', fk: 'po_id', order: 'line_no', saveKeys: ['pr_line_id'],
     newRow: () => ({ discount_pct: 0, vat_rate: 5 }),
-    importers: [{ label: '⇩ From requisition', run: async ctx => {
+    importers: [{ label: 'â‡© From requisition', run: async ctx => {
       const prs = must(await sb.from('purchase_requisitions').select('id,pr_no,pr_date').in('status', ['SUBMITTED', 'PARTIAL_PO']).order('pr_date'));
       if (!prs.length) throw new Error('No open requisitions');
       const v = await ask({ title: 'Import requisition lines', fields: [{ k: 'pr', label: 'Requisition', type: 'select', required: true, options: prs.map(p => ({ v: p.id, l: `${p.pr_no} (${dt(p.pr_date)})` })) }] });
@@ -188,9 +188,9 @@ export const po = {
     return [
       { label: 'Submit for approval', cls: 'primary', show: ['DRAFT', 'REJECTED'].includes(s) && hasRole('purchase'), done: 'Sent to Factory Manager',
         run: c => rpc('po_action', { p_po: c.doc.id, p_action: 'SUBMIT' }) },
-      { label: '✔ Approve', cls: 'ok', show: approver, done: 'Approved',
+      { label: 'âœ” Approve', cls: 'ok', show: approver, done: 'Approved',
         run: async c => { const cm = await ask({ title: 'Approve PO ' + c.doc.po_no, fields: [{ k: 'c', label: 'Comments (optional)', type: 'textarea' }], okText: 'Approve' }); if (!cm) return; return rpc('po_action', { p_po: c.doc.id, p_action: 'APPROVE', p_comments: cm.c || null }); } },
-      { label: '✖ Reject', cls: 'bad', show: approver, done: 'Rejected',
+      { label: 'âœ– Reject', cls: 'bad', show: approver, done: 'Rejected',
         run: async c => { const r = await reason('Reject PO ' + c.doc.po_no); if (r) return rpc('po_action', { p_po: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
       { label: 'Record top-management approval', cls: 'ok', show: s === 'PENDING_TOP_MGMT' && hasRole('purchase', 'finance'), done: 'Top management approval recorded',
         run: async c => {
@@ -201,20 +201,20 @@ export const po = {
         } },
       { label: 'Top mgmt rejected', cls: 'bad', show: s === 'PENDING_TOP_MGMT' && hasRole('purchase', 'finance'),
         run: async c => { const r = await reason('Top management rejection'); if (r) return rpc('po_action', { p_po: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
-      { label: '📤 Release to vendor', cls: 'primary', show: s === 'APPROVED' && hasRole('purchase'), done: 'PO released',
+      { label: 'ðŸ“¤ Release to vendor', cls: 'primary', show: s === 'APPROVED' && hasRole('purchase'), done: 'PO released',
         confirm: 'Release this PO to the vendor? It can then be received against.', run: c => rpc('po_action', { p_po: c.doc.id, p_action: 'RELEASE' }) },
       { label: 'Short close', show: ['RELEASED', 'PARTIALLY_RECEIVED'].includes(s) && hasRole('purchase', 'factory_manager'),
         confirm: 'Close this PO? Pending quantities will no longer be expected.', run: c => rpc('po_action', { p_po: c.doc.id, p_action: 'CLOSE' }) },
       { label: 'Cancel PO', cls: 'bad', show: !['CLOSED', 'CANCELLED', 'RECEIVED', 'PARTIALLY_RECEIVED'].includes(s) && hasRole('purchase', 'factory_manager'),
         confirm: 'Cancel this PO?', danger: true, run: c => rpc('po_action', { p_po: c.doc.id, p_action: 'CANCEL' }) },
-      { label: '🖨 PO PDF', reload: false, show: canSeeCost(), run: c => pdfPO(c) },
+      { label: 'ðŸ–¨ PO PDF', reload: false, show: canSeeCost(), run: c => pdfPO(c) },
     ];
   },
 };
 function pdfPO(c) {
   const d = c.doc, v = refRow('vendors', d.vendor_id) || {};
   const t = po.totals(c);
-  makePdf({
+  return makePdf({
     title: 'Purchase Order', no: d.po_no, date: d.po_date, subtitle: label(d.status),
     meta: [['Vendor', v.name], ['Vendor TRN', v.trn || '-'], ['Currency', d.currency + (d.currency !== 'AED' ? ` @ ${d.exchange_rate}` : '')], ['Payment terms', refLabel('payment_terms', d.payment_term_id)],
            ['Delivery date', dt(d.delivery_date)], ['Deliver to', refLabel('locations', d.delivery_location_id)], ['Quotation ref', d.quotation_ref || '-'], ['Project', refLabel('projects', d.project_id) || '-']],
@@ -233,10 +233,10 @@ function pdfPO(c) {
 // ======================================================================
 async function loadOpenPos(extraId) {
   const rows = must(await sb.from('purchase_orders').select('id,po_no,vendors(name)').in('status', ['RELEASED', 'PARTIALLY_RECEIVED']).order('po_date', { ascending: false }));
-  opts.pos = rows.map(r => ({ id: r.id, label: `${r.po_no} — ${r.vendors?.name}` }));
+  opts.pos = rows.map(r => ({ id: r.id, label: `${r.po_no} â€” ${r.vendors?.name}` }));
   if (extraId && !opts.pos.some(p => p.id === extraId)) {
     const p = must(await sb.from('purchase_orders').select('id,po_no,vendors(name)').eq('id', extraId).single());
-    opts.pos.push({ id: p.id, label: `${p.po_no} — ${p.vendors?.name}` });
+    opts.pos.push({ id: p.id, label: `${p.po_no} â€” ${p.vendors?.name}` });
   }
 }
 async function loadPoIntoGrn(ctx, poId) {
@@ -306,7 +306,7 @@ export const grn = {
         { k: 'serial_nos', label: 'Serial nos (tools/assets)', type: 'tags', width: '180px' },
         { k: 'remarks', label: 'Remarks' },
       ] },
-    { key: 'charges', title: 'Landed cost charges (freight, customs duty, clearing…)', table: 'grn_charges', fk: 'grn_id', lineNo: false,
+    { key: 'charges', title: 'Landed cost charges (freight, customs duty, clearingâ€¦)', table: 'grn_charges', fk: 'grn_id', lineNo: false,
       show: d => ['PO', 'NON_PO'].includes(d.receipt_type) && canSeeCost(),
       newRow: () => ({ alloc_basis: 'VALUE', vat_amount: 0 }),
       fields: [
@@ -339,11 +339,11 @@ export const grn = {
     return out;
   },
   actions: ctx => [
-    { label: '✔ Post GRN', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), done: 'GRN posted — stock updated',
+    { label: 'âœ” Post GRN', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), done: 'GRN posted â€” stock updated',
       confirm: 'Post this GRN? Stock lots will be created and the PO updated. This cannot be undone.', run: c => rpc('post_grn', { p_grn: c.doc.id }) },
     { label: 'Return to vendor', show: statusIs(ctx, 'POSTED') && hasRole('stores', 'purchase') && !!ctx.doc.vendor_id, reload: false, run: c => go(`d/prt/new/grn/${c.doc.id}`) },
     { label: 'Book vendor invoice', show: statusIs(ctx, 'POSTED') && hasRole('finance') && ctx.doc.receipt_type === 'PO', reload: false, run: c => go(`d/inv/new/grn/${c.doc.id}`) },
-    { label: '🖨 GRN PDF', reload: false, run: c => {
+    { label: 'ðŸ–¨ GRN PDF', reload: false, run: c => {
         const d = c.doc; const cost = canSeeCost();
         const cols = [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
           { h: 'Received', k: r => qty(r.received_qty), align: 'right' }, { h: 'Accepted', k: r => qty(r.accepted_qty), align: 'right' }, { h: 'Rejected', k: r => qty(num(r.received_qty) - num(r.accepted_qty)) || '', align: 'right' },
@@ -361,7 +361,7 @@ export const grn = {
 // MATERIAL REQUEST (floor -> store)
 // ======================================================================
 const mrTarget = [
-  { k: 'purpose', label: 'Purpose', type: 'select', required: true, options: [{ v: 'PROJECT', l: 'Project' }, { v: 'MTS', l: 'Make to stock' }, { v: 'COST_CENTER', l: 'Cost centre (maintenance, camp …)' }],
+  { k: 'purpose', label: 'Purpose', type: 'select', required: true, options: [{ v: 'PROJECT', l: 'Project' }, { v: 'MTS', l: 'Make to stock' }, { v: 'COST_CENTER', l: 'Cost centre (maintenance, camp â€¦)' }],
     onChange: d => { d.project_id = null; d.cost_center_id = null; } },
   { k: 'project_id', label: 'Project / MTS order', type: 'ref', ref: 'projects', required: true, show: d => d.purpose !== 'COST_CENTER',
     filter: (r, d) => r.status === 'OPEN' && r.project_type === (d.purpose === 'MTS' ? 'MTS' : 'PROJECT') },
@@ -376,7 +376,7 @@ export const mr = {
   headerEditable: ctx => ['DRAFT', 'REJECTED'].includes(ctx.doc.status),
   refs: ['items', 'projects', 'cost_centers', 'profiles'],
   list: { select: '*, projects(code,name), cost_centers(code), profiles:requested_by(full_name)', columns: [
-    { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : r.cost_centers?.code, label: 'Project / Cost centre' },
+    { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} â€” ${r.projects.name}` : r.cost_centers?.code, label: 'Project / Cost centre' },
     { k: 'priority', label: 'Priority', fmt: 'badge' }, { k: 'required_date', label: 'Required', fmt: 'date' }, { k: r => r.profiles?.full_name, label: 'Requested by' }] },
   defaults: () => ({ mr_date: today(), purpose: 'PROJECT', priority: 'NORMAL' }),
   async afterLoad(ctx) { await fillAvail(ctx, 'lines'); },
@@ -406,16 +406,16 @@ export const mr = {
     return [
       { label: 'Submit for approval', cls: 'primary', show: ['DRAFT', 'REJECTED'].includes(s) && hasRole('shop_floor', 'production_incharge', 'stores'), done: 'Sent to Production In-charge',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'SUBMIT' }) },
-      { label: '✔ Approve', cls: 'ok', show: s === 'PENDING_APPROVAL' && hasRole('production_incharge'), done: 'Approved — Stores can issue',
+      { label: 'âœ” Approve', cls: 'ok', show: s === 'PENDING_APPROVAL' && hasRole('production_incharge'), done: 'Approved â€” Stores can issue',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'APPROVE' }) },
-      { label: '✖ Reject', cls: 'bad', show: s === 'PENDING_APPROVAL' && hasRole('production_incharge'),
+      { label: 'âœ– Reject', cls: 'bad', show: s === 'PENDING_APPROVAL' && hasRole('production_incharge'),
         run: async c => { const r = await reason('Reject request'); if (r) return rpc('mr_action', { p_mr: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
-      { label: '📦 Issue material', cls: 'primary', show: ['APPROVED', 'PARTIALLY_ISSUED'].includes(s) && hasRole('stores'), reload: false, run: c => go(`d/issue/new/mr/${c.doc.id}`) },
+      { label: 'ðŸ“¦ Issue material', cls: 'primary', show: ['APPROVED', 'PARTIALLY_ISSUED'].includes(s) && hasRole('stores'), reload: false, run: c => go(`d/issue/new/mr/${c.doc.id}`) },
       { label: 'Short close', show: ['APPROVED', 'PARTIALLY_ISSUED'].includes(s) && hasRole('stores', 'production_incharge'), confirm: 'Close this request? Balance will not be issued.',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'CLOSE' }) },
       { label: 'Cancel', show: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(s), confirm: 'Cancel this request?',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'CANCEL' }) },
-      { label: '🖨 PDF', reload: false, run: c => makePdf({
+      { label: 'ðŸ–¨ PDF', reload: false, run: c => makePdf({
           title: 'Material Request', no: c.doc.mr_no, date: c.doc.mr_date, subtitle: label(c.doc.status),
           meta: [['Purpose', label(c.doc.purpose)], ['Project / CC', refLabel('projects', c.doc.project_id) || refLabel('cost_centers', c.doc.cost_center_id)], ['Priority', c.doc.priority], ['Required by', dt(c.doc.required_date)],
                  ['Requested by', refLabel('profiles', c.doc.requested_by)], ['Approved by', refLabel('profiles', c.doc.approved_by) || '-']],
@@ -431,7 +431,7 @@ export const mr = {
 // ======================================================================
 async function loadApprovedMrs(extraId) {
   const rows = must(await sb.from('material_requests').select('id,mr_no,purpose,projects(code),cost_centers(code)').in('status', ['APPROVED', 'PARTIALLY_ISSUED']).order('mr_date'));
-  opts.mrs = rows.map(r => ({ id: r.id, label: `${r.mr_no} — ${r.projects?.code || r.cost_centers?.code}` }));
+  opts.mrs = rows.map(r => ({ id: r.id, label: `${r.mr_no} â€” ${r.projects?.code || r.cost_centers?.code}` }));
   if (extraId && !opts.mrs.some(x => x.id === extraId)) {
     const r = must(await sb.from('material_requests').select('id,mr_no').eq('id', extraId).single());
     opts.mrs.push({ id: r.id, label: r.mr_no });
@@ -451,7 +451,7 @@ export const issue = {
   statuses: ['DRAFT', 'POSTED'], createRoles: ['stores'],
   refs: ['items', 'projects', 'cost_centers', 'locations', 'employees'],
   list: { select: '*, projects(code,name), cost_centers(code), material_requests(mr_no)', columns: [
-    { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : r.cost_centers?.code, label: 'Project / CC' },
+    { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} â€” ${r.projects.name}` : r.cost_centers?.code, label: 'Project / CC' },
     { k: r => r.material_requests?.mr_no, label: 'Request' }, { k: 'received_by_name', label: 'Received by' }, { k: 'total_value', label: 'Value', fmt: 'money', cost: true, sum: true }] },
   defaults: () => ({ issue_date: today(), purpose: 'PROJECT', from_location_id: locId('MS') }),
   async onNew(ctx, parts) { await loadApprovedMrs(); if (parts[0] === 'mr' && parts[1]) await loadMrIntoIssue(ctx, parts[1]); },
@@ -488,10 +488,10 @@ export const issue = {
       { k: r => r.stock_lots?.received_date, label: 'Received', fmt: 'date' }, { k: 'qty', label: 'Qty', fmt: 'qty' }, { k: 'unit_cost', label: 'Unit cost', fmt: 'money', cost: true }, { k: r => num(r.qty) * num(r.unit_cost), label: 'Value', fmt: 'money', cost: true }] }];
   },
   actions: ctx => [
-    { label: '✔ Post issue', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), done: 'Issued — stock deducted FIFO',
+    { label: 'âœ” Post issue', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), done: 'Issued â€” stock deducted FIFO',
       confirm: 'Post this issue? Stock will be deducted FIFO and charged to the project / cost centre.', run: c => rpc('post_issue', { p_issue: c.doc.id }) },
-    { label: '🖨 Issue slip PDF', cls: 'primary', show: statusIs(ctx, 'POSTED'), reload: false, run: c => pdfIssue(c) },
-    { label: '↩ Return from floor', show: statusIs(ctx, 'POSTED') && hasRole('stores'), reload: false, run: c => go(`d/ret/new/issue/${c.doc.id}`) },
+    { label: 'ðŸ–¨ Issue slip PDF', cls: 'primary', show: statusIs(ctx, 'POSTED'), reload: false, run: c => pdfIssue(c) },
+    { label: 'â†© Return from floor', show: statusIs(ctx, 'POSTED') && hasRole('stores'), reload: false, run: c => go(`d/ret/new/issue/${c.doc.id}`) },
   ],
 };
 function pdfIssue(c) {
@@ -501,7 +501,7 @@ function pdfIssue(c) {
   const cols = [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item code', k: r => refRow('items', r.item_id)?.code }, { h: 'Description', k: r => refRow('items', r.item_id)?.name },
     { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty issued', k: r => qty(r.qty), align: 'right' }, { h: 'Lots (FIFO)', k: lotText }];
   if (cost) cols.push({ h: 'Value AED', k: r => money(r.value), align: 'right' });
-  makePdf({
+  return makePdf({
     title: 'Material Issue Slip', no: d.issue_no, date: d.issue_date,
     meta: [['Purpose', label(d.purpose)], ['Project / CC', refLabel('projects', d.project_id) || refLabel('cost_centers', d.cost_center_id)], ['Request no.', opts.mrs.find(m => m.id === d.mr_id)?.label || '-'],
            ['Issued from', refLabel('locations', d.from_location_id)], ['Received by', d.received_by_name || refLabel('employees', d.received_by_employee_id) || '-'], ['Remarks', d.remarks || '-']],
@@ -516,7 +516,7 @@ function pdfIssue(c) {
 // ======================================================================
 async function loadPostedIssues(extraId) {
   const rows = must(await sb.from('material_issues').select('id,issue_no,issue_date,projects(code),cost_centers(code)').eq('status', 'POSTED').order('issue_date', { ascending: false }).limit(500));
-  opts.issues = rows.map(r => ({ id: r.id, label: `${r.issue_no} — ${r.projects?.code || r.cost_centers?.code} (${dt(r.issue_date)})` }));
+  opts.issues = rows.map(r => ({ id: r.id, label: `${r.issue_no} â€” ${r.projects?.code || r.cost_centers?.code} (${dt(r.issue_date)})` }));
   if (extraId && !opts.issues.some(x => x.id === extraId)) {
     const r = must(await sb.from('material_issues').select('id,issue_no').eq('id', extraId).single());
     opts.issues.push({ id: r.id, label: r.issue_no });
@@ -558,9 +558,9 @@ export const ret = {
     for (const r of ctx.grids.lines) if (r._bal !== undefined && num(r.qty) > num(r._bal)) throw new Error(`${itemName(r.item_id)}: max returnable ${qty(r._bal)}`);
   },
   actions: ctx => [
-    { label: '✔ Post return', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), confirm: 'Post this return? Stock will be added back and the project credited.', done: 'Return posted',
+    { label: 'âœ” Post return', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), confirm: 'Post this return? Stock will be added back and the project credited.', done: 'Return posted',
       run: c => rpc('post_return', { p_ret: c.doc.id }) },
-    { label: '🖨 Return note PDF', reload: false, run: c => makePdf({
+    { label: 'ðŸ–¨ Return note PDF', reload: false, run: c => makePdf({
         title: 'Material Return Note', no: c.doc.return_no, date: c.doc.return_date,
         meta: [['Against issue', opts.issues.find(i => i.id === c.doc.issue_id)?.label || ''], ['Returned to', refLabel('locations', c.doc.to_location_id)], ['Returned by', c.doc.returned_by_name || '-'], ['Status', label(c.doc.status)]],
         columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' },
@@ -590,8 +590,8 @@ export const trf = {
              { k: 'qty', label: 'Qty', type: 'number', required: true }] }],
   validate(ctx) { if (ctx.doc.from_location_id === ctx.doc.to_location_id) throw new Error('From and To locations must differ'); },
   actions: ctx => [
-    { label: '✔ Post transfer', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), confirm: 'Post this transfer?', done: 'Transfer posted', run: c => rpc('post_transfer', { p_trf: c.doc.id }) },
-    { label: '🖨 PDF', reload: false, run: c => makePdf({ title: 'Stock Transfer Note', no: c.doc.trf_no, date: c.doc.trf_date,
+    { label: 'âœ” Post transfer', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), confirm: 'Post this transfer?', done: 'Transfer posted', run: c => rpc('post_transfer', { p_trf: c.doc.id }) },
+    { label: 'ðŸ–¨ PDF', reload: false, run: c => makePdf({ title: 'Stock Transfer Note', no: c.doc.trf_no, date: c.doc.trf_date,
         meta: [['From', refLabel('locations', c.doc.from_location_id)], ['To', refLabel('locations', c.doc.to_location_id)], ['Status', label(c.doc.status)], ['Remarks', c.doc.remarks || '-']],
         columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' }],
         rows: c.grids.lines, signatures: ['Sent by', 'Received by'] }) },
@@ -621,7 +621,7 @@ export const adj = {
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
   grids: [{ key: 'lines', title: 'Count lines', table: 'adjustment_lines', fk: 'adj_id', lineNo: false,
-    importers: [{ label: '⇩ Load all stock at location (count sheet)', run: async ctx => {
+    importers: [{ label: 'â‡© Load all stock at location (count sheet)', run: async ctx => {
       const rows = must(await sb.from('v_lot_values').select('item_id,qty_on_hand').eq('location_id', ctx.doc.location_id));
       const m = {}; rows.forEach(r => { m[r.item_id] = (m[r.item_id] || 0) + num(r.qty_on_hand); });
       Object.entries(m).forEach(([item_id, q]) => { if (!ctx.grids.lines.some(l => l.item_id === item_id)) ctx.grids.lines.push({ item_id, system_qty: q, counted_qty: q }); });
@@ -634,11 +634,11 @@ export const adj = {
     saveKeys: ['system_qty'] }],
   actions: ctx => [
     { label: 'Submit for approval', cls: 'primary', show: statusIs(ctx, 'DRAFT', 'REJECTED') && hasRole('stores'), done: 'Sent to Factory Manager', run: c => rpc('adj_action', { p_adj: c.doc.id, p_action: 'SUBMIT' }) },
-    { label: '✔ Approve & post', cls: 'ok', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'), confirm: 'Approve and post these stock differences?', done: 'Adjustment posted',
+    { label: 'âœ” Approve & post', cls: 'ok', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'), confirm: 'Approve and post these stock differences?', done: 'Adjustment posted',
       run: c => rpc('adj_action', { p_adj: c.doc.id, p_action: 'APPROVE' }) },
-    { label: '✖ Reject', cls: 'bad', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'),
+    { label: 'âœ– Reject', cls: 'bad', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'),
       run: async c => { const r = await reason('Reject adjustment'); if (r) return rpc('adj_action', { p_adj: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
-    { label: '🖨 Count sheet PDF', reload: false, run: c => makePdf({ title: 'Stock Count / Adjustment', no: c.doc.adj_no, date: c.doc.adj_date, subtitle: label(c.doc.status),
+    { label: 'ðŸ–¨ Count sheet PDF', reload: false, run: c => makePdf({ title: 'Stock Count / Adjustment', no: c.doc.adj_no, date: c.doc.adj_date, subtitle: label(c.doc.status),
         meta: [['Location', refLabel('locations', c.doc.location_id)], ['Reason', label(c.doc.reason)]],
         columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
                   { h: 'System', k: r => qty(r.system_qty), align: 'right' }, { h: 'Counted', k: r => qty(r.counted_qty), align: 'right' }, { h: 'Diff', k: r => qty(num(r.counted_qty) - num(r.system_qty)), align: 'right' }],
@@ -657,7 +657,7 @@ export const scrap = {
           { k: 'reason', label: 'Reason' }, { k: 'total_value', label: 'Written off', fmt: 'money', cost: true, sum: true }] },
   defaults: () => ({ scrap_date: today(), scrap_type: 'GENERATION' }),
   header: [
-    { k: 'scrap_type', label: 'Type', type: 'select', required: true, options: [{ v: 'GENERATION', l: 'Scrap generated on floor (offcuts, sawdust …)' }, { v: 'WRITE_OFF', l: 'Write-off stock to scrap (damaged / expired)' }] },
+    { k: 'scrap_type', label: 'Type', type: 'select', required: true, options: [{ v: 'GENERATION', l: 'Scrap generated on floor (offcuts, sawdust â€¦)' }, { v: 'WRITE_OFF', l: 'Write-off stock to scrap (damaged / expired)' }] },
     { k: 'location_id', label: 'Write-off from location', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock, show: d => d.scrap_type === 'WRITE_OFF' },
     { k: 'project_id', label: 'Project (source)', type: 'ref', ref: 'projects' },
     { k: 'cost_center_id', label: 'Cost centre', type: 'ref', ref: 'cost_centers' },
@@ -678,11 +678,11 @@ export const scrap = {
     ] }],
   actions: ctx => [
     { label: 'Submit for approval', cls: 'primary', show: statusIs(ctx, 'DRAFT', 'REJECTED') && hasRole('stores', 'production_incharge'), done: 'Sent to Factory Manager', run: c => rpc('scrap_action', { p_scr: c.doc.id, p_action: 'SUBMIT' }) },
-    { label: '✔ Approve & post', cls: 'ok', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'), confirm: 'Approve and post this scrap note?', done: 'Scrap posted',
+    { label: 'âœ” Approve & post', cls: 'ok', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'), confirm: 'Approve and post this scrap note?', done: 'Scrap posted',
       run: c => rpc('scrap_action', { p_scr: c.doc.id, p_action: 'APPROVE' }) },
-    { label: '✖ Reject', cls: 'bad', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'),
+    { label: 'âœ– Reject', cls: 'bad', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'),
       run: async c => { const r = await reason('Reject scrap note'); if (r) return rpc('scrap_action', { p_scr: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
-    { label: '🖨 PDF', reload: false, run: c => makePdf({ title: 'Scrap Note', no: c.doc.scrap_no, date: c.doc.scrap_date, subtitle: label(c.doc.status),
+    { label: 'ðŸ–¨ PDF', reload: false, run: c => makePdf({ title: 'Scrap Note', no: c.doc.scrap_no, date: c.doc.scrap_date, subtitle: label(c.doc.status),
         meta: [['Type', label(c.doc.scrap_type)], ['Location', refLabel('locations', c.doc.location_id) || '-'], ['Project', refLabel('projects', c.doc.project_id) || '-'], ['Reason', c.doc.reason || '']],
         columns: [{ h: 'Stock item', k: r => itemName(r.item_id) }, { h: 'Qty', k: r => qty(r.qty) || '', align: 'right' }, { h: 'Scrap item', k: r => itemName(r.scrap_item_id) }, { h: 'Scrap qty', k: r => qty(r.scrap_qty), align: 'right' },
                   ...(canSeeCost() ? [{ h: 'Value', k: r => money(r.value), align: 'right' }] : [])],
@@ -722,19 +722,19 @@ export const disposal = {
              { k: '_amt', label: 'Amount', type: 'ro', virtual: true, cost: true, fmt: (v, r) => money(num(r.qty) * num(r.rate)) }] }],
   actions: ctx => [
     { label: 'Submit for approval', cls: 'primary', show: statusIs(ctx, 'DRAFT', 'REJECTED') && hasRole('stores'), done: 'Sent to Factory Manager', run: c => rpc('disposal_action', { p_d: c.doc.id, p_action: 'SUBMIT' }) },
-    { label: '✔ Approve (Factory Manager)', cls: 'ok', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'), done: 'Approved — sent to Finance',
+    { label: 'âœ” Approve (Factory Manager)', cls: 'ok', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'), done: 'Approved â€” sent to Finance',
       run: c => rpc('disposal_action', { p_d: c.doc.id, p_action: 'APPROVE' }) },
-    { label: '✔ Confirm rates & post (Finance)', cls: 'ok', show: statusIs(ctx, 'PENDING_FINANCE') && hasRole('finance'),
+    { label: 'âœ” Confirm rates & post (Finance)', cls: 'ok', show: statusIs(ctx, 'PENDING_FINANCE') && hasRole('finance'),
       confirm: 'Confirm sale rates and post? Scrap stock will be released for the gate pass.', done: 'Disposal posted',
       run: c => rpc('disposal_action', { p_d: c.doc.id, p_action: 'APPROVE' }) },
-    { label: '✖ Reject', cls: 'bad', show: (statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager')) || (statusIs(ctx, 'PENDING_FINANCE') && hasRole('finance')),
+    { label: 'âœ– Reject', cls: 'bad', show: (statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager')) || (statusIs(ctx, 'PENDING_FINANCE') && hasRole('finance')),
       run: async c => { const r = await reason('Reject disposal'); if (r) return rpc('disposal_action', { p_d: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
-    { label: '💰 Record payment receipt', show: statusIs(ctx, 'POSTED') && hasRole('finance') && ctx.doc.method === 'SALE' && !ctx.doc.payment_received, done: 'Receipt recorded',
+    { label: 'ðŸ’° Record payment receipt', show: statusIs(ctx, 'POSTED') && hasRole('finance') && ctx.doc.method === 'SALE' && !ctx.doc.payment_received, done: 'Receipt recorded',
       run: async c => {
         const v = await ask({ title: 'Payment received from ' + c.doc.buyer_name, fields: [{ k: 'ref', label: 'Receipt / voucher ref', required: true }] });
         if (v) return upd('scrap_disposals', c.doc.id, { payment_received: true, receipt_ref: v.ref });
       } },
-    { label: '🖨 Gate pass / sale note', reload: false, run: c => makePdf({ title: c.doc.method === 'SALE' ? 'Scrap Sale & Gate Pass' : 'Scrap Disposal Gate Pass', no: c.doc.disposal_no, date: c.doc.disposal_date, subtitle: label(c.doc.status),
+    { label: 'ðŸ–¨ Gate pass / sale note', reload: false, run: c => makePdf({ title: c.doc.method === 'SALE' ? 'Scrap Sale & Gate Pass' : 'Scrap Disposal Gate Pass', no: c.doc.disposal_no, date: c.doc.disposal_date, subtitle: label(c.doc.status),
         meta: [['Method', label(c.doc.method)], ['Buyer', c.doc.buyer_name], ['Buyer TRN', c.doc.buyer_trn || '-'], ['Contact', c.doc.buyer_contact || '-'], ['Gate pass', c.doc.gate_pass_no || '-'], ['Vehicle', c.doc.vehicle_no || '-'], ['Weighbridge', c.doc.weighbridge_ticket || '-']],
         columns: [{ h: 'Scrap item', k: r => itemName(r.scrap_item_id) }, { h: 'UoM', k: r => itemUom(r.scrap_item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' },
                   ...(canSeeCost() ? [{ h: 'Rate', k: r => money(r.rate), align: 'right' }, { h: 'Amount', k: r => money(num(r.qty) * num(r.rate)), align: 'right' }] : [])],
@@ -748,7 +748,7 @@ export const disposal = {
 // ======================================================================
 async function loadPostedGrns(extraId) {
   const rows = must(await sb.from('grns').select('id,grn_no,grn_date,vendors(name)').eq('status', 'POSTED').not('vendor_id', 'is', null).order('grn_date', { ascending: false }).limit(500));
-  opts.grns = rows.map(r => ({ id: r.id, label: `${r.grn_no} — ${r.vendors?.name} (${dt(r.grn_date)})` }));
+  opts.grns = rows.map(r => ({ id: r.id, label: `${r.grn_no} â€” ${r.vendors?.name} (${dt(r.grn_date)})` }));
   if (extraId && !opts.grns.some(x => x.id === extraId)) {
     const r = must(await sb.from('grns').select('id,grn_no').eq('id', extraId).single()); opts.grns.push({ id: r.id, label: r.grn_no });
   }
@@ -790,9 +790,9 @@ export const prt = {
              { k: '_amt', label: 'Amount', type: 'ro', virtual: true, cost: true, fmt: (v, r) => money(num(r.qty) * num(r.rate_aed)) }] }],
   validate(ctx) { ctx.grids.lines = ctx.grids.lines.filter(r => num(r.qty) > 0); if (!ctx.grids.lines.length) throw new Error('Enter at least one return quantity'); },
   actions: ctx => [
-    { label: '✔ Post return', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores', 'purchase'), confirm: 'Post this purchase return?', done: 'Purchase return posted', run: c => rpc('post_purchase_return', { p_prt: c.doc.id }) },
+    { label: 'âœ” Post return', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores', 'purchase'), confirm: 'Post this purchase return?', done: 'Purchase return posted', run: c => rpc('post_purchase_return', { p_prt: c.doc.id }) },
     { label: 'Raise debit note', show: statusIs(ctx, 'POSTED') && hasRole('finance'), reload: false, run: c => go(`d/dn/new/prt/${c.doc.id}`) },
-    { label: '🖨 Return note PDF', reload: false, run: c => makePdf({ title: 'Purchase Return Note', no: c.doc.prt_no, date: c.doc.return_date,
+    { label: 'ðŸ–¨ Return note PDF', reload: false, run: c => makePdf({ title: 'Purchase Return Note', no: c.doc.prt_no, date: c.doc.return_date,
         meta: [['Vendor', refLabel('vendors', c.doc.vendor_id)], ['GRN', opts.grns.find(g => g.id === c.doc.grn_id)?.label || ''], ['Type', label(c.doc.return_type)], ['Gate pass', c.doc.gate_pass_no || '-'], ['Vehicle', c.doc.vehicle_no || '-'], ['Reason', c.doc.reason || '']],
         columns: [{ h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' },
                   ...(canSeeCost() ? [{ h: 'Rate', k: r => money(r.rate_aed), align: 'right' }, { h: 'Amount', k: r => money(num(r.qty) * num(r.rate_aed)), align: 'right' }] : [])],
@@ -849,15 +849,15 @@ export const inv = {
     { k: 'payment_term_id', label: 'Payment terms', type: 'ref', ref: 'payment_terms' },
     { k: 'due_date', label: 'Due date (blank = from terms)', type: 'date' },
     { k: 'attachment_url', label: 'Scanned invoice link', wide: true },
-    { k: 'has_variance', label: 'Price variance vs PO', type: 'ro', fmt: v => v ? 'YES — check' : 'No', show: d => d.status === 'POSTED' },
+    { k: 'has_variance', label: 'Price variance vs PO', type: 'ro', fmt: v => v ? 'YES â€” check' : 'No', show: d => d.status === 'POSTED' },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: () => 'Load the goods received but not yet invoiced for this vendor (3-way match: PO → GRN → Invoice). The due date is calculated from the payment terms when posted.',
+  headerNote: () => 'Load the goods received but not yet invoiced for this vendor (3-way match: PO â†’ GRN â†’ Invoice). The due date is calculated from the payment terms when posted.',
   grids: [{ key: 'lines', title: 'Invoice lines', table: 'vendor_invoice_lines', fk: 'invoice_id', lineNo: false, saveKeys: ['grn_line_id', 'grn_charge_id'],
     newRow: () => ({ qty: 1, vat_rate: 5 }),
     importers: [
-      { label: '⇩ Un-invoiced GRN lines', run: ctx => { if (!ctx.doc.vendor_id) throw new Error('Select vendor first'); return importGrnLines(ctx); } },
-      { label: '⇩ Landed-cost charges', run: async ctx => {
+      { label: 'â‡© Un-invoiced GRN lines', run: ctx => { if (!ctx.doc.vendor_id) throw new Error('Select vendor first'); return importGrnLines(ctx); } },
+      { label: 'â‡© Landed-cost charges', run: async ctx => {
           if (!ctx.doc.vendor_id) throw new Error('Select vendor first');
           const ch = must(await sb.from('grn_charges').select('id,charge_type,reference,amount_aed,vat_amount,grns!inner(grn_no,status)').eq('vendor_id', ctx.doc.vendor_id).eq('grns.status', 'POSTED'));
           const billed = must(await sb.from('vendor_invoice_lines').select('grn_charge_id,vendor_invoices!inner(status)').in('grn_charge_id', ch.map(c => c.id)).eq('vendor_invoices.status', 'POSTED')).map(b => b.grn_charge_id);
@@ -883,8 +883,8 @@ export const inv = {
       { k: 'balance_aed', label: 'Balance', fmt: 'money' }, { k: 'due_date', label: 'Due', fmt: 'date' }, { k: 'aging_bucket', label: 'Aging', fmt: 'badge' }] }];
   },
   actions: ctx => [
-    { label: '✔ Post invoice', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('finance'), confirm: 'Post this invoice to payables?', done: 'Invoice posted', run: c => rpc('post_vendor_invoice', { p_inv: c.doc.id }) },
-    { label: '💳 Make payment', show: statusIs(ctx, 'POSTED') && hasRole('finance'), reload: false, run: c => go(`d/pay/new/vendor/${c.doc.vendor_id}`) },
+    { label: 'âœ” Post invoice', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('finance'), confirm: 'Post this invoice to payables?', done: 'Invoice posted', run: c => rpc('post_vendor_invoice', { p_inv: c.doc.id }) },
+    { label: 'ðŸ’³ Make payment', show: statusIs(ctx, 'POSTED') && hasRole('finance'), reload: false, run: c => go(`d/pay/new/vendor/${c.doc.vendor_id}`) },
     { label: 'Cancel', show: statusIs(ctx, 'DRAFT') && hasRole('finance'), confirm: 'Cancel this draft invoice?', run: c => upd('vendor_invoices', c.doc.id, { status: 'CANCELLED' }) },
   ],
 };
@@ -897,7 +897,7 @@ async function loadVendorDocs(vendorId) {
   const p = must(await sb.from('purchase_returns').select('id,prt_no,total_amount').eq('vendor_id', vendorId).eq('status', 'POSTED'));
   opts.prts = p.map(r => ({ id: r.id, label: `${r.prt_no} (AED ${money(r.total_amount)})`, row: r }));
   const i = must(await sb.from('v_invoice_balances').select('id,inv_no,vendor_invoice_no,balance_aed,due_date').eq('vendor_id', vendorId).order('due_date'));
-  opts.invs = i.map(r => ({ id: r.id, label: `${r.vendor_invoice_no} / ${r.inv_no} — bal ${money(r.balance_aed)} due ${dt(r.due_date)}`, row: r }));
+  opts.invs = i.map(r => ({ id: r.id, label: `${r.vendor_invoice_no} / ${r.inv_no} â€” bal ${money(r.balance_aed)} due ${dt(r.due_date)}`, row: r }));
 }
 export const dn = {
   key: 'dn', title: 'Debit Notes', single: 'Debit Note', table: 'vendor_debit_notes', noField: 'dn_no', dateField: 'dn_date',
@@ -923,8 +923,8 @@ export const dn = {
     { k: 'reason', label: 'Reason', type: 'textarea', full: true, required: true },
   ],
   actions: ctx => [
-    { label: '✔ Post debit note', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('finance'), confirm: 'Post this debit note? It reduces the vendor payable.', done: 'Debit note posted', run: c => rpc('post_debit_note', { p_dn: c.doc.id }) },
-    { label: '🖨 PDF', reload: false, run: c => makePdf({ title: 'Debit Note', no: c.doc.dn_no, date: c.doc.dn_date, subtitle: label(c.doc.status),
+    { label: 'âœ” Post debit note', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('finance'), confirm: 'Post this debit note? It reduces the vendor payable.', done: 'Debit note posted', run: c => rpc('post_debit_note', { p_dn: c.doc.id }) },
+    { label: 'ðŸ–¨ PDF', reload: false, run: c => makePdf({ title: 'Debit Note', no: c.doc.dn_no, date: c.doc.dn_date, subtitle: label(c.doc.status),
         meta: [['Vendor', refLabel('vendors', c.doc.vendor_id)], ['Vendor TRN', refRow('vendors', c.doc.vendor_id)?.trn || '-'], ['Purchase return', opts.prts.find(p => p.id === c.doc.prt_id)?.label || '-'], ['Invoice', opts.invs.find(i => i.id === c.doc.invoice_id)?.label || '-']],
         columns: [{ h: 'Description', k: 'reason' }, { h: 'Amount', k: r => money(r.amount_aed), align: 'right' }, { h: 'VAT', k: r => money(r.vat_amount), align: 'right' }, { h: 'Total', k: r => money(num(r.amount_aed) + num(r.vat_amount)), align: 'right' }],
         rows: [c.doc], signatures: ['Prepared by', 'Finance Manager', 'Vendor acknowledgement'] }) },
@@ -957,7 +957,7 @@ export const pay = {
   ],
   headerNote: () => 'Allocate the payment to invoices below. Any unallocated amount is kept as an <b>advance</b> and can be allocated later.',
   grids: [{ key: 'alloc', title: 'Allocation to invoices', table: 'payment_allocations', fk: 'payment_id', lineNo: false,
-    importers: [{ label: '⚡ Auto-allocate (oldest due first)', run: ctx => {
+    importers: [{ label: 'âš¡ Auto-allocate (oldest due first)', run: ctx => {
       let left = num(ctx.doc.amount_aed) - ctx.grids.alloc.reduce((s, r) => s + num(r.amount_aed), 0);
       for (const o of opts.invs) {
         if (left <= 0) break;
@@ -978,13 +978,13 @@ export const pay = {
     return [{ l: 'Payment', v: num(ctx.doc.amount_aed) }, { l: 'Allocated', v: a }, { l: 'Advance / unallocated', v: num(ctx.doc.amount_aed) - a }];
   },
   actions: ctx => [
-    { label: '✔ Post payment', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('finance'), confirm: 'Post this payment voucher?', done: 'Payment posted', run: c => rpc('post_payment', { p_pay: c.doc.id }) },
+    { label: 'âœ” Post payment', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('finance'), confirm: 'Post this payment voucher?', done: 'Payment posted', run: c => rpc('post_payment', { p_pay: c.doc.id }) },
     { label: 'Allocate advance', show: statusIs(ctx, 'POSTED') && hasRole('finance'), done: 'Allocated',
       run: async c => {
         const v = await ask({ title: 'Allocate to invoice', fields: [{ k: 'inv', label: 'Invoice', type: 'select', required: true, options: opts.invs.filter(o => num(o.row.balance_aed) > 0).map(o => ({ v: o.id, l: o.label })) }, { k: 'amt', label: 'Amount AED', type: 'number', required: true }] });
         if (v) return rpc('allocate_payment', { p_pay: c.doc.id, p_invoice: v.inv, p_amount: v.amt });
       } },
-    { label: '🖨 Payment voucher', reload: false, run: c => makePdf({ title: 'Payment Voucher', no: c.doc.payment_no, date: c.doc.payment_date, subtitle: label(c.doc.status),
+    { label: 'ðŸ–¨ Payment voucher', reload: false, run: c => makePdf({ title: 'Payment Voucher', no: c.doc.payment_no, date: c.doc.payment_date, subtitle: label(c.doc.status),
         meta: [['Pay to', refLabel('vendors', c.doc.vendor_id)], ['Mode', label(c.doc.mode)], ['Bank', c.doc.bank_name || '-'], ['Reference', c.doc.reference_no || '-'], ['Cheque date', dt(c.doc.cheque_date) || '-'], ['Amount AED', money(c.doc.amount_aed)]],
         columns: [{ h: 'Invoice', k: r => opts.invs.find(o => o.id === r.invoice_id)?.label || r.invoice_id }, { h: 'Allocated AED', k: r => money(r.amount_aed), align: 'right' }],
         rows: c.grids.alloc, totals: pay.totals(c).map(t => [t.l, money(t.v)]), notes: c.doc.remarks || '', signatures: ['Prepared by', 'Finance Manager', 'Authorised signatory', 'Received by'] }) },
