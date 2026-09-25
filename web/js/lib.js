@@ -180,8 +180,11 @@ export async function refreshPending() {
   }
   if (hasRole('purchase')) p.po = (p.po || 0) + await count('purchase_orders', q => q.in('status', ['PENDING_TOP_MGMT', 'APPROVED']));
   if (hasRole('purchase', 'factory_manager')) p.dbm = await count('buffer_suggestions', q => q.eq('status', 'PENDING'));
+  if (hasRole('purchase')) p.prOpen = await count('purchase_requisitions', q => q.in('status', ['SUBMITTED', 'PARTIAL_PO']));
   if (hasRole('production_incharge')) p.mr = await count('material_requests', q => q.eq('status', 'PENDING_APPROVAL'));
   if (hasRole('stores')) p.issue = await count('material_requests', q => q.in('status', ['APPROVED', 'PARTIALLY_ISSUED']));
+  if (hasRole('shop_floor', 'production_incharge')) p.ack = await count('material_issues', q => q.eq('status', 'POSTED').eq('ack_status', 'PENDING'));
+  if (hasRole('stores', 'factory_manager')) p.ack = (p.ack || 0) + await count('material_issues', q => q.eq('ack_status', 'DISCREPANCY'));
   state.pending = p;
   try { await loadNotifications(); } catch (e) { console.warn('notifications', e); }
 }

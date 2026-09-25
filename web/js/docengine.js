@@ -10,15 +10,16 @@ export const DocList = {
   props: { cfg: Object },
   data: () => ({ rows: [], loading: true, tab: 'ALL' }),
   computed: {
+    sf() { return this.cfg.statusField || 'status'; },
     tabs() { return ['ALL', ...(this.cfg.statuses || [])]; },
-    shown() { return this.tab === 'ALL' ? this.rows : this.rows.filter(r => r.status === this.tab); },
-    canCreate() { return this.cfg.createRoles && hasRole(...this.cfg.createRoles); },
+    shown() { return this.tab === 'ALL' ? this.rows : this.rows.filter(r => r[this.sf] === this.tab); },
+    canCreate() { return !this.cfg.noCreate && this.cfg.createRoles && hasRole(...this.cfg.createRoles); },
     columns() {
       return [
         { k: this.cfg.noField, label: 'No.' },
         { k: this.cfg.dateField, label: 'Date', fmt: 'date' },
         ...this.cfg.list.columns,
-        { k: 'status', label: 'Status', fmt: 'badge' },
+        { k: this.sf, label: this.cfg.statusLabel || 'Status', fmt: 'badge' },
       ];
     },
   },
@@ -30,9 +31,11 @@ export const DocList = {
       this.loading = true;
       await loadRefs(this.cfg.refs || []);
       await run(async () => {
-        this.rows = must(await sb.from(this.cfg.table).select(this.cfg.list.select || '*')
-          .order(this.cfg.dateField, { ascending: false }).order('created_at', { ascending: false }).limit(2000));
+        let q = sb.from(this.cfg.table).select(this.cfg.list.select || '*');
+        if (this.cfg.list.filter) q = this.cfg.list.filter(q);
+        this.rows = must(await q.order(this.cfg.dateField, { ascending: false }).order('created_at', { ascending: false }).limit(2000));
       });
+      if (this.cfg.defaultTab && this.rows.some(r => r[this.sf] === this.cfg.defaultTab)) this.tab = this.cfg.defaultTab;
       this.loading = false;
     },
     open(r) { go(`d/${this.cfg.key}/${r.id}`); },
@@ -41,7 +44,7 @@ export const DocList = {
     <div class="row" style="margin-bottom:12px">
       <div class="tabs" style="margin:0;border:0">
         <a v-for="t in tabs" href="javascript:void 0" :class="{on: tab===t}" @click="tab=t">{{ t==='ALL' ? 'All' : label(t) }}
-          <span class="muted small" v-if="t!=='ALL'">({{ rows.filter(r=>r.status===t).length }})</span></a>
+          <span class="muted small" v-if="t!=='ALL'">({{ rows.filter(r=>r[sf]===t).length }})</span></a>
       </div>
       <span class="spacer"></span>
       <button class="btn primary" v-if="canCreate" @click="create">+ New {{ cfg.single }}</button>

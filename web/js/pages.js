@@ -66,6 +66,10 @@ export const Dashboard = {
       if (hasRole('purchase')) add(must(await sb.from('purchase_orders').select('id,po_no,status,created_at').in('status', ['PENDING_TOP_MGMT', 'APPROVED'])), 'Purchase order (top mgmt / release)', 'po', 'po_no');
       if (hasRole('production_incharge')) add(must(await sb.from('material_requests').select('id,mr_no,status,created_at').eq('status', 'PENDING_APPROVAL')), 'Material request', 'mr', 'mr_no');
       if (hasRole('stores')) add(must(await sb.from('material_requests').select('id,mr_no,status,created_at').in('status', ['APPROVED', 'PARTIALLY_ISSUED'])), 'Material request to issue', 'mr', 'mr_no');
+      if (hasRole('shop_floor', 'production_incharge'))
+        add(must(await sb.from('material_issues').select('id,issue_no,ack_status,created_at').eq('status', 'POSTED').eq('ack_status', 'PENDING')).map(r => ({ ...r, status: 'PENDING' })), 'Material issued — acknowledge receipt', 'ack', 'issue_no');
+      if (hasRole('stores', 'factory_manager'))
+        add(must(await sb.from('material_issues').select('id,issue_no,ack_status,created_at').eq('ack_status', 'DISCREPANCY')).map(r => ({ ...r, status: 'DISCREPANCY' })), 'Receipt discrepancy to resolve', 'issue', 'issue_no');
       this.myPending = out;
     },
     draw() {
@@ -363,6 +367,173 @@ export const Replenishment = {
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+  </div>`,
+};
+
+// ======================================================================
+// CONSOLIDATE REQUISITIONS -> one draft PO per vendor
+// ======================================================================
+export const ConsolidatePR = {
+  components: { RefSelect, Badge },
+  data: () => ({ rows: [], iv: [], loading: true, busy: false, q: '', proj: '', bulkVendor: null, appendDraft: true }),
+  computed: {
+    vendorOpts() { return (state.refs.vendors || []).filter(v => v.status === 'ACTIVE').map(v => ({ id: v.id, label: v.name })); },
+    projects() { return [...new Map(this.rows.filter(r => r.project_id).map(r => [r.project_id, r.project_code])).entries()]; },
+    shown() {
+      const q = this.q.toLowerCase().trim();
+      return this.rows.filter(r => (!this.proj || (this.proj === 'STOCK' ? !r.project_id : r.project_id === this.proj))
+        && (!q || `${r.item_code} ${r.item_name} ${r.pr_no} ${r.mr_no || ''} ${r.project_code || ''}`.toLowerCase().includes(q)));
+    },
+    selected() { return this.rows.filter(r => r._sel && num(r._qty) > 0); },
+    // combined qty per vendor + item, checked against the vendor MOQ (or item MOQ)
+    groups() {
+      const g = {};
+      for (const r of this.selected) {
+        const k = `${r._vendor || '-'}|${r.item_id}`;
+        (g[k] ||= { vendor: r._vendor, item_id: r.item_id, qty: 0, moq: this.moq(r) });
+        g[k].qty += num(r._qty);
+      }
+      return g;
+    },
+    summary() {
+      const s = {};
+      for (const r of this.selected) {
+        if (!r._vendor) continue;
+        (s[r._vendor] ||= { vendor: r._vendor, lines: 0, value: 0 });
+        s[r._vendor].lines++; s[r._vendor].value += num(r._qty) * num(r._rate);
+      }
+      return Object.values(s);
+    },
+    missingVendor() { return this.selected.filter(r => !r._vendor).length; },
+  },
+  async mounted() { await loadRefs(['items', 'vendors', 'projects']); await this.load(); },
+  methods: {
+    qty, money, dt,
+    moq(r) { const v = this.iv.find(x => x.item_id === r.item_id && x.vendor_id === r._vendor); return num(v?.moq) || num(refRow('items', r.item_id)?.moq); },
+    belowMoq(r) { const g = this.groups[`${r._vendor || '-'}|${r.item_id}`]; return r._sel && g && g.moq > 0 && g.qty < g.moq; },
+    async load() {
+      this.loading = true;
+      await run(async () => {
+        const lines = must(await sb.from('pr_lines')
+          .select('id,pr_id,item_id,qty,ordered_qty,project_id,required_date,remarks,purchase_requisitions!inner(pr_no,pr_date,status,material_requests(mr_no)),items(code,name,moq,last_purchase_rate,vat_rate,uoms(code)),projects(code)')
+          .in('purchase_requisitions.status', ['SUBMITTED', 'PARTIAL_PO']));
+        const open = lines.filter(l => num(l.qty) > num(l.ordered_qty));
+        this.iv = open.length ? must(await sb.from('item_vendors').select('item_id,vendor_id,price,moq,is_preferred').in('item_id', [...new Set(open.map(l => l.item_id))])) : [];
+        this.rows = open.map(l => {
+          const cands = this.iv.filter(x => x.item_id === l.item_id).sort((a, b) => (b.is_preferred ? 1 : 0) - (a.is_preferred ? 1 : 0));
+          const r = {
+            id: l.id, pr_id: l.pr_id, item_id: l.item_id, item_code: l.items.code, item_name: l.items.name, uom: l.items.uoms?.code,
+            project_id: l.project_id, project_code: l.projects?.code, required_date: l.required_date,
+            pr_no: l.purchase_requisitions.pr_no, mr_no: l.purchase_requisitions.material_requests?.mr_no,
+            balance: num(l.qty) - num(l.ordered_qty), _sel: true, _qty: num(l.qty) - num(l.ordered_qty), _vendor: cands[0]?.vendor_id || null,
+          };
+          r._rate = this.rateFor(r);
+          return r;
+        }).sort((a, b) => a.item_code.localeCompare(b.item_code) || String(a.required_date || '').localeCompare(String(b.required_date || '')));
+      });
+      this.loading = false;
+    },
+    rateFor(r) {
+      const v = this.iv.find(x => x.item_id === r.item_id && x.vendor_id === r._vendor);
+      return num(v?.price ?? refRow('items', r.item_id)?.last_purchase_rate ?? 0);
+    },
+    vendorChanged(r) { r._rate = this.rateFor(r); },
+    applyBulk() {
+      if (!this.bulkVendor) return toast('Choose a vendor first', 'error');
+      this.shown.filter(r => r._sel).forEach(r => { r._vendor = this.bulkVendor; r._rate = this.rateFor(r); });
+    },
+    toggleAll(v) { this.shown.forEach(r => { r._sel = v; }); },
+    vname(id) { return refRow('vendors', id)?.name || ''; },
+    async create() {
+      const sel = this.selected;
+      if (!sel.length) return toast('Tick at least one line', 'error');
+      if (this.missingVendor) return toast(`Choose a vendor for ${this.missingVendor} ticked line(s)`, 'error');
+      this.busy = true;
+      const made = await run(async () => {
+        const byVendor = {};
+        sel.forEach(r => (byVendor[r._vendor] ||= []).push(r));
+        const result = [];
+        for (const [vid, lines] of Object.entries(byVendor)) {
+          const v = refRow('vendors', vid);
+          let po = null, start = 0;
+          if (this.appendDraft) {
+            po = must(await sb.from('purchase_orders').select('id,po_no').eq('vendor_id', vid).eq('status', 'DRAFT').order('created_at', { ascending: false }).limit(1).maybeSingle());
+            if (po) start = must(await sb.from('po_lines').select('line_no').eq('po_id', po.id).order('line_no', { ascending: false }).limit(1)).at(0)?.line_no || 0;
+          }
+          if (!po) {
+            const dates = lines.map(l => l.required_date).filter(Boolean).sort();
+            po = must(await sb.from('purchase_orders').insert({
+              vendor_id: vid, currency: v.currency, payment_term_id: v.payment_term_id, po_type: v.vendor_type,
+              delivery_date: dates[0] || null, terms_conditions: state.company?.po_terms_conditions || null,
+              remarks: 'Consolidated from requisitions ' + [...new Set(lines.map(l => l.pr_no))].join(', '),
+            }).select('id,po_no').single());
+          }
+          must(await sb.from('po_lines').insert(lines.map((l, i) => ({
+            po_id: po.id, line_no: start + i + 1, item_id: l.item_id, description: l.item_name, qty: num(l._qty), rate: num(l._rate),
+            vat_rate: v.vendor_type === 'IMPORT' ? 0 : num(refRow('items', l.item_id)?.vat_rate ?? 5),
+            project_id: l.project_id || null, pr_line_id: l.id, required_date: l.required_date || null,
+          }))));
+          result.push({ po, n: lines.length, appended: start > 0 });
+        }
+        return result;
+      });
+      this.busy = false;
+      if (made) {
+        toast(made.map(m => `${m.po.po_no}: ${m.n} line(s)${m.appended ? ' added' : ''}`).join(' · '), 'ok', 9000);
+        made.length === 1 ? go('d/po/' + made[0].po.id) : go('d/po');
+      }
+    },
+  },
+  template: `<div>
+    <div class="card">
+      <div class="hd"><h3>Open requisition lines</h3><span class="spacer"></span>
+        <input v-model="q" placeholder="Search item, PR, request, project" style="max-width:260px">
+        <select v-model="proj" style="max-width:180px"><option value="">All purposes</option><option value="STOCK">General stock</option>
+          <option v-for="[id, code] in projects" :value="id">Project {{ code }}</option></select>
+        <button class="btn" @click="load">↻ Refresh</button>
+      </div>
+      <p class="small muted" style="margin-top:0">Tick the lines to order, check the vendor and rate, then create one draft PO per vendor. Project lines stay marked for their project so the goods arrive reserved.</p>
+      <div class="row" style="margin-bottom:10px">
+        <span class="small muted">Set vendor for ticked lines:</span>
+        <div style="width:260px"><RefSelect v-model="bulkVendor" :options="vendorOpts" /></div>
+        <button class="btn sm" @click="applyBulk">Apply</button>
+        <span class="spacer"></span>
+        <label class="small row"><input type="checkbox" v-model="appendDraft"> Add to the vendor's existing draft PO if there is one</label>
+      </div>
+      <div class="tbl-wrap">
+        <table class="t lines">
+          <thead><tr><th><input type="checkbox" @change="toggleAll($event.target.checked)" checked></th><th>Item</th><th>For</th><th>Requisition</th><th>Required</th>
+            <th class="n">Balance</th><th>Order qty</th><th>Vendor</th><th v-if="$root.canSeeCost()">Rate</th><th></th></tr></thead>
+          <tbody>
+            <tr v-if="loading"><td colspan="10" class="empty">Loading…</td></tr>
+            <tr v-else-if="!shown.length"><td colspan="10" class="empty">No open requisition lines</td></tr>
+            <tr v-for="r in shown" :key="r.id">
+              <td><input type="checkbox" v-model="r._sel"></td>
+              <td>{{ r.item_code }} — {{ r.item_name }} <span class="muted small">({{ r.uom }})</span></td>
+              <td><span class="b" :class="r.project_id ? 'INSTALLED' : 'OK'">{{ r.project_id ? r.project_code : 'Stock' }}</span></td>
+              <td class="small">{{ r.pr_no }}<div class="muted" v-if="r.mr_no">{{ r.mr_no }}</div></td>
+              <td class="small">{{ dt(r.required_date) }}</td>
+              <td class="n">{{ qty(r.balance) }}</td>
+              <td style="width:100px"><input type="number" v-model.number="r._qty"></td>
+              <td style="min-width:230px"><RefSelect v-model="r._vendor" :options="vendorOpts" @pick="vendorChanged(r)" /></td>
+              <td v-if="$root.canSeeCost()" style="width:100px"><input type="number" v-model.number="r._rate"></td>
+              <td class="small" style="white-space:nowrap"><span v-if="belowMoq(r)" style="color:var(--warn)" :title="'Combined qty for this vendor is below MOQ ' + qty(groups[(r._vendor || '-') + '|' + r.item_id].moq)">⚠ below MOQ</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" v-if="selected.length">
+      <div class="hd"><h3>Will create</h3><span class="spacer"></span>
+        <span class="small" style="color:var(--bad)" v-if="missingVendor">{{ missingVendor }} ticked line(s) without vendor</span>
+        <button class="btn primary" :disabled="busy" @click="create">Create {{ summary.length }} draft PO{{ summary.length === 1 ? '' : 's' }}</button></div>
+      <div class="row" style="gap:12px">
+        <div v-for="s in summary" class="kpi" style="min-width:220px">
+          <div class="l">{{ vname(s.vendor) }}</div><div class="v" style="font-size:18px">{{ s.lines }} line{{ s.lines === 1 ? '' : 's' }}</div>
+          <div class="s" v-if="$root.canSeeCost()">≈ {{ money(s.value) }} excl. VAT</div>
+        </div>
       </div>
     </div>
   </div>`,

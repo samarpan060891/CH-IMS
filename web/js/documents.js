@@ -488,7 +488,8 @@ export const issue = {
   refs: ['items', 'projects', 'cost_centers', 'locations', 'employees'],
   list: { select: '*, projects(code,name), cost_centers(code), material_requests(mr_no)', columns: [
     { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : r.cost_centers?.code, label: 'Project / CC' },
-    { k: r => r.material_requests?.mr_no, label: 'Request' }, { k: 'received_by_name', label: 'Received by' }, { k: 'total_value', label: 'Value', fmt: 'money', cost: true, sum: true }] },
+    { k: r => r.material_requests?.mr_no, label: 'Request' }, { k: 'received_by_name', label: 'Received by' }, { k: 'total_value', label: 'Value', fmt: 'money', cost: true, sum: true },
+    { k: 'ack_status', label: 'Receipt', fmt: 'badge' }] },
   defaults: () => ({ issue_date: today(), purpose: 'PROJECT', from_location_id: locId('MS') }),
   async onNew(ctx, parts) { await loadApprovedMrs(); if (parts[0] === 'mr' && parts[1]) await loadMrIntoIssue(ctx, parts[1]); },
   async afterLoad(ctx) { await loadApprovedMrs(ctx.doc.mr_id); if (ctx.doc.status === 'DRAFT') await fillAvail(ctx, 'lines', ctx.doc.from_location_id); },
@@ -501,6 +502,9 @@ export const issue = {
     { k: 'received_by_employee_id', label: 'Received by (employee)', type: 'ref', ref: 'employees', onChange: (d, v) => { const e = refRow('employees', v); if (e) d.received_by_name = e.name; } },
     { k: 'received_by_name', label: 'Received by (name)' },
     roMoney('total_value', 'Issue value AED', { show: d => d.status === 'POSTED' }),
+    { k: 'ack_status', label: 'Receipt acknowledgement', type: 'ro', fmt: v => label(v || ''), show: d => !!d.ack_status },
+    { k: 'ack_by', label: 'Acknowledged by', type: 'ro', fmt: (v, d) => v ? `${refLabel('profiles', v)} · ${dt(d.ack_at)}` : '', show: d => !!d.ack_by },
+    { k: 'ack_remarks', label: 'Acknowledgement remarks', type: 'ro', wide: true, show: d => !!d.ack_remarks },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
   headerNote: () => 'Stock is consumed <b>FIFO</b> (oldest lot first; earliest expiry first for dated items) when the issue is posted.',
@@ -511,6 +515,7 @@ export const issue = {
       { ...availF, show: d => d.status === 'DRAFT' },
       { k: 'qty', label: 'Issue qty', type: 'number', required: true },
       roMoney('value', 'Value', { show: d => d.status === 'POSTED' }),
+      { k: 'received_qty', label: 'Received on floor', type: 'ro', fmt: (v, r) => v == null ? '' : (num(v) === num(r.qty) ? qty(v) : '⚠ ' + qty(v)), show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
       roQty('returned_qty', 'Returned', { show: d => d.status === 'POSTED' }),
       { k: 'remarks', label: 'Remarks' },
     ],
@@ -526,9 +531,32 @@ export const issue = {
   actions: ctx => [
     { label: '✔ Post issue', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), done: 'Issued — stock deducted FIFO',
       confirm: 'Post this issue? Stock will be deducted FIFO and charged to the project / cost centre.', run: c => rpc('post_issue', { p_issue: c.doc.id }) },
+    { label: '✔ Acknowledge receipt', cls: 'ok', show: statusIs(ctx, 'POSTED') && ctx.doc.ack_status === 'PENDING' && hasRole('shop_floor', 'production_incharge'),
+      run: c => acknowledge(c) },
+    { label: 'Resolve discrepancy', show: ctx.doc.ack_status === 'DISCREPANCY' && hasRole('stores', 'factory_manager'), done: 'Discrepancy resolved',
+      run: async c => { const r = await reason('How was the discrepancy resolved? (re-issued, returned, adjusted …)'); if (r) return rpc('issue_resolve_discrepancy', { p_issue: c.doc.id, p_note: r }); } },
     { label: '🖨 Issue slip PDF', cls: 'primary', show: statusIs(ctx, 'POSTED'), reload: false, run: c => pdfIssue(c) },
     { label: '↩ Return from floor', show: statusIs(ctx, 'POSTED') && hasRole('stores'), reload: false, run: c => go(`d/ret/new/issue/${c.doc.id}`) },
   ],
+};
+
+// shop floor confirms what physically arrived; any difference needs a remark and alerts Stores + FM
+async function acknowledge(c) {
+  const lines = c.grids.lines;
+  const fields = lines.map(l => ({ k: l.id, label: `${itemName(l.item_id)} — issued ${qty(l.qty)} ${itemUom(l.item_id)}`, type: 'number', required: true, default: num(l.qty) }));
+  fields.push({ k: '_rem', label: 'Remarks (required if any quantity differs)', type: 'textarea' });
+  const v = await ask({ title: 'Acknowledge receipt — ' + c.doc.issue_no, message: 'Enter the quantity physically received for each item.', fields, okText: 'Acknowledge' });
+  if (!v) return;
+  const payload = lines.map(l => ({ line_id: l.id, received_qty: num(v[l.id]) }));
+  const res = await rpc('issue_acknowledge', { p_issue: c.doc.id, p_lines: payload, p_remarks: v._rem || null });
+  toast(res === 'DISCREPANCY' ? 'Recorded with discrepancy — Stores and Factory Manager alerted' : 'Receipt acknowledged', res === 'DISCREPANCY' ? 'info' : 'ok', 6000);
+}
+
+// "Receive material": the shop-floor view of posted issues awaiting acknowledgement
+export const ack = {
+  ...issue, key: 'ack', title: 'Receive Material', noCreate: true,
+  statusField: 'ack_status', statusLabel: 'Receipt', statuses: ['PENDING', 'DISCREPANCY', 'ACKNOWLEDGED'], defaultTab: 'PENDING',
+  list: { ...issue.list, columns: issue.list.columns.filter(c => c.k !== 'ack_status'), filter: q => q.eq('status', 'POSTED').not('ack_status', 'is', null) },
 };
 function pdfIssue(c) {
   const d = c.doc; const cost = canSeeCost();
@@ -543,6 +571,7 @@ function pdfIssue(c) {
            ['Issued from', refLabel('locations', d.from_location_id)], ['Received by', d.received_by_name || refLabel('employees', d.received_by_employee_id) || '-'], ['Remarks', d.remarks || '-']],
     columns: cols, rows: c.grids.lines,
     totals: cost ? [['Total value AED', money(d.total_value)]] : [],
+    notes: d.ack_by ? `Receipt ${label(d.ack_status).toLowerCase()} by ${refLabel('profiles', d.ack_by)} on ${dt(d.ack_at)}${d.ack_remarks ? ' — ' + d.ack_remarks : ''}` : '',
     signatures: [['Issued by', 'Stores'], ['Received by', d.received_by_name || 'Shop floor'], ['Approved by', 'Production In-charge']],
   });
 }
@@ -1088,4 +1117,4 @@ export const rel = {
   ],
 };
 
-export const DOCS = { pr, po, grn, mr, issue, ret, trf, adj, scrap, disposal, prt, inv, dn, pay, rel };
+export const DOCS = { pr, po, grn, mr, issue, ack, ret, trf, adj, scrap, disposal, prt, inv, dn, pay, rel };

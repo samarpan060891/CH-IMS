@@ -5,27 +5,25 @@ import { dialog, FieldInput, Modal, Icon } from './components.js';
 import { DocList, DocEditor } from './docengine.js';
 import { DOCS } from './documents.js';
 import { MASTERS, MasterPage } from './masters.js';
-import { Dashboard, Reports, Replenishment, Assets, Users, Settings, BufferReview } from './pages.js';
+import { Dashboard, Reports, Replenishment, Assets, Users, Settings, BufferReview, ConsolidatePR } from './pages.js';
 import { CONFIG } from './config.js';
 import { Importer } from './importer.js';
 import { Logo } from './logo.js';
 
 const ALL = null;
-// Dashboard is the fixed home link; below it four main menus in workflow order.
+// Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
 const MENU = [
   { g: 'Purchase', icon: 'shopping-cart', items: [
     { to: 'replenish', t: 'Replenishment', roles: ['purchase', 'stores', 'factory_manager'] },
     { to: 'buffers', t: 'Buffer review', roles: ['purchase', 'factory_manager', 'stores'], badge: 'dbm' },
     { to: 'd/pr', t: 'Requisitions', roles: ['purchase', 'stores', 'factory_manager', 'production_incharge'] },
+    { to: 'consolidate', t: 'Consolidate requisitions', roles: ['purchase'], badge: 'prOpen' },
     { to: 'd/po', t: 'Purchase orders', roles: ['purchase', 'factory_manager', 'finance', 'stores'], badge: 'po' },
     { to: 'm/vendors', t: 'Vendors', roles: ['purchase', 'finance', 'factory_manager'] },
     { to: 'm/item_vendors', t: 'Vendor price list', roles: ['purchase', 'finance', 'factory_manager'] },
   ] },
   { g: 'Inventory', icon: 'building-warehouse', items: [
-    { sep: 'Shop floor' },
-    { to: 'd/mr', t: 'Material requests', roles: ALL, badge: 'mr' },
-    { sep: 'Stores' },
     { to: 'd/grn', t: 'Goods receipts (GRN)', roles: ['stores', 'purchase', 'finance', 'factory_manager'] },
     { to: 'd/issue', t: 'Material issues', roles: ['stores', 'factory_manager', 'production_incharge'], badge: 'issue' },
     { to: 'd/ret', t: 'Returns from floor', roles: ['stores', 'factory_manager', 'production_incharge'] },
@@ -35,8 +33,12 @@ const MENU = [
     { to: 'd/prt', t: 'Purchase returns', roles: ['stores', 'purchase', 'finance'] },
     { sep: 'Assets & scrap' },
     { to: 'assets', t: 'Tool crib & assets', roles: ['stores', 'factory_manager', 'finance', 'production_incharge'] },
-    { to: 'd/scrap', t: 'Scrap notes', roles: ['stores', 'production_incharge', 'factory_manager'], badge: 'scrap' },
     { to: 'd/disposal', t: 'Scrap disposals', roles: ['stores', 'factory_manager', 'finance'], badge: 'disposal' },
+  ] },
+  { g: 'Shop floor', icon: 'hammer', items: [
+    { to: 'd/mr', t: 'Material requests', roles: ALL, badge: 'mr' },
+    { to: 'd/ack', t: 'Receive material', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager'], badge: 'ack' },
+    { to: 'd/scrap', t: 'Scrap notes', roles: ['stores', 'production_incharge', 'factory_manager', 'shop_floor'], badge: 'scrap' },
   ] },
   { g: 'Finance', icon: 'report-money', items: [
     { to: 'd/inv', t: 'Vendor invoices', roles: ['finance', 'factory_manager'] },
@@ -107,7 +109,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, FieldInput, Modal, Logo, Icon },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, FieldInput, Modal, Logo, Icon },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null }),
   watch: {
     // opening a page expands its menu group
@@ -131,7 +133,7 @@ const App = {
       if (a === 'm' && MASTERS[b]) return { comp: 'MasterPage', props: { cfg: MASTERS[b] }, title: MASTERS[b].title };
       if (a === 'r') return { comp: 'Reports', props: { rkey: b || 'stock' }, title: 'Reports' };
       if (a === 'import') return { comp: 'Importer', props: { tkey: b || 'items' }, title: 'Excel import' };
-      const simple = { dashboard: ['Dashboard', 'Dashboard'], replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
+      const simple = { dashboard: ['Dashboard', 'Dashboard'], replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };
       return { comp: 'Dashboard', props: {}, title: 'Dashboard' };
     },
