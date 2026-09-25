@@ -727,6 +727,7 @@ const MOVES = [
 ];
 export const Assets = {
   components: { DataTable, Modal, FieldInput, Badge },
+  props: { tag: String },     // opened from a scanned tool label
   data: () => ({ rows: [], loading: true, sel: null, hist: [], cls: '', st: '', edit: null }),
   computed: {
     cols() { return [{ k: 'asset_tag', label: 'Tag' }, { k: 'item_name', label: 'Item' }, { k: 'class_code', label: 'Class' }, { k: 'serial_no', label: 'Serial' }, { k: 'location_name', label: 'Location' },
@@ -736,7 +737,10 @@ export const Assets = {
     shown() { return this.rows.filter(r => (!this.cls || r.class_code === this.cls) && (!this.st || r.status === this.st)); },
     moves() { return this.sel ? MOVES.filter(m => m.st.includes(this.sel.status) && hasRole(...m.roles)) : []; },
   },
-  async mounted() { await loadRefs(['employees', 'locations', 'projects', 'cost_centers']); await this.load(); },
+  async mounted() {
+    await loadRefs(['employees', 'locations', 'projects', 'cost_centers']); await this.load();
+    if (this.tag) { const r = this.rows.find(x => x.asset_tag === this.tag); if (r) this.open(r); }
+  },
   methods: {
     label,
     async load() { this.loading = true; await run(async () => { this.rows = must(await sb.from('v_asset_register').select('*').order('asset_tag')); }); this.loading = false; },
@@ -768,6 +772,7 @@ export const Assets = {
     <div class="card">
       <div class="hd"><h3>Asset register & tool crib</h3><span class="spacer"></span>
         <select v-model="cls" style="max-width:160px"><option value="">All classes</option><option v-for="c in classes">{{ c }}</option></select>
+        <button class="btn sm" @click="$root.nav('labels/assets')">🏷 Print tool labels</button>
         <select v-model="st" style="max-width:160px"><option value="">All statuses</option><option v-for="s in ['IN_STORE','ISSUED','INSTALLED','UNDER_REPAIR','LOST','SCRAPPED']" :value="s">{{ label(s) }}</option></select>
       </div>
       <p class="small muted" style="margin-top:0">Machines, tools, office & camp equipment are registered automatically (one asset tag per unit) when their GRN is posted.</p>

@@ -18,6 +18,9 @@ Cloud inventory system for **Citi Homes Kitchen and Wooden Furniture Manufacturi
 - **Tool crib & assets**: machines, power/hand/measuring tools, office and labour-accommodation equipment get an asset tag per unit; issue/return to workers, overdue tracking, calibration.
 - **Scrap**: scrap generation and write-off (FM approval), scrap-yard stock, disposal / sale with gate pass (Factory Manager → Finance confirms rates & receipt).
 - **Project vs stock purchasing**: every requisition / PO / GRN line is either for general stock or for a named project. Project lines create stock **reserved** for that project (only its issues can use it; own stock is issued first). Leftovers go back to general stock through an FM-approved **Project stock release**. Buffers and re-order suggestions use free stock and stock POs only.
+- **Project budgets**: issue screen shows budget use; alerts at the warning % (default 80); issues above 100% need FM approval.
+- **Physical stock count**: blind count on phone (scan or search), found items, variances → FM-approved stock adjustment.
+- **QR labels & scanning**: A4 sticker sheets (3×8) for lots, items/bins and tools; scan with phone camera or USB scanner from the top bar or while counting.
 - **Excel import**: templates for Items, Vendors and Opening stock (opening stock becomes a draft GRN for Stores to post); rows are validated before import.
 - **Notifications**: in-app bell; every approval step notifies the next approver's role and informs the requester of approvals/rejections.
 - **Finance**: vendor invoices (3-way match), payment vouchers (bank, cheque, PDC, cash, LC, advances), debit notes, net payables with aging.

@@ -155,7 +155,8 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; flex-wrap: wrap; }
 .tabs a { padding: 8px 12px; color: var(--muted); border-bottom: 2px solid transparent; }
 .tabs a.on { color: var(--brand); border-color: var(--brand); font-weight: 600; }
-.bell { margin-left: auto; position: relative; }
+.bell { margin-left: auto; position: relative; display: flex; gap: 6px; }
+@media (max-width: 600px) { .hide-sm { display: none; } .top .who span { display: none; } }
 .bell .badge { background: #e11d48; color: #fff; border-radius: 10px; padding: 0 6px; font-size: 11px; margin-left: 2px; }
 .bell-dd { position: absolute; right: 0; top: 110%; width: min(380px, 90vw); max-height: 70vh; overflow-y: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.15); z-index: 40; }
 .notif { padding: 9px 12px; border-bottom: 1px solid #f0f1f3; cursor: pointer; }

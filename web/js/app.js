@@ -9,6 +9,9 @@ import { Dashboard, Reports, Replenishment, Assets, Users, Settings, BufferRevie
 import { CONFIG } from './config.js';
 import { Importer } from './importer.js';
 import { Logo } from './logo.js';
+import { CountSheet } from './counting.js';
+import { Labels } from './labels.js';
+import { Scanner, describeCode } from './scan.js';
 
 const ALL = null;
 // Dashboard is the fixed home link; below it the main menus in workflow order.
@@ -31,6 +34,8 @@ const MENU = [
     { to: 'd/adj', t: 'Stock adjustments', roles: ['stores', 'factory_manager', 'finance'], badge: 'adj' },
     { to: 'd/prt', t: 'Purchase returns', roles: ['stores', 'purchase', 'finance'] },
     { to: 'holds', t: 'Quarantine & exceptions', roles: ['stores', 'purchase', 'factory_manager', 'finance'], badge: 'holds' },
+    { to: 'd/cnt', t: 'Stock counts', roles: ['stores', 'factory_manager', 'finance'] },
+    { to: 'labels/lots', t: 'Labels & QR codes', roles: ['stores', 'factory_manager'] },
     { sep: 'Assets & scrap' },
     { to: 'assets', t: 'Tool crib & assets', roles: ['stores', 'factory_manager', 'finance', 'production_incharge'] },
     { to: 'd/disposal', t: 'Scrap disposals', roles: ['stores', 'factory_manager', 'finance'], badge: 'disposal' },
@@ -110,8 +115,8 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, FieldInput, Modal, Logo, Icon },
-  data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null }),
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon },
+  data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
     activeGroup: { immediate: true, handler(g) { if (g) this.openGroup = g; } },
@@ -134,6 +139,9 @@ const App = {
       if (a === 'm' && MASTERS[b]) return { comp: 'MasterPage', props: { cfg: MASTERS[b] }, title: MASTERS[b].title };
       if (a === 'r') return { comp: 'Reports', props: { rkey: b || 'stock' }, title: 'Reports' };
       if (a === 'import') return { comp: 'Importer', props: { tkey: b || 'items' }, title: 'Excel import' };
+      if (a === 'count' && b) return { comp: 'CountSheet', props: { id: b }, title: 'Stock count' };
+      if (a === 'labels') return { comp: 'Labels', props: { mode: b || 'lots', ref_id: c }, title: 'Labels & QR codes' };
+      if (a === 'assets') return { comp: 'Assets', props: { tag: b || null }, title: 'Tool crib & assets' };
       const simple = { dashboard: ['Dashboard', 'Dashboard'], replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };
       return { comp: 'Dashboard', props: {}, title: 'Dashboard' };
@@ -144,12 +152,19 @@ const App = {
     hasRole, canSeeCost, dtm,
     async openNotif(n) { this.bellOpen = false; await run(() => markRead([n.id])); if (n.link) go(n.link); },
     async readAll() { await run(() => markRead(state.notifs.map(n => n.id))); },
-    active(to) { return route.path === to || route.path.startsWith(to + '/') || (to === 'r/stock' && route.parts[0] === 'r' && route.path !== 'r/payables') || (to.startsWith('import') && route.parts[0] === 'import'); },
+    active(to) { return route.path === to || route.path.startsWith(to + '/') || (to === 'r/stock' && route.parts[0] === 'r' && route.path !== 'r/payables') || (to.startsWith('import') && route.parts[0] === 'import') || (to.startsWith('labels') && route.parts[0] === 'labels')
+        || (to === 'd/cnt' && route.parts[0] === 'count'); },
     nav(to) { go(to); this.sideOpen = false; },
     toggle(g) {
       this.openGroup = this.openGroup === g ? null : g;
       try { localStorage.setItem(OPEN_KEY, this.openGroup || ''); } catch { /* storage unavailable */ }
     },
+    async onScan(code) {
+      this.scanning = false;
+      const r = await run(() => describeCode(code));
+      if (r) this.scanResult = r;
+    },
+    scanGo(to) { this.scanResult = null; go(to); },
     groupBadge(g) { return g.items.reduce((s, i) => s + (i.badge ? (state.pending[i.badge] || 0) : 0), 0); },
     async logout() { await sb.auth.signOut(); },
     async boot(session) {
@@ -220,6 +235,7 @@ const App = {
         <button class="btn sm menu-btn" @click="sideOpen=!sideOpen" aria-label="Menu"><Icon name="menu-2" :size="17" /></button>
         <div class="title">{{ view.title }}</div>
         <div class="bell">
+          <button class="btn sm" @click="scanning = true" title="Scan a label" aria-label="Scan">📷<span class="hide-sm"> Scan</span></button>
           <button class="btn sm" @click="bellOpen=!bellOpen" title="Notifications" aria-label="Notifications"><Icon name="bell" :size="17" /><span class="badge" v-if="unread">{{ unread }}</span></button>
           <div class="bell-dd" v-if="bellOpen">
             <div class="row" style="padding:8px 12px;border-bottom:1px solid var(--line)"><b>Notifications</b><span class="spacer"></span>
@@ -239,6 +255,15 @@ const App = {
     <p v-if="dialog.message" style="margin-top:0">{{ dialog.message }}</p>
     <div class="grid" style="grid-template-columns:1fr" v-if="dialog.fields.length"><FieldInput v-for="f in dialog.fields" :key="f.k" :f="f" :doc="dialog.values" /></div>
     <template #footer><button class="btn" @click="dlgCancel">Cancel</button><button class="btn" :class="dialog.danger ? 'bad' : 'primary'" @click="dlgOk">{{ dialog.okText }}</button></template>
+  </Modal>
+  <Scanner v-if="scanning" @code="onScan" @close="scanning = false" />
+  <Modal v-if="scanResult" :title="scanResult.title" small @close="scanResult = null">
+    <div v-for="l in scanResult.lines" style="padding:3px 0">{{ l }}</div>
+    <template #footer>
+      <button class="btn" v-if="scanResult.kind === 'asset'" @click="scanGo('assets/' + scanResult.asset_tag)">Open in tool crib</button>
+      <button class="btn" v-if="scanResult.item_id" @click="scanGo('r/lots')">Stock by lot</button>
+      <button class="btn primary" @click="scanResult = null">Close</button>
+    </template>
   </Modal>
   <div class="toasts"><div v-for="t in state.toasts" :key="t.id" class="toast" :class="t.type">{{ t.msg }}</div></div>`,
 };

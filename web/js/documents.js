@@ -376,6 +376,7 @@ export const grn = {
   actions: ctx => [
     { label: '✔ Post GRN', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), done: 'GRN posted — stock updated',
       confirm: 'Post this GRN? Stock lots will be created and the PO updated. This cannot be undone.', run: c => rpc('post_grn', { p_grn: c.doc.id }) },
+    { label: '🏷 Print lot labels', show: statusIs(ctx, 'POSTED') && hasRole('stores'), reload: false, run: c => go(`labels/lots/${c.doc.id}`) },
     { label: 'Return to vendor', show: statusIs(ctx, 'POSTED') && hasRole('stores', 'purchase') && !!ctx.doc.vendor_id, reload: false, run: c => go(`d/prt/new/grn/${c.doc.id}`) },
     { label: 'Book vendor invoice', show: statusIs(ctx, 'POSTED') && hasRole('finance') && ctx.doc.receipt_type === 'PO', reload: false, run: c => go(`d/inv/new/grn/${c.doc.id}`) },
     { label: '🖨 GRN PDF', reload: false, run: c => {
@@ -1225,4 +1226,54 @@ export const rel = {
   ],
 };
 
-export const DOCS = { pr, po, grn, mr, issue, ack, ret, trf, adj, scrap, disposal, prt, inv, dn, pay, rel };
+// ======================================================================
+// PHYSICAL STOCK COUNT (header; counting happens on the mobile count screen)
+// ======================================================================
+export const cnt = {
+  key: 'cnt', title: 'Stock Counts', single: 'Stock Count', table: 'stock_counts', noField: 'count_no', dateField: 'count_date',
+  statuses: ['DRAFT', 'COUNTING', 'SUBMITTED', 'CLOSED', 'CANCELLED'], createRoles: ['stores'],
+  refs: ['locations', 'item_classes'],
+  list: { select: '*, locations(code,name), item_classes(code)', columns: [{ k: r => r.locations ? `${r.locations.code} — ${r.locations.name}` : '', label: 'Location' },
+          { k: r => r.item_classes?.code || 'All', label: 'Class' }, { k: 'blind', label: 'Blind', fmt: 'bool' }, { k: 'remarks', label: 'Remarks' }] },
+  defaults: () => ({ count_date: today(), blind: true, location_id: locId('MS') }),
+  header: [
+    { k: 'location_id', label: 'Location to count', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock },
+    { k: 'class_id', label: 'Item class (blank = all)', type: 'ref', ref: 'item_classes' },
+    { k: 'count_date', label: 'Count date', type: 'date', required: true },
+    { k: 'blind', label: 'Blind count', type: 'check', hint: 'Counters do not see system qty' },
+    { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
+  ],
+  headerNote: ctx => ({
+    DRAFT: 'Save, then <b>Start count</b>: the system takes a snapshot of every lot at this location. Avoid issuing from this location until the count is submitted.',
+    COUNTING: 'Counting in progress — open the <b>counting screen</b> on a phone. Scan lot labels or search items and enter what you physically find.',
+    SUBMITTED: 'Review the variances below, then <b>Create adjustment</b> — it goes to the Factory Manager for approval. Uncounted lines are left unchanged.',
+    CLOSED: 'Count closed. Variances were sent as a stock adjustment for approval.',
+  })[ctx.doc.status] || '',
+  async afterLoad(ctx) {
+    if (['SUBMITTED', 'CLOSED'].includes(ctx.doc.status)) ctx.extra.var = must(await sb.from('v_count_variance').select('*').eq('count_id', ctx.doc.id).order('item_code'));
+  },
+  async loadInfo(ctx) {
+    if (!ctx.extra.var) return [];
+    const rows = ctx.extra.var;
+    return [
+      { title: `Variances (${rows.filter(r => r.variance && Number(r.variance) !== 0).length} of ${rows.length} lines)`, rows: rows.filter(r => r.counted_qty === null || Number(r.variance) !== 0),
+        columns: [{ k: 'item_code', label: 'Item' }, { k: 'item_name', label: 'Description' }, { k: 'lot_no', label: 'Lot' }, { k: 'uom', label: 'UoM' },
+          { k: 'system_qty', label: 'System', fmt: 'qty' }, { k: r => r.counted_qty === null ? 'NOT COUNTED' : r.counted_qty, label: 'Counted' },
+          { k: 'variance', label: 'Variance', fmt: 'qty' }, { k: 'variance_value', label: 'Value AED', fmt: 'money', cost: true, sum: true },
+          { k: 'note', label: 'Note' }, { k: 'counted_by_name', label: 'Counted by' }] },
+    ];
+  },
+  actions: ctx => [
+    { label: '▶ Start count', cls: 'primary', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), reload: false,
+      confirm: 'Start the count? The system snapshots the stock at this location now.',
+      run: async c => { const n = await rpc('count_start', { p_count: c.doc.id }); toast(`${n} lots to count`, 'ok'); go('count/' + c.doc.id); } },
+    { label: '📱 Open counting screen', cls: 'primary', show: statusIs(ctx, 'COUNTING'), reload: false, run: c => go('count/' + c.doc.id) },
+    { label: '✔ Create adjustment', cls: 'ok', show: statusIs(ctx, 'SUBMITTED') && hasRole('stores'), reload: false,
+      confirm: 'Send the variances to the Factory Manager as a stock adjustment?',
+      run: async c => { const id = await rpc('count_to_adjustment', { p_count: c.doc.id }); if (id) { toast('Adjustment sent for approval', 'ok'); go('d/adj/' + id); } else { toast('No variances — count closed', 'ok'); go('d/cnt/' + c.doc.id); } } },
+    { label: 'Cancel count', cls: 'bad', show: statusIs(ctx, 'DRAFT', 'COUNTING', 'SUBMITTED') && hasRole('stores'), confirm: 'Cancel this count?', danger: true,
+      run: c => rpc('count_cancel', { p_count: c.doc.id }) },
+  ],
+};
+
+export const DOCS = { pr, po, grn, mr, issue, ack, ret, trf, adj, scrap, disposal, prt, inv, dn, pay, rel, cnt };
