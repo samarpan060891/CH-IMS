@@ -16,7 +16,7 @@ function chart(el, cfg) {
 // ======================================================================
 export const Dashboard = {
   components: { DataTable, Badge },
-  data: () => ({ loading: true, val: [], aging: [], stock: [], pay: [], assets: [], myPending: [], charts: [] }),
+  data: () => ({ loading: true, val: [], aging: [], stock: [], pay: [], assets: [], myPending: [], charts: [], budgets: [] }),
   computed: {
     cost() { return canSeeCost(); },
     stockValue() { return this.val.filter(v => v.kind === 'STOCK').reduce((s, v) => s + num(v.value), 0); },
@@ -45,6 +45,12 @@ export const Dashboard = {
         const [v, a, s, as] = await Promise.all(q);
         this.val = must(v); this.aging = must(a); this.stock = must(s); this.assets = must(as);
         if (hasRole('finance', 'factory_manager', 'purchase')) this.pay = must(await sb.from('v_vendor_payables').select('*'));
+        if (canSeeCost()) {
+          const warn = num(state.company?.budget_warn_pct || 80);
+          this.budgets = must(await sb.from('v_project_consumption').select('*').eq('status', 'OPEN').gt('budget_material', 0))
+            .map(p => ({ ...p, pct: Math.round(num(p.net_consumption) / num(p.budget_material) * 1000) / 10 }))
+            .filter(p => p.pct >= warn).sort((a, b) => b.pct - a.pct);
+        }
         await this.loadPending();
       });
       this.loading = false;
@@ -108,6 +114,10 @@ export const Dashboard = {
     <div class="card" v-if="myPending.length">
       <h3>Waiting for your action ({{ myPending.length }})</h3>
       <DataTable :columns="[{k:'type',label:'Document'},{k:'no',label:'No.'},{k:'date',label:'Created',fmt:'datetime'},{k:'status',label:'Status',fmt:'badge'}]" :rows="myPending" clickable @row="open" :searchable="false" />
+    </div>
+    <div class="card" v-if="budgets.length">
+      <h3>Projects near or over material budget ({{ budgets.length }})</h3>
+      <DataTable :searchable="false" :rows="budgets" :columns="[{k:'code',label:'Project'},{k:'name',label:'Name'},{k:'budget_material',label:'Budget AED',fmt:'money'},{k:'net_consumption',label:'Consumed AED',fmt:'money'},{k:'pct',label:'% used',n:true},{k:r=>r.pct>=100?'OVER':'WARNING',label:'Status',fmt:'badge'}]" />
     </div>
     <div class="charts">
       <div class="card" v-if="cost"><h3>Inventory valuation by class (AED)</h3><div class="chart-box"><canvas ref="cVal"></canvas></div></div>
@@ -856,6 +866,7 @@ export const Settings = {
         { k: 'address', label: 'Address', type: 'textarea', full: true },
         { k: 'default_vat_rate', label: 'Default VAT %', type: 'number' }, { k: 'grn_over_receipt_pct', label: 'Allowed over-receipt vs PO %', type: 'number' },
         { k: 'overstock_months', label: 'Overstock if cover > months', type: 'number' },
+        { k: 'budget_warn_pct', label: 'Project budget warning at %', type: 'number' },
         { k: 'dbm_min_red_days', label: 'DBM: min days in RED before raising', type: 'number' },
         { k: 'dbm_min_green_days', label: 'DBM: min days in GREEN before lowering', type: 'number' },
         { k: 'dbm_step_pct', label: 'DBM: adjustment step %', type: 'number' }, { k: 'abc_a_pct', label: 'ABC: A up to cumulative %', type: 'number' }, { k: 'abc_b_pct', label: 'ABC: B up to cumulative %', type: 'number' },

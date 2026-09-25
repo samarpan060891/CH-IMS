@@ -512,7 +512,11 @@ export const issue = {
     { k: 'ack_status', label: 'Receipt', fmt: 'badge' }] },
   defaults: () => ({ issue_date: today(), purpose: 'PROJECT', from_location_id: locId('MS') }),
   async onNew(ctx, parts) { await loadApprovedMrs(); if (parts[0] === 'mr' && parts[1]) await loadMrIntoIssue(ctx, parts[1]); },
-  async afterLoad(ctx) { await loadApprovedMrs(ctx.doc.mr_id); if (ctx.doc.status === 'DRAFT') await fillAvail(ctx, 'lines', ctx.doc.from_location_id); },
+  async afterLoad(ctx) {
+    await loadApprovedMrs(ctx.doc.mr_id);
+    if (ctx.doc.status === 'DRAFT') await fillAvail(ctx, 'lines', ctx.doc.from_location_id);
+    ctx.extra.budget = ctx.doc.project_id ? must(await sb.rpc('issue_budget_check', { p_issue: ctx.doc.id })) : null;
+  },
   header: [
     { k: 'mr_id', label: 'Against material request', type: 'ref', refOptions: () => opts.mrs, wide: true, onChange: (d, v, ctx) => v && loadMrIntoIssue(ctx, v) },
     ...mrTarget.map(f => ({ ...f, ro: d => !!d.mr_id })),
@@ -522,12 +526,25 @@ export const issue = {
     { k: 'received_by_employee_id', label: 'Received by (employee)', type: 'ref', ref: 'employees', onChange: (d, v) => { const e = refRow('employees', v); if (e) d.received_by_name = e.name; } },
     { k: 'received_by_name', label: 'Received by (name)' },
     roMoney('total_value', 'Issue value AED', { show: d => d.status === 'POSTED' }),
+    { k: 'budget_note', label: 'Over-budget approval', type: 'ro', wide: true, fmt: (v, d) => v ? `${refLabel('profiles', d.budget_approved_by)}: ${v}` : '', show: d => !!d.budget_approved_by },
     { k: 'ack_status', label: 'Receipt acknowledgement', type: 'ro', fmt: v => label(v || ''), show: d => !!d.ack_status },
     { k: 'ack_by', label: 'Acknowledged by', type: 'ro', fmt: (v, d) => v ? `${refLabel('profiles', v)} · ${dt(d.ack_at)}` : '', show: d => !!d.ack_by },
     { k: 'ack_remarks', label: 'Acknowledgement remarks', type: 'ro', wide: true, show: d => !!d.ack_remarks },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: () => 'Stock is consumed <b>FIFO</b> (oldest lot first; earliest expiry first for dated items) when the issue is posted.',
+  headerNote: ctx => {
+    let s = 'Stock is consumed <b>FIFO</b> (oldest lot first; earliest expiry first for dated items) when the issue is posted.';
+    const b = ctx.extra.budget;
+    if (b?.has_budget && canSeeCost()) {
+      const pct = Number(b.projected_pct), over = Number(b.projected) > Number(b.budget);
+      const col = over ? '#b91c1c' : pct >= Number(b.warn_pct) ? '#b45309' : '#15803d';
+      s += `<div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:#f8fafc;border:1px solid #e5e7eb">
+        <b>Project material budget:</b> AED ${money(b.budget)} · used AED ${money(b.used)}${ctx.doc.status === 'DRAFT' ? ` · this issue ≈ AED ${money(b.this_issue)}` : ''}
+        → <b style="color:${col}">${pct}%</b>${over ? (b.approved ? ' — over budget, <b>approved by FM</b>' : b.requested ? ' — over budget, <b>waiting for FM approval</b>' : ' — <b>over budget: FM approval needed before posting</b>') : ''}
+        <div style="height:6px;background:#e5e7eb;border-radius:3px;margin-top:6px"><div style="height:6px;border-radius:3px;background:${col};width:${Math.min(pct, 100)}%"></div></div></div>`;
+    }
+    return s;
+  },
   grids: [{
     key: 'lines', title: 'Items to issue', table: 'issue_lines', fk: 'issue_id', order: 'line_no', saveKeys: ['mr_line_id'],
     fields: [
@@ -552,6 +569,11 @@ export const issue = {
   actions: ctx => [
     { label: '✔ Post issue', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), done: 'Issued — stock deducted FIFO',
       confirm: 'Post this issue? Stock will be deducted FIFO and charged to the project / cost centre.', run: c => rpc('post_issue', { p_issue: c.doc.id }) },
+    { label: 'Request FM approval (over budget)', cls: 'primary', done: 'Factory Manager notified',
+      show: statusIs(ctx, 'DRAFT') && hasRole('stores') && isOverBudget(ctx) && !ctx.extra.budget.approved && !ctx.extra.budget.requested,
+      run: c => rpc('issue_budget_request', { p_issue: c.doc.id }) },
+    { label: '✔ Approve over budget', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('factory_manager') && isOverBudget(ctx) && !ctx.extra.budget.approved, done: 'Approved — Stores can post',
+      run: async c => { const r = await reason('Why may this project exceed its material budget?'); if (r) return rpc('issue_budget_approve', { p_issue: c.doc.id, p_note: r }); } },
     { label: '✔ Acknowledge receipt', cls: 'ok', show: statusIs(ctx, 'POSTED') && ctx.doc.ack_status === 'PENDING' && hasRole('shop_floor', 'production_incharge'),
       run: c => acknowledge(c) },
     { label: 'Resolve discrepancy', show: ctx.doc.ack_status === 'DISCREPANCY' && hasRole('stores', 'factory_manager'), done: 'Discrepancy resolved',
@@ -560,6 +582,8 @@ export const issue = {
     { label: '↩ Return to store', show: statusIs(ctx, 'POSTED') && hasRole('stores', 'shop_floor', 'production_incharge'), reload: false, run: c => go(`d/ret/new/issue/${c.doc.id}`) },
   ],
 };
+
+const isOverBudget = ctx => !!ctx.extra.budget?.has_budget && Number(ctx.extra.budget.projected) > Number(ctx.extra.budget.budget) + 0.005;
 
 // shop floor confirms what physically arrived; any difference needs a remark and alerts Stores + FM
 async function acknowledge(c) {
