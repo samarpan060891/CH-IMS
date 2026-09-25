@@ -5,7 +5,9 @@ param([string]$Url = 'https://ch-ims-production.up.railway.app')
 Add-Type -AssemblyName System.Drawing
 $dir = Join-Path $env:LOCALAPPDATA 'CitiHomesIMS'
 New-Item -ItemType Directory -Force $dir | Out-Null
-$ico = Join-Path $dir 'citihomes-ims-b.ico'
+# a fresh file name each time, so Windows never shows a cached older icon
+Get-ChildItem $dir -Filter 'citihomes*.ico' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+$ico = Join-Path $dir ('citihomes-ims-' + (Get-Date -Format 'yyyyMMddHHmmss') + '.ico')
 
 # --- Citi Homes IMS logo (approved option B), drawn in a 200 x 200 design space ---
 # CH monogram geometry is in a 680 x 340 box: thin open C + H whose crossbar starts inside the C.
@@ -41,11 +43,11 @@ function New-Logo([int]$size) {
   $fmt = New-Object System.Drawing.StringFormat; $fmt.Alignment = 'Center'; $fmt.LineAlignment = 'Center'
   $serif = if ((New-Object System.Drawing.Text.InstalledFontCollection).Families.Name -contains 'Georgia') { 'Georgia' } else { 'Times New Roman' }
 
-  if ($size -le 32) {
-    # tiny: circle + CH only, heavier strokes so it stays visible
+  if ($size -le 24) {
+    # tiny (taskbar / small icons): circle + CH only, heavier strokes so it stays visible
     $g.FillEllipse($black, 4, 4, 192, 192)
-    Draw-Monogram $g 24 62 152 ([single]($(if ($size -le 16) { 2.4 } else { 1.7 })))
-  } elseif ($size -le 64) {
+    Draw-Monogram $g 24 62 152 ([single]($(if ($size -le 16) { 2.4 } else { 1.9 })))
+  } elseif ($size -le 32) {
     # small: circle + CH + IMS badge
     $g.FillEllipse($black, 4, 0, 192, 192)
     Draw-Monogram $g 28 38 144 1.4
@@ -55,11 +57,12 @@ function New-Logo([int]$size) {
     $f = New-Object System.Drawing.Font $serif, 26, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
     $g.DrawString('IMS', $f, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 52, 150, 96, 44), $fmt)
   } else {
-    # full option B
+    # full option B logo (desktop sizes 48 and up); strokes a little heavier at 48-64 px
+    $boost = if ($size -le 64) { 1.35 } else { 1 }
     $g.FillEllipse($black, 12, 6, 176, 176)
-    Draw-Monogram $g 44 46 112 1
-    $f1 = New-Object System.Drawing.Font $serif, 14, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
-    $g.DrawString('C I T I   H O M E S', $f1, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 0, 110, 200, 22), $fmt)
+    Draw-Monogram $g 44 46 112 $boost
+    $f1 = New-Object System.Drawing.Font $serif, ([single]$(if ($size -le 64) { 16 } else { 14 })), ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+    $g.DrawString($(if ($size -le 64) { 'CITI HOMES' } else { 'C I T I   H O M E S' }), $f1, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 0, 110, 200, 22), $fmt)
     $badge = New-Object System.Drawing.Drawing2D.GraphicsPath
     $badge.AddArc(66, 164, 26, 26, 90, 180); $badge.AddArc(108, 164, 26, 26, 270, 180); $badge.CloseFigure()
     $g.FillPath($brown, $badge); $g.DrawPath((New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 2), $badge)
@@ -82,9 +85,9 @@ function Get-DibBytes([System.Drawing.Bitmap]$bmp) {
   $w.Flush(); return $ms.ToArray()
 }
 
-# --- write a multi-size .ico: 16/32/48 as DIB, 256 as PNG ---
+# --- write a multi-size .ico: 16-128 as DIB, 256 as PNG (covers 100%-200% display scaling) ---
 $images = @()
-foreach ($s in 16, 32, 48) { $b = New-Logo $s; $images += ,@($s, (Get-DibBytes $b)); $b.Dispose() }
+foreach ($s in 16, 24, 32, 48, 64, 96, 128) { $b = New-Logo $s; $images += ,@($s, (Get-DibBytes $b)); $b.Dispose() }
 $b = New-Logo 256; $ms = New-Object System.IO.MemoryStream; $b.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); $b.Dispose()
 $images += ,@(256, $ms.ToArray())
 $fs = [System.IO.File]::Create($ico); $bw = New-Object System.IO.BinaryWriter $fs
