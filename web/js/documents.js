@@ -262,12 +262,18 @@ async function loadPoIntoGrn(ctx, poId) {
   const lines = must(await sb.from('po_lines').select('*').eq('po_id', poId).order('line_no'));
   ctx.grids.lines = lines.filter(l => num(l.qty) > num(l.received_qty)).map(l => ({
     po_line_id: l.id, item_id: l.item_id, project_id: l.project_id, _bal: num(l.qty) - num(l.received_qty),
-    received_qty: num(l.qty) - num(l.received_qty), accepted_qty: num(l.qty) - num(l.received_qty),
+    dn_qty: num(l.qty) - num(l.received_qty), received_qty: num(l.qty) - num(l.received_qty), damaged_qty: 0,
     rate: num(l.rate) * (1 - num(l.discount_pct) / 100), vat_rate: l.vat_rate,
   }));
   ctx.dirty = true;
 }
 const isSerial = r => refRow('items', r.item_id)?.item_classes?.tracking === 'SERIAL';
+// preview of what posting will do: good = received - damaged; to stock = good up to PO balance; rest = excess
+function grnSplit(r) {
+  const good = Math.max(num(r.received_qty) - num(r.damaged_qty), 0);
+  const acc = r.po_line_id && r._bal !== undefined ? Math.min(good, Math.max(num(r._bal), 0)) : good;
+  return { good, acc, exc: good - acc };
+}
 export const grn = {
   key: 'grn', title: 'Goods Receipts (GRN)', single: 'GRN', table: 'grns', noField: 'grn_no', dateField: 'grn_date',
   statuses: ['DRAFT', 'POSTED', 'CANCELLED'], createRoles: ['stores'],
@@ -302,17 +308,25 @@ export const grn = {
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
   headerNote: ctx => ctx.doc.receipt_type === 'OPENING' ? 'Opening stock: enter the <b>Original receipt date</b> on each line so the aging report shows the true age.' :
-    'Accepted qty goes to stock; the difference (rejected) can be returned to the vendor through a Purchase Return. Landed-cost charges are spread over accepted items on posting.',
+    'Enter the <b>DN qty</b> (per supplier delivery note), the qty physically <b>received</b> and how many are <b>damaged</b>. On posting: good qty up to the PO balance is accepted into stock; ' +
+    '<b>damaged</b> and <b>excess</b> go to Quarantine on hold (damaged → draft purchase return; excess → Purchase accepts or returns); <b>short</b> vs DN is recorded and the PO stays open.',
   grids: [
     { key: 'lines', title: 'Items received', table: 'grn_lines', fk: 'grn_id', order: 'line_no', saveKeys: ['po_line_id'],
-      newRow: () => ({ vat_rate: 5, received_qty: null, accepted_qty: null }),
+      newRow: () => ({ vat_rate: 5, received_qty: null, damaged_qty: 0 }),
       fields: [
         itemF({ ro: r => !!r.po_line_id, filter: r => r.is_active, onChange: r => { const it = refRow('items', r.item_id); if (it) { r.vat_rate = it.vat_rate; if (!r.rate) r.rate = it.last_purchase_rate || it.standard_cost || 0; } } }), uomF,
-        { k: '_bal', label: 'PO balance', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.receipt_type === 'PO' },
+        { k: '_bal', label: 'PO balance', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.receipt_type === 'PO' && d.status === 'DRAFT' },
         lineProjectF({ label: 'Reserve for project', ro: r => !!r.po_line_id, show: d => ['PO', 'NON_PO'].includes(d.receipt_type) }),
-        { k: 'received_qty', label: 'Received', type: 'number', required: true, onChange: (r, v) => { r.accepted_qty = v; } },
-        { k: 'accepted_qty', label: 'Accepted', type: 'number', required: true },
-        { k: 'rejection_reason', label: 'Rejection reason' },
+        { k: 'dn_qty', label: 'DN qty', type: 'number', show: d => !['OPENING'].includes(d.receipt_type) },
+        { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true },
+        { k: 'damaged_qty', label: 'Damaged', type: 'number' },
+        { k: '_acc', label: 'To stock', type: 'ro', virtual: true, show: d => d.status === 'DRAFT', fmt: (v, r) => qty(grnSplit(r).acc) },
+        { k: '_exc', label: 'Excess', type: 'ro', virtual: true, show: d => d.status === 'DRAFT', fmt: (v, r) => { const x = grnSplit(r).exc; return x > 0 ? '⚠ ' + qty(x) : ''; } },
+        { k: '_short', label: 'Short vs DN', type: 'ro', virtual: true, show: d => d.status === 'DRAFT', fmt: (v, r) => { const x = num(r.dn_qty) - num(r.received_qty); return r.dn_qty != null && x > 0 ? '⚠ ' + qty(x) : ''; } },
+        roQty('accepted_qty', 'Accepted', { show: d => d.status === 'POSTED' }),
+        { k: 'excess_qty', label: 'Excess (open)', type: 'ro', fmt: v => num(v) ? '⚠ ' + qty(v) : '', show: d => d.status === 'POSTED' },
+        { k: 'short_qty', label: 'Short vs DN', type: 'ro', fmt: v => num(v) ? '⚠ ' + qty(v) : '', show: d => d.status === 'POSTED' },
+        { k: 'rejection_reason', label: 'Damage / short remarks', width: '170px' },
         { k: 'rate', label: 'Rate (excl. VAT)', type: 'number', cost: true },
         { k: 'vat_rate', label: 'VAT %', type: 'number', cost: true },
         { k: 'unit_cost_aed', label: 'Landed cost AED', type: 'ro', fmt: v => money(v), cost: true, show: d => d.status === 'POSTED' },
@@ -338,12 +352,15 @@ export const grn = {
   ],
   validate(ctx) {
     for (const r of ctx.grids.lines) {
-      if (num(r.accepted_qty) > num(r.received_qty)) throw new Error('Accepted qty cannot exceed received qty');
-      if (isSerial(r) && r.serial_nos?.length && r.serial_nos.length !== num(r.accepted_qty)) throw new Error(`${itemName(r.item_id)}: enter ${num(r.accepted_qty)} serial numbers or leave blank`);
+      if (num(r.damaged_qty) < 0 || num(r.damaged_qty) > num(r.received_qty)) throw new Error(`${itemName(r.item_id)}: damaged qty must be between 0 and the received qty`);
+      if ((num(r.damaged_qty) > 0 || (r.dn_qty != null && num(r.dn_qty) > num(r.received_qty))) && !r.rejection_reason)
+        throw new Error(`${itemName(r.item_id)}: add a remark for the damaged / short quantity`);
+      const acc = grnSplit(r).acc;
+      if (isSerial(r) && r.serial_nos?.length && r.serial_nos.length !== acc) throw new Error(`${itemName(r.item_id)}: enter ${acc} serial numbers or leave blank`);
     }
   },
   totals: ctx => {
-    const goods = ctx.grids.lines.reduce((s, r) => s + num(r.accepted_qty) * num(r.rate), 0) * num(ctx.doc.exchange_rate);
+    const goods = ctx.grids.lines.reduce((s, r) => s + num(r.received_qty) * num(r.rate), 0) * num(ctx.doc.exchange_rate);
     const ch = (ctx.grids.charges || []).reduce((s, r) => s + num(r.amount_aed), 0);
     return [{ l: 'Goods value AED', v: goods, cost: true }, { l: 'Landed charges AED', v: ch, cost: true }, { l: 'Total landed AED', v: goods + ch, cost: true }];
   },
@@ -364,7 +381,10 @@ export const grn = {
     { label: '🖨 GRN PDF', reload: false, run: c => {
         const d = c.doc; const cost = canSeeCost();
         const cols = [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
-          { h: 'Received', k: r => qty(r.received_qty), align: 'right' }, { h: 'Accepted', k: r => qty(r.accepted_qty), align: 'right' }, { h: 'Rejected', k: r => qty(num(r.received_qty) - num(r.accepted_qty)) || '', align: 'right' },
+          { h: 'DN qty', k: r => qty(r.dn_qty), align: 'right' }, { h: 'Received', k: r => qty(r.received_qty), align: 'right' },
+          { h: 'Damaged', k: r => num(r.damaged_qty) ? qty(r.damaged_qty) : '', align: 'right' }, { h: 'Accepted', k: r => qty(r.accepted_qty), align: 'right' },
+          { h: 'Excess', k: r => num(r.excess_qty) ? qty(r.excess_qty) : '', align: 'right' }, { h: 'Short', k: r => num(r.short_qty) ? qty(r.short_qty) : '', align: 'right' },
+          { h: 'Remarks', k: 'rejection_reason' },
           { h: 'Lot / Batch', k: r => [r.lot_no, r.batch_no].filter(Boolean).join(' / ') }, { h: 'Expiry', k: r => dt(r.expiry_date) }];
         if (cost) cols.push({ h: 'Rate', k: r => money(r.rate), align: 'right' }, { h: 'Landed AED', k: r => money(r.unit_cost_aed), align: 'right' });
         makePdf({ title: 'Goods Receipt Note', no: d.grn_no, date: d.grn_date, subtitle: label(d.status), landscape: true,
@@ -515,7 +535,8 @@ export const issue = {
       { ...availF, show: d => d.status === 'DRAFT' },
       { k: 'qty', label: 'Issue qty', type: 'number', required: true },
       roMoney('value', 'Value', { show: d => d.status === 'POSTED' }),
-      { k: 'received_qty', label: 'Received on floor', type: 'ro', fmt: (v, r) => v == null ? '' : (num(v) === num(r.qty) ? qty(v) : '⚠ ' + qty(v)), show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
+      { k: 'received_qty', label: 'Received good', type: 'ro', fmt: (v, r) => v == null ? '' : (num(v) + num(r.damaged_qty) === num(r.qty) ? qty(v) : '⚠ ' + qty(v)), show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
+      { k: 'damaged_qty', label: 'Damaged', type: 'ro', fmt: v => num(v) ? '⚠ ' + qty(v) : '', show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
       roQty('returned_qty', 'Returned', { show: d => d.status === 'POSTED' }),
       { k: 'remarks', label: 'Remarks' },
     ],
@@ -536,20 +557,27 @@ export const issue = {
     { label: 'Resolve discrepancy', show: ctx.doc.ack_status === 'DISCREPANCY' && hasRole('stores', 'factory_manager'), done: 'Discrepancy resolved',
       run: async c => { const r = await reason('How was the discrepancy resolved? (re-issued, returned, adjusted …)'); if (r) return rpc('issue_resolve_discrepancy', { p_issue: c.doc.id, p_note: r }); } },
     { label: '🖨 Issue slip PDF', cls: 'primary', show: statusIs(ctx, 'POSTED'), reload: false, run: c => pdfIssue(c) },
-    { label: '↩ Return from floor', show: statusIs(ctx, 'POSTED') && hasRole('stores'), reload: false, run: c => go(`d/ret/new/issue/${c.doc.id}`) },
+    { label: '↩ Return to store', show: statusIs(ctx, 'POSTED') && hasRole('stores', 'shop_floor', 'production_incharge'), reload: false, run: c => go(`d/ret/new/issue/${c.doc.id}`) },
   ],
 };
 
 // shop floor confirms what physically arrived; any difference needs a remark and alerts Stores + FM
 async function acknowledge(c) {
   const lines = c.grids.lines;
-  const fields = lines.map(l => ({ k: l.id, label: `${itemName(l.item_id)} — issued ${qty(l.qty)} ${itemUom(l.item_id)}`, type: 'number', required: true, default: num(l.qty) }));
-  fields.push({ k: '_rem', label: 'Remarks (required if any quantity differs)', type: 'textarea' });
-  const v = await ask({ title: 'Acknowledge receipt — ' + c.doc.issue_no, message: 'Enter the quantity physically received for each item.', fields, okText: 'Acknowledge' });
+  const fields = [];
+  lines.forEach(l => {
+    fields.push({ k: l.id + '_g', label: `${itemName(l.item_id)} — issued ${qty(l.qty)} ${itemUom(l.item_id)}: good`, type: 'number', required: true, default: num(l.qty) });
+    fields.push({ k: l.id + '_d', label: '… damaged', type: 'number', default: 0 });
+  });
+  fields.push({ k: '_rem', label: 'Remarks (required for short, excess or damaged)', type: 'textarea' });
+  const v = await ask({ title: 'Acknowledge receipt — ' + c.doc.issue_no,
+    message: 'For each item enter the good quantity received and any damaged quantity. Damaged goes back to Stores automatically; short or excess is flagged to Stores.', fields, okText: 'Acknowledge' });
   if (!v) return;
-  const payload = lines.map(l => ({ line_id: l.id, received_qty: num(v[l.id]) }));
+  const payload = lines.map(l => ({ line_id: l.id, received_qty: num(v[l.id + '_g']), damaged_qty: num(v[l.id + '_d']) }));
   const res = await rpc('issue_acknowledge', { p_issue: c.doc.id, p_lines: payload, p_remarks: v._rem || null });
-  toast(res === 'DISCREPANCY' ? 'Recorded with discrepancy — Stores and Factory Manager alerted' : 'Receipt acknowledged', res === 'DISCREPANCY' ? 'info' : 'ok', 6000);
+  const dmg = payload.some(p => p.damaged_qty > 0);
+  toast(res === 'DISCREPANCY' ? 'Recorded with short / excess — Stores and Factory Manager alerted'
+        : dmg ? 'Acknowledged — damaged items returned to Stores for replacement' : 'Receipt acknowledged', res === 'DISCREPANCY' || dmg ? 'info' : 'ok', 7000);
 }
 
 // "Receive material": the shop-floor view of posted issues awaiting acknowledgement
@@ -593,12 +621,14 @@ async function loadIssueIntoReturn(ctx, issueId) {
   ctx.dirty = true;
 }
 export const ret = {
-  key: 'ret', title: 'Returns from Floor', single: 'Material Return', table: 'material_returns', noField: 'return_no', dateField: 'return_date',
-  statuses: ['DRAFT', 'POSTED'], createRoles: ['stores'],
+  key: 'ret', title: 'Returns to Store', single: 'Material Return', table: 'material_returns', noField: 'return_no', dateField: 'return_date',
+  statuses: ['DRAFT', 'SUBMITTED', 'POSTED', 'CANCELLED'], createRoles: ['stores', 'shop_floor', 'production_incharge'],
+  // floor drafts and submits; Stores verifies (can change qty / condition) and posts
+  canEdit: ctx => (ctx.doc.status === 'DRAFT' && hasRole('stores', 'shop_floor', 'production_incharge')) || (ctx.doc.status === 'SUBMITTED' && hasRole('stores')),
   refs: ['items', 'locations'],
   list: { select: '*, material_issues(issue_no, projects(code), cost_centers(code))', columns: [{ k: r => r.material_issues?.issue_no, label: 'Issue' },
     { k: r => r.material_issues?.projects?.code || r.material_issues?.cost_centers?.code, label: 'Project / CC' }, { k: 'returned_by_name', label: 'Returned by' }, { k: 'total_value', label: 'Value', fmt: 'money', cost: true, sum: true }] },
-  defaults: () => ({ return_date: today(), to_location_id: locId('MS') }),
+  defaults: () => ({ return_date: today(), to_location_id: locId('MS'), returned_by_name: state.profile?.full_name || '' }),
   async onNew(ctx, parts) { await loadPostedIssues(); if (parts[0] === 'issue' && parts[1]) { ctx.doc.issue_id = parts[1]; await loadIssueIntoReturn(ctx, parts[1]); } },
   async afterLoad(ctx) { await loadPostedIssues(ctx.doc.issue_id); },
   header: [
@@ -609,11 +639,14 @@ export const ret = {
     roMoney('total_value', 'Credit value AED', { show: d => d.status === 'POSTED' }),
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: () => 'Good material goes back to its original lot (same cost & receipt date, so aging is preserved). Damaged material goes to Quarantine on HOLD for a scrap decision. The project is credited.',
+  headerNote: ctx => ctx.doc.status === 'SUBMITTED'
+    ? '<b>Stores:</b> physically check the material, correct the quantity / condition if needed, then click <b>Receive & post</b>.'
+    : 'Shop floor: pick the issue slip, enter what you are returning and <b>Submit to Stores</b>. Good material goes back to its original lot (same cost and receipt date); damaged goes to Quarantine. The project is credited when Stores posts.',
   grids: [{
     key: 'lines', title: 'Items returned', table: 'return_lines', fk: 'return_id', lineNo: false, addable: false, saveKeys: ['issue_line_id'],
     fields: [itemF({ ro: true }), uomF, { k: '_bal', label: 'Returnable', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.status === 'DRAFT' },
-             { k: 'qty', label: 'Return qty', type: 'number', required: true },
+             roQty('requested_qty', 'Returned by floor', { show: d => ['SUBMITTED', 'POSTED'].includes(d.status) }),
+             { k: 'qty', label: 'Return qty (verified)', type: 'number', required: true },
              { k: 'condition', label: 'Condition', type: 'select', required: true, options: ['GOOD', 'DAMAGED'] },
              { k: 'reason', label: 'Reason', width: '200px' }, roMoney('value', 'Credit value', { show: d => d.status === 'POSTED' })],
   }],
@@ -623,8 +656,11 @@ export const ret = {
     for (const r of ctx.grids.lines) if (r._bal !== undefined && num(r.qty) > num(r._bal)) throw new Error(`${itemName(r.item_id)}: max returnable ${qty(r._bal)}`);
   },
   actions: ctx => [
-    { label: '✔ Post return', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), confirm: 'Post this return? Stock will be added back and the project credited.', done: 'Return posted',
+    { label: 'Submit to Stores', cls: 'primary', show: statusIs(ctx, 'DRAFT') && hasRole('shop_floor', 'production_incharge') && !hasRole('stores'), done: 'Sent to Stores for verification',
+      run: c => rpc('return_action', { p_ret: c.doc.id, p_action: 'SUBMIT' }) },
+    { label: '✔ Receive & post', cls: 'ok', show: statusIs(ctx, 'DRAFT', 'SUBMITTED') && hasRole('stores'), confirm: 'Material checked? Stock will be added back and the project credited.', done: 'Return posted',
       run: c => rpc('post_return', { p_ret: c.doc.id }) },
+    { label: 'Cancel', show: statusIs(ctx, 'DRAFT', 'SUBMITTED') && ctx.editable, confirm: 'Cancel this return?', run: c => rpc('return_action', { p_ret: c.doc.id, p_action: 'CANCEL' }) },
     { label: '🖨 Return note PDF', reload: false, run: c => makePdf({
         title: 'Material Return Note', no: c.doc.return_no, date: c.doc.return_date,
         meta: [['Against issue', opts.issues.find(i => i.id === c.doc.issue_id)?.label || ''], ['Returned to', refLabel('locations', c.doc.to_location_id)], ['Returned by', c.doc.returned_by_name || '-'], ['Status', label(c.doc.status)]],
@@ -642,6 +678,14 @@ export const trf = {
   statuses: ['DRAFT', 'POSTED'], createRoles: ['stores'], refs: ['items', 'locations'],
   list: { select: '*, f:from_location_id(code), t:to_location_id(code)', columns: [{ k: r => r.f?.code, label: 'From' }, { k: r => r.t?.code, label: 'To' }, { k: 'remarks', label: 'Remarks' }] },
   defaults: () => ({ trf_date: today(), from_location_id: locId('MS') }),
+  // from Quarantine & exceptions: release a held lot back to the main store
+  async onNew(ctx, parts) {
+    if (parts[0] !== 'lot' || !parts[1]) return;
+    const l = must(await sb.from('stock_lots').select('id,item_id,location_id,qty_on_hand,lot_no').eq('id', parts[1]).single());
+    Object.assign(ctx.doc, { from_location_id: l.location_id, to_location_id: locId('MS'), remarks: `Release of held lot ${l.lot_no} after inspection` });
+    ctx.grids.lines = [{ item_id: l.item_id, lot_id: l.id, qty: num(l.qty_on_hand), _avail: num(l.qty_on_hand) }];
+    ctx.dirty = true;
+  },
   async afterLoad(ctx) { if (ctx.doc.status === 'DRAFT') await fillAvail(ctx, 'lines', ctx.doc.from_location_id); },
   header: [
     { k: 'from_location_id', label: 'From location', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock, onChange: (d, v, ctx) => fillAvail(ctx, 'lines', v) },
@@ -650,7 +694,7 @@ export const trf = {
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
   headerNote: () => 'Lots keep their original receipt date and cost when moved. Moving out of Quarantine releases the HOLD.',
-  grids: [{ key: 'lines', title: 'Items', table: 'transfer_lines', fk: 'transfer_id', order: 'line_no',
+  grids: [{ key: 'lines', title: 'Items', table: 'transfer_lines', fk: 'transfer_id', order: 'line_no', saveKeys: ['lot_id'],
     fields: [itemF({ filter: r => r.is_active && r.item_classes?.tracking === 'LOT', onChange: (r, v, ctx) => fillAvail(ctx, 'lines', ctx.doc.from_location_id) }), uomF, { ...availF, show: d => d.status === 'DRAFT' },
              { k: 'qty', label: 'Qty', type: 'number', required: true }] }],
   validate(ctx) { if (ctx.doc.from_location_id === ctx.doc.to_location_id) throw new Error('From and To locations must differ'); },
@@ -721,6 +765,14 @@ export const scrap = {
   list: { select: '*, projects(code), locations(code)', columns: [{ k: 'scrap_type', label: 'Type', fmt: 'label' }, { k: r => r.locations?.code, label: 'From' }, { k: r => r.projects?.code, label: 'Project' },
           { k: 'reason', label: 'Reason' }, { k: 'total_value', label: 'Written off', fmt: 'money', cost: true, sum: true }] },
   defaults: () => ({ scrap_date: today(), scrap_type: 'GENERATION' }),
+  // from Quarantine & exceptions: write off a damaged held lot
+  async onNew(ctx, parts) {
+    if (parts[0] !== 'lot' || !parts[1]) return;
+    const l = must(await sb.from('stock_lots').select('id,item_id,location_id,qty_on_hand,lot_no,project_id,hold_reason').eq('id', parts[1]).single());
+    Object.assign(ctx.doc, { scrap_type: 'WRITE_OFF', location_id: l.location_id, project_id: l.project_id, reason: `Damaged stock (${label(l.hold_reason || '')}) — lot ${l.lot_no}` });
+    ctx.grids.lines = [{ item_id: l.item_id, lot_id: l.id, qty: num(l.qty_on_hand), scrap_qty: 0 }];
+    ctx.dirty = true;
+  },
   header: [
     { k: 'scrap_type', label: 'Type', type: 'select', required: true, options: [{ v: 'GENERATION', l: 'Scrap generated on floor (offcuts, sawdust …)' }, { v: 'WRITE_OFF', l: 'Write-off stock to scrap (damaged / expired)' }] },
     { k: 'location_id', label: 'Write-off from location', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock, show: d => d.scrap_type === 'WRITE_OFF' },
@@ -732,7 +784,7 @@ export const scrap = {
     { k: 'reason', label: 'Reason', type: 'textarea', full: true, required: true },
   ],
   headerNote: () => 'Scrap items (class <b>Scrap</b>) are held in the Scrap Yard until disposed/sold through a Scrap Disposal.',
-  grids: [{ key: 'lines', title: 'Lines', table: 'scrap_lines', fk: 'scrap_id', lineNo: false,
+  grids: [{ key: 'lines', title: 'Lines', table: 'scrap_lines', fk: 'scrap_id', lineNo: false, saveKeys: ['lot_id'],
     fields: [
       { ...itemF({ filter: isLotItem, required: false }), label: 'Stock item written off', show: d => d.scrap_type === 'WRITE_OFF' },
       { k: 'qty', label: 'Qty written off', type: 'number', show: d => d.scrap_type === 'WRITE_OFF' },

@@ -540,6 +540,82 @@ export const ConsolidatePR = {
 };
 
 // ======================================================================
+// QUARANTINE & EXCEPTIONS: excess / damaged held stock and supplier receipt exceptions
+// ======================================================================
+const HOLD_LABEL = { EXCESS: 'Excess from supplier', DAMAGED: 'Damaged at supplier receipt', RETURN_DAMAGED: 'Damaged — returned from floor' };
+export const Holds = {
+  components: { DataTable, Badge },
+  data: () => ({ holds: [], exc: [], loading: true, busy: false }),
+  computed: {
+    groups() { return ['EXCESS', 'DAMAGED', 'RETURN_DAMAGED'].map(k => ({ k, t: HOLD_LABEL[k], rows: this.holds.filter(h => h.hold_reason === k) })).filter(g => g.rows.length); },
+    excCols() {
+      return [{ k: 'grn_no', label: 'GRN' }, { k: 'grn_date', label: 'Date', fmt: 'date' }, { k: 'vendor_name', label: 'Supplier' }, { k: 'po_no', label: 'PO' }, { k: 'vendor_dn_no', label: 'DN' },
+        { k: 'item_code', label: 'Item' }, { k: 'item_name', label: 'Description' }, { k: 'dn_qty', label: 'DN qty', fmt: 'qty' }, { k: 'received_qty', label: 'Received', fmt: 'qty' },
+        { k: 'damaged_qty', label: 'Damaged', fmt: 'qty' }, { k: 'accepted_qty', label: 'Accepted', fmt: 'qty' }, { k: 'excess_qty', label: 'Excess open', fmt: 'qty' }, { k: 'short_qty', label: 'Short vs DN', fmt: 'qty' },
+        { k: r => num(r.short_qty) * num(r.unit_cost_aed), label: 'Short value (claim)', fmt: 'money', cost: true, sum: true }, { k: 'rejection_reason', label: 'Remarks' }];
+    },
+  },
+  async mounted() { await this.load(); },
+  methods: {
+    qty, money, dt,
+    async load() {
+      this.loading = true;
+      await run(async () => {
+        this.holds = must(await sb.from('v_hold_stock').select('*').order('created_at'));
+        this.exc = must(await sb.from('v_grn_exceptions').select('*').order('grn_date', { ascending: false }).limit(1000));
+      });
+      this.loading = false;
+    },
+    async decide(h, action) {
+      if (action === 'ACCEPT' && !(await ask({ title: 'Accept excess', message: `Accept ${qty(h.qty_on_hand)} ${h.uom} of ${h.item_code} into stock? PO ${h.po_no} will be increased by this quantity and the Factory Manager informed.`, okText: 'Accept excess' }))) return;
+      this.busy = true;
+      const r = await run(() => rpc('grn_excess_decide', { p_lot: h.lot_id, p_action: action }));
+      this.busy = false;
+      if (r === 'ACCEPTED') { toast('Excess accepted into stock — PO amended', 'ok'); this.load(); }
+      else if (r) { toast('Draft purchase return created — post it when the goods leave', 'ok'); go('d/prt/' + r); }
+    },
+    async openReturn(h) {
+      const prt = must(await sb.from('purchase_returns').select('id').eq('grn_id', h.grn_id).eq('status', 'DRAFT').limit(1).maybeSingle());
+      go(prt ? 'd/prt/' + prt.id : 'd/prt/new/grn/' + h.grn_id);
+    },
+    can(...r) { return hasRole(...r); },
+  },
+  template: `<div>
+    <div class="card" v-if="!loading && !groups.length"><div class="empty">Nothing on hold in Quarantine</div></div>
+    <div class="card" v-for="g in groups" :key="g.k">
+      <div class="hd"><h3>{{ g.t }} ({{ g.rows.length }})</h3><span class="spacer"></span><button class="btn sm" @click="load">↻ Refresh</button></div>
+      <div class="tbl-wrap"><table class="t lines">
+        <thead><tr><th>Item</th><th>Lot</th><th>Source</th><th>For</th><th class="n">Qty</th><th class="n" v-if="$root.canSeeCost()">Value</th><th class="n">Days</th><th></th></tr></thead>
+        <tbody><tr v-for="h in g.rows" :key="h.lot_id">
+          <td>{{ h.item_code }} — {{ h.item_name }}</td><td class="small">{{ h.lot_no }}</td>
+          <td class="small">{{ h.grn_no ? h.grn_no + (h.po_no ? ' / ' + h.po_no : '') : 'Floor return' }}<div class="muted">{{ h.vendor_name }}</div></td>
+          <td class="small">{{ h.project_code || 'Stock' }}</td>
+          <td class="n">{{ qty(h.qty_on_hand) }} {{ h.uom }}</td><td class="n" v-if="$root.canSeeCost()">{{ money(h.value) }}</td><td class="n">{{ h.age_days }}</td>
+          <td style="white-space:nowrap">
+            <template v-if="g.k === 'EXCESS'">
+              <button class="btn sm ok" v-if="can('purchase') && h.po_no" :disabled="busy" @click="decide(h, 'ACCEPT')">Accept (amend PO)</button>
+              <button class="btn sm" v-if="can('purchase', 'stores')" :disabled="busy" @click="decide(h, 'RETURN')">Return to supplier</button>
+            </template>
+            <template v-else-if="g.k === 'DAMAGED'">
+              <button class="btn sm" v-if="can('purchase', 'stores')" @click="openReturn(h)">Purchase return</button>
+              <button class="btn sm" v-if="can('stores')" @click="$root.nav('d/trf/new/lot/' + h.lot_id)">Usable — release to stock</button>
+            </template>
+            <template v-else>
+              <button class="btn sm" v-if="can('stores')" @click="$root.nav('d/trf/new/lot/' + h.lot_id)">Repaired / usable — release</button>
+              <button class="btn sm bad" v-if="can('stores', 'production_incharge')" @click="$root.nav('d/scrap/new/lot/' + h.lot_id)">Scrap</button>
+            </template>
+          </td>
+        </tr></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <h3>Supplier receipt exceptions (short vs DN, damaged, excess)</h3>
+      <DataTable :columns="excCols" :rows="exc" :loading="loading" filename="grn_exceptions" />
+    </div>
+  </div>`,
+};
+
+// ======================================================================
 // BUFFER REVIEW (dynamic buffer management suggestions)
 // ======================================================================
 export const BufferReview = {

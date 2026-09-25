@@ -5,7 +5,7 @@ import { dialog, FieldInput, Modal, Icon } from './components.js';
 import { DocList, DocEditor } from './docengine.js';
 import { DOCS } from './documents.js';
 import { MASTERS, MasterPage } from './masters.js';
-import { Dashboard, Reports, Replenishment, Assets, Users, Settings, BufferReview, ConsolidatePR } from './pages.js';
+import { Dashboard, Reports, Replenishment, Assets, Users, Settings, BufferReview, ConsolidatePR, Holds } from './pages.js';
 import { CONFIG } from './config.js';
 import { Importer } from './importer.js';
 import { Logo } from './logo.js';
@@ -26,11 +26,11 @@ const MENU = [
   { g: 'Inventory', icon: 'building-warehouse', items: [
     { to: 'd/grn', t: 'Goods receipts (GRN)', roles: ['stores', 'purchase', 'finance', 'factory_manager'] },
     { to: 'd/issue', t: 'Material issues', roles: ['stores', 'factory_manager', 'production_incharge'], badge: 'issue' },
-    { to: 'd/ret', t: 'Returns from floor', roles: ['stores', 'factory_manager', 'production_incharge'] },
     { to: 'd/trf', t: 'Stock transfers', roles: ['stores', 'factory_manager'] },
     { to: 'd/rel', t: 'Project stock releases', roles: ['stores', 'factory_manager', 'production_incharge'], badge: 'rel' },
     { to: 'd/adj', t: 'Stock adjustments', roles: ['stores', 'factory_manager', 'finance'], badge: 'adj' },
     { to: 'd/prt', t: 'Purchase returns', roles: ['stores', 'purchase', 'finance'] },
+    { to: 'holds', t: 'Quarantine & exceptions', roles: ['stores', 'purchase', 'factory_manager', 'finance'], badge: 'holds' },
     { sep: 'Assets & scrap' },
     { to: 'assets', t: 'Tool crib & assets', roles: ['stores', 'factory_manager', 'finance', 'production_incharge'] },
     { to: 'd/disposal', t: 'Scrap disposals', roles: ['stores', 'factory_manager', 'finance'], badge: 'disposal' },
@@ -38,6 +38,7 @@ const MENU = [
   { g: 'Shop floor', icon: 'hammer', items: [
     { to: 'd/mr', t: 'Material requests', roles: ALL, badge: 'mr' },
     { to: 'd/ack', t: 'Receive material', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager'], badge: 'ack' },
+    { to: 'd/ret', t: 'Return to store', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager'], badge: 'ret' },
     { to: 'd/scrap', t: 'Scrap notes', roles: ['stores', 'production_incharge', 'factory_manager', 'shop_floor'], badge: 'scrap' },
   ] },
   { g: 'Finance', icon: 'report-money', items: [
@@ -109,7 +110,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, FieldInput, Modal, Logo, Icon },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, FieldInput, Modal, Logo, Icon },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null }),
   watch: {
     // opening a page expands its menu group
@@ -133,7 +134,7 @@ const App = {
       if (a === 'm' && MASTERS[b]) return { comp: 'MasterPage', props: { cfg: MASTERS[b] }, title: MASTERS[b].title };
       if (a === 'r') return { comp: 'Reports', props: { rkey: b || 'stock' }, title: 'Reports' };
       if (a === 'import') return { comp: 'Importer', props: { tkey: b || 'items' }, title: 'Excel import' };
-      const simple = { dashboard: ['Dashboard', 'Dashboard'], replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
+      const simple = { dashboard: ['Dashboard', 'Dashboard'], replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };
       return { comp: 'Dashboard', props: {}, title: 'Dashboard' };
     },
