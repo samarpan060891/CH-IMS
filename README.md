@@ -2,6 +2,8 @@
 
 Cloud inventory system for **Citi Homes Kitchen and Wooden Furniture Manufacturing LLC** (UAE).
 
+**Live app:** https://ch-ims-production.up.railway.app
+
 | Layer | Where |
 |---|---|
 | Database, logins, business rules | Supabase project `vvkkvudwbolhuveuxorc` (Mumbai) |
