@@ -249,7 +249,7 @@ export const MasterPage = {
     <div class="card"><DataTable :columns="cfg.columns" :rows="rows" :loading="loading" clickable @row="open" :filename="cfg.table" /></div>
     <Modal v-if="edit" :title="(edit.id ? 'Edit ' : 'New ') + cfg.single" @close="edit=null">
       <div v-for="s in sections" style="margin-bottom:16px">
-        <h3 style="font-size:13px;margin:0 0 8px;color:#8a5a2b">{{ s.title }}</h3>
+        <h3 style="font-size:13px;margin:0 0 8px;color:var(--brand)">{{ s.title }}</h3>
         <div class="grid"><FieldInput v-for="f in fields(s)" :key="f.k" :f="f" :doc="edit" :disabled="!canEdit" @changed="changed(f)" /></div>
       </div>
       <template #footer>

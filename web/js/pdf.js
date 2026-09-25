@@ -2,7 +2,7 @@
 import { state, dt, dtm, money } from './lib.js';
 import { logoPng } from './logo.js';
 
-const BRAND = [138, 90, 43];
+const BRAND = [27, 58, 107];   // navy
 
 export async function makePdf({ title, no, date, meta = [], columns, rows, totals = [], notes = '', signatures = [], filename, landscape = false, subtitle = '' }) {
   const { jsPDF } = window.jspdf;

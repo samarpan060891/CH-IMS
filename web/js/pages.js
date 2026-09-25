@@ -2,7 +2,7 @@
 import { sb, state, must, run, rpc, hasRole, canSeeCost, go, loadRefs, loadRef, refRow, refLabel, money, qty, aed, dt, label, num, today, toast, ROLES, loadCompany, refreshPending } from './lib.js';
 import { DataTable, Modal, FieldInput, RefSelect, Badge, ask } from './components.js';
 
-const PALETTE = ['#8a5a2b', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#dc2626', '#475569', '#a16207'];
+const PALETTE = ['#1b3a6b', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#dc2626', '#475569', '#a16207'];
 const ZONE_COLORS = { BLACK: '#111827', RED: '#dc2626', YELLOW: '#eab308', GREEN: '#16a34a', BLUE: '#2563eb' };
 const AGE_ORDER = ['0-30', '31-60', '61-90', '91-180', '181-365', '365+'];
 
