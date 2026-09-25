@@ -1,7 +1,7 @@
 // Document configurations: requisitions, POs, GRNs, requests, issues, returns, transfers,
 // adjustments, scrap, disposals, purchase returns, vendor invoices, debit notes, payments.
 import { reactive } from 'vue';
-import { sb, state, must, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef } from './lib.js';
+import { sb, state, must, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, toast } from './lib.js';
 import { ask } from './components.js';
 import { makePdf } from './pdf.js';
 
@@ -66,9 +66,14 @@ const pr = {
   statuses: ['DRAFT', 'SUBMITTED', 'PARTIAL_PO', 'PO_CREATED', 'CANCELLED'],
   createRoles: ['stores', 'purchase', 'production_incharge', 'factory_manager'], editStatuses: ['DRAFT', 'SUBMITTED'],
   refs: ['items', 'projects'],
-  list: { select: '*, projects(code)', columns: [{ k: 'source', label: 'Source', fmt: 'label' }, { k: r => r.projects?.code, label: 'Project' }, { k: 'required_date', label: 'Required', fmt: 'date' }, { k: 'remarks', label: 'Remarks' }] },
+  list: { select: '*, projects(code), material_requests(mr_no)', columns: [{ k: 'source', label: 'Source', fmt: 'label' }, { k: r => r.projects?.code || 'Stock', label: 'For' },
+          { k: r => r.material_requests?.mr_no, label: 'From request' }, { k: 'required_date', label: 'Required', fmt: 'date' }, { k: 'remarks', label: 'Remarks' }] },
   defaults: () => ({ pr_date: today(), source: 'MANUAL' }),
+  async afterLoad(ctx) {
+    if (ctx.doc.mr_id) ctx.doc._mr_no = must(await sb.from('material_requests').select('mr_no').eq('id', ctx.doc.mr_id).single()).mr_no;
+  },
   header: [
+    { k: '_mr_no', label: 'Raised from material request', type: 'ro', virtual: true, show: d => !!d.mr_id },
     { k: 'pr_date', label: 'Date', type: 'date', required: true },
     { k: 'source', label: 'Source', type: 'select', options: ['MANUAL', 'BUFFER', 'MATERIAL_REQUEST'], required: true },
     { k: 'project_id', label: 'Project (optional)', type: 'ref', ref: 'projects' },
@@ -86,6 +91,7 @@ const pr = {
       run: c => upd('purchase_requisitions', c.doc.id, { status: 'SUBMITTED' }) },
     { label: 'Create PO', cls: 'ok', show: statusIs(ctx, 'SUBMITTED', 'PARTIAL_PO') && hasRole('purchase'), reload: false,
       run: c => go(`d/po/new/pr/${c.doc.id}`) },
+    { label: 'Open material request', show: !!ctx.doc.mr_id, reload: false, run: c => go(`d/mr/${c.doc.mr_id}`) },
     { label: 'Cancel', show: statusIs(ctx, 'DRAFT', 'SUBMITTED') && ctx.editable, confirm: 'Cancel this requisition?',
       run: c => upd('purchase_requisitions', c.doc.id, { status: 'CANCELLED' }) },
     { label: '🖨 PDF', reload: false, run: c => makePdf({
@@ -391,7 +397,20 @@ export const mr = {
     { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : r.cost_centers?.code, label: 'Project / Cost centre' },
     { k: 'priority', label: 'Priority', fmt: 'badge' }, { k: 'required_date', label: 'Required', fmt: 'date' }, { k: r => r.profiles?.full_name, label: 'Requested by' }] },
   defaults: () => ({ mr_date: today(), purpose: 'PROJECT', priority: 'NORMAL' }),
-  async afterLoad(ctx) { await fillAvail(ctx, 'lines'); },
+  async afterLoad(ctx) {
+    await fillAvail(ctx, 'lines');
+    if (['APPROVED', 'PARTIALLY_ISSUED'].includes(ctx.doc.status)) {
+      const sh = must(await sb.rpc('mr_shortage', { p_mr: ctx.doc.id }));
+      ctx.grids.lines.forEach(r => { const x = sh.find(s => s.mr_line_id === r.id); r._short = x ? num(x.shortage) : 0; r._onord = x ? num(x.on_order) + num(x.requested) : 0; });
+      ctx.extra.shortLines = sh.filter(s => num(s.shortage) > 0).length;
+    }
+    ctx.extra.prs = must(await sb.from('purchase_requisitions').select('id,pr_no,status,pr_date').eq('mr_id', ctx.doc.id).order('created_at'));
+  },
+  async loadInfo(ctx) {
+    const prs = ctx.extra.prs || [];
+    return prs.length ? [{ title: 'Requisitions raised for this request', rows: prs,
+      columns: [{ k: 'pr_no', label: 'Requisition' }, { k: 'pr_date', label: 'Date', fmt: 'date' }, { k: 'status', label: 'Status', fmt: 'badge' }] }] : [];
+  },
   header: [
     ...mrTarget,
     { k: 'mr_date', label: 'Request date', type: 'date', required: true },
@@ -410,6 +429,8 @@ export const mr = {
       { k: 'requested_qty', label: 'Requested', type: 'number', required: true },
       { k: 'approved_qty', label: 'Approved qty', type: 'number', show: d => d.status !== 'DRAFT' },
       roQty('issued_qty', 'Issued', { show: d => !['DRAFT', 'PENDING_APPROVAL'].includes(d.status) }),
+      { k: '_onord', label: 'On order / requisitioned', type: 'ro', virtual: true, fmt: v => v ? qty(v) : '', show: d => ['APPROVED', 'PARTIALLY_ISSUED'].includes(d.status) },
+      { k: '_short', label: 'Shortage', type: 'ro', virtual: true, fmt: v => v ? '⚠ ' + qty(v) : '—', show: d => ['APPROVED', 'PARTIALLY_ISSUED'].includes(d.status) },
       { k: 'remarks', label: 'Remarks / drawing ref', width: '180px' },
     ],
   }],
@@ -423,6 +444,9 @@ export const mr = {
       { label: '✖ Reject', cls: 'bad', show: s === 'PENDING_APPROVAL' && hasRole('production_incharge'),
         run: async c => { const r = await reason('Reject request'); if (r) return rpc('mr_action', { p_mr: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
       { label: '📦 Issue material', cls: 'primary', show: ['APPROVED', 'PARTIALLY_ISSUED'].includes(s) && hasRole('stores'), reload: false, run: c => go(`d/issue/new/mr/${c.doc.id}`) },
+      { label: `🛒 Requisition shortage (${ctx.extra.shortLines || 0})`, show: ['APPROVED', 'PARTIALLY_ISSUED'].includes(s) && !!ctx.extra.shortLines && hasRole('stores', 'production_incharge', 'factory_manager', 'purchase'),
+        confirm: 'Create a requisition for the shortage and send it to Purchase? Stock, open POs and open requisitions are already deducted.',
+        reload: false, run: async c => { const id = await rpc('mr_raise_pr', { p_mr: c.doc.id }); toast('Requisition sent to Purchase', 'ok'); go('d/pr/' + id); } },
       { label: 'Short close', show: ['APPROVED', 'PARTIALLY_ISSUED'].includes(s) && hasRole('stores', 'production_incharge'), confirm: 'Close this request? Balance will not be issued.',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'CLOSE' }) },
       { label: 'Cancel', show: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(s), confirm: 'Cancel this request?',
