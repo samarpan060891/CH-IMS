@@ -108,6 +108,10 @@ table.t tr.click { cursor: pointer; }
 table.t tr.click:hover td { background: var(--brand-soft); }
 table.t td.n, table.t th.n { text-align: right; font-variant-numeric: tabular-nums; }
 table.t tfoot td { font-weight: 600; background: #fafafa; }
+/* dashboards: blocks follow the user's chosen order */
+.dash-body { display: flex; flex-direction: column; }
+.dash-ed { display: flex; flex-direction: column; gap: 4px; max-width: 620px; }
+.dash-ed > .row { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
 /* financial statements */
 table.t.fin { max-width: 760px; }
 table.t.fin tr.h td { font-weight: 700; color: var(--brand); padding-top: 14px; border-bottom: 1px solid var(--line); }

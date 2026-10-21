@@ -5,7 +5,7 @@ import { dialog, FieldInput, Modal, Icon } from './components.js';
 import { DocList, DocEditor } from './docengine.js';
 import { DOCS } from './documents.js';
 import { MASTERS, MasterPage } from './masters.js';
-import { Dashboard, DASHBOARDS, userDashboards } from './dashboards.js';
+import { Dashboard, DASHBOARDS, userDashboards, homeDashboard } from './dashboards.js';
 import { Reports, REPORTS, Replenishment, Assets, Users, Settings, BufferReview, ConsolidatePR, Holds } from './pages.js';
 import { CONFIG } from './config.js';
 import { Importer } from './importer.js';
@@ -217,7 +217,7 @@ const App = {
       if (a === 'attendance') return { comp: 'AttendanceSheet', props: {}, title: 'Attendance & overtime' };
       if (a === 'books') return { comp: 'Books', props: { tab: b || 'tb', arg: c || null }, title: 'Books of account' };
       // site supervisors land on the phone-friendly site app
-      if (a === 'site' || (a === 'dashboard' && !b && userDashboards()[0] === 'site')) return { comp: 'SiteApp', props: {}, title: 'Site' };
+      if (a === 'site' || (a === 'dashboard' && !b && homeDashboard() === 'site')) return { comp: 'SiteApp', props: {}, title: 'Site' };
       if (a === 'dashboard') return { comp: 'Dashboard', props: { kind: b || null }, title: 'Dashboard' };
       const simple = { replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };

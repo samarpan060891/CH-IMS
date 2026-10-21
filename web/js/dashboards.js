@@ -16,7 +16,7 @@ function chart(el, cfg) {
 
 // role → dashboard; the first role listed is the one whose approvals the administrator sees on that dashboard
 export const DASHBOARDS = {
-  management: { title: 'Management', roles: ['factory_manager'], sections: ['pending', 'projects', 'mgmtKpis', 'production', 'budgets', 'stockCharts'] },
+  management: { title: 'Management', roles: ['factory_manager'], sections: ['pending', 'projects', 'mgmtKpis', 'prodKpis', 'budgets', 'stockCharts'] },
   finance:    { title: 'Finance', roles: ['finance'], sections: ['pending', 'finKpis', 'billing', 'payables', 'budgets'] },
   purchase:   { title: 'Purchase', roles: ['purchase'], sections: ['pending', 'purKpis', 'poLate', 'zoneChart', 'payables'] },
   stores:     { title: 'Stores', roles: ['stores'], sections: ['pending', 'stockKpis', 'expiring', 'stockCharts', 'valuation'] },
@@ -31,17 +31,50 @@ export function userDashboards(p = state.profile) {
   if (set.length) return set;
   return p?.role === 'admin' ? Object.keys(DASHBOARDS) : [dashboardFor(p?.role)];
 }
+// the dashboard opened at sign-in: the user's own choice if still granted
+export function homeDashboard(p = state.profile) {
+  const ks = userDashboards(p), h = p?.dashboard_prefs?.home;
+  return ks.includes(h) ? h : ks[0];
+}
+
+// every section a dashboard can show (users add / remove / reorder these on their own dashboards)
+export const SECTIONS = {
+  pending: 'Waiting for your action', projects: 'Running projects', budgets: 'Projects near / over material budget',
+  mgmtKpis: 'Business overview figures', finKpis: 'Finance figures (bank, receivables, profit, VAT)', billing: 'Project billing', payables: 'Payables by vendor',
+  purKpis: 'Purchasing figures', poLate: 'Open purchase orders', zoneChart: 'Buffer zones chart',
+  stockKpis: 'Stock figures', expiring: 'Lots expiring within 60 days', stockCharts: 'Stock charts (value, aging, zones, status)', valuation: 'Valuation by category',
+  prodKpis: 'Production figures', woLate: 'Open production orders', wcLoad: 'Work centre load',
+  hrKpis: 'HR figures (headcount, attendance, leave, documents)', docExpiry: 'Employee documents expiring', onLeave: 'Current & upcoming leave',
+};
+// sections a user may put on a dashboard: those of all dashboards granted to them (so the data is theirs to see)
+export function userSections(p = state.profile) {
+  const out = new Set(['pending']);
+  userDashboards(p).forEach(k => (DASHBOARDS[k].sections || []).forEach(s => out.add(s)));
+  return Object.keys(SECTIONS).filter(s => out.has(s));
+}
 
 export const Dashboard = {
   components: { DataTable, Badge },
   props: { kind: String },
-  data: () => ({ loading: true, d: {}, myPending: [], charts: [] }),
+  data: () => ({ loading: true, d: {}, myPending: [], charts: [], ed: null }),
   computed: {
     isAdmin: () => state.profile?.role === 'admin',
     // only dashboards granted to the user open, whatever the address says
     allowed() { return userDashboards().filter(k => !DASHBOARDS[k].route); },
-    k() { return this.allowed.includes(this.kind) ? this.kind : (this.allowed[0] || dashboardFor(state.profile?.role)); },
+    k() {
+      if (this.allowed.includes(this.kind)) return this.kind;
+      const h = homeDashboard();
+      return this.allowed.includes(h) ? h : (this.allowed[0] || dashboardFor(state.profile?.role));
+    },
     cfg() { return DASHBOARDS[this.k]; },
+    // the user's own layout for this dashboard, else the standard one
+    sections() {
+      const mine = state.profile?.dashboard_prefs?.layouts?.[this.k], ok = userSections();
+      return (Array.isArray(mine) ? mine : this.cfg.sections).filter(s => ok.includes(s));
+    },
+    customised() { return Array.isArray(state.profile?.dashboard_prefs?.layouts?.[this.k]); },
+    addable() { return this.ed ? userSections().filter(s => !this.ed.list.includes(s)) : []; },
+    homeOpts() { return userDashboards().map(k => ({ v: k, l: DASHBOARDS[k].title })); },
     // approvals: the user's own; the administrator sees those of the dashboard's role
     viewRole() { const r = state.profile?.role; return this.cfg.roles.includes(r) || !this.isAdmin ? r : this.cfg.roles[0]; },
     cost() { return canSeeCost(); },
@@ -69,8 +102,21 @@ export const Dashboard = {
   beforeUnmount() { this.charts.forEach(c => c && c.destroy()); },
   methods: {
     money, aed, qty, label, dt,
-    has(s) { return (this.cfg.sections || []).includes(s); },
+    has(s) { return this.sections.includes(s); },
     any(...s) { return s.some(x => this.has(x)); },
+    // blocks are laid out in the user's order (flex order)
+    o(...s) { const i = Math.min(...s.map(x => this.sections.indexOf(x)).filter(i => i >= 0)); return { order: Number.isFinite(i) ? i : 99 }; },
+    customise() { this.ed = { list: [...this.sections], home: homeDashboard(), add: '' }; },
+    move(i, dir) { const l = this.ed.list, j = i + dir; if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; },
+    addSection() { if (this.ed.add) { this.ed.list.push(this.ed.add); this.ed.add = ''; } },
+    async savePrefs(reset) {
+      const cur = state.profile.dashboard_prefs || {};
+      const layouts = { ...(cur.layouts || {}) };
+      if (reset) delete layouts[this.k]; else layouts[this.k] = this.ed.list;
+      const prefs = { home: this.ed.home, layouts };
+      const ok = await run(async () => must(await sb.rpc('save_my_dashboard_prefs', { p_prefs: prefs })), reset ? 'Dashboard reset to standard' : 'Dashboard saved');
+      if (ok) { state.profile.dashboard_prefs = prefs; this.ed = null; await this.load(); }
+    },
     is(...roles) { return roles.includes(this.viewRole); },
     async load() {
       this.loading = true; this.d = {};
@@ -213,16 +259,45 @@ export const Dashboard = {
     <div class="row" style="margin-bottom:10px">
       <h2 style="margin:0;font-size:18px">{{ cfg.title }} dashboard</h2>
       <span class="muted small" v-if="viewRole !== $root.state.profile.role">· showing approvals of the {{ label(viewRole) }} role</span>
-      <span class="spacer"></span><button class="btn sm" @click="load">⟳ Refresh</button>
+      <span class="muted small" v-if="customised">· customised</span>
+      <span class="spacer"></span>
+      <button class="btn sm" v-if="!ed" @click="customise">✎ Customise</button>
+      <button class="btn sm" @click="load">⟳ Refresh</button>
     </div>
 
-    <div class="card" v-if="has('pending') && myPending.length">
+    <div class="card" v-if="ed">
+      <h3>Customise the {{ cfg.title }} dashboard</h3>
+      <p class="small muted" style="margin-top:0">Choose the sections you want and their order. These settings are yours only.</p>
+      <div class="dash-ed">
+        <div v-for="(s, i) in ed.list" :key="s" class="row">
+          <span class="muted small" style="width:20px">{{ i + 1 }}</span><span style="flex:1">{{ SECTIONS[s] }}</span>
+          <button class="btn sm" :disabled="i === 0" @click="move(i, -1)" title="Move up">↑</button>
+          <button class="btn sm" :disabled="i === ed.list.length - 1" @click="move(i, 1)" title="Move down">↓</button>
+          <button class="btn sm bad" @click="ed.list.splice(i, 1)" title="Remove">✕</button>
+        </div>
+        <div v-if="!ed.list.length" class="muted small">No sections — add at least one below.</div>
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:10px;margin-top:10px">
+        <select v-model="ed.add" style="max-width:340px"><option value="">+ Add a section…</option><option v-for="s in addable" :value="s">{{ SECTIONS[s] }}</option></select>
+        <button class="btn sm" :disabled="!ed.add" @click="addSection">Add</button>
+        <label class="row small" style="gap:6px" v-if="homeOpts.length > 1">Open at sign-in
+          <select v-model="ed.home"><option v-for="h in homeOpts" :value="h.v">{{ h.l }}</option></select></label>
+        <span class="spacer"></span>
+        <button class="btn sm" @click="savePrefs(true)" v-if="customised">Reset to standard</button>
+        <button class="btn sm" @click="ed = null">Cancel</button>
+        <button class="btn sm primary" :disabled="!ed.list.length" @click="savePrefs(false)">Save</button>
+      </div>
+    </div>
+
+    <div class="dash-body">
+
+    <div class="card" :style="o('pending')" v-if="has('pending') && myPending.length">
       <h3>Waiting for {{ viewRole !== $root.state.profile.role ? label(viewRole) : 'your action' }} ({{ myPending.length }})</h3>
       <DataTable :columns="[{k:'type',label:'Document'},{k:'no',label:'No.'},{k:'date',label:'Created',fmt:'datetime'},{k:'status',label:'Status',fmt:'badge'}]" :rows="myPending" clickable @row="open" :searchable="false" />
     </div>
 
     <!-- finance -->
-    <div class="kpis" v-if="has('finKpis')">
+    <div class="kpis" :style="o('finKpis')" v-if="has('finKpis')">
       <div class="kpi"><div class="l">Bank balance</div><div class="v">{{ aed(fin.bank) }}</div><div class="s">cash {{ aed(fin.cash) }} · cheques in hand {{ aed(fin.pdc) }}</div></div>
       <div class="kpi" :class="{warn: ar.over > 0}"><div class="l">Receivables</div><div class="v">{{ aed(ar.bal) }}</div><div class="s">overdue {{ aed(ar.over) }}</div></div>
       <div class="kpi" :class="{warn: overduePay > 0}"><div class="l">Net payables</div><div class="v">{{ aed(netPayable) }}</div><div class="s">overdue {{ aed(overduePay) }}</div></div>
@@ -231,7 +306,7 @@ export const Dashboard = {
       <div class="kpi"><div class="l">VAT payable (net)</div><div class="v">{{ aed(fin.vat) }}</div><div class="s">output − input to date</div></div>
       <div class="kpi"><div class="l">Unbilled work</div><div class="v">{{ aed(unbilled) }}</div><div class="s">retention held {{ aed(retention) }}</div></div>
     </div>
-    <div class="card" v-if="has('billing') && (d.billing || []).length">
+    <div class="card" :style="o('billing')" v-if="has('billing') && (d.billing || []).length">
       <h3>Project billing</h3>
       <DataTable :searchable="false" :rows="d.billing" clickable @row="r => go('d/si/new/project/' + r.project_id)" :columns="[{k:'project_code',label:'Project'},{k:'customer_name',label:'Customer'},
         {k:'contract_value',label:'Contract',fmt:'money',sum:true},{k:'billed_pct',label:'Billed %',n:true},{k: r => Math.max(Number(r.earned_value) - Number(r.certified_to_date), 0), label:'Unbilled work', fmt:'money', sum:true},
@@ -239,7 +314,7 @@ export const Dashboard = {
     </div>
 
     <!-- management -->
-    <div class="kpis" v-if="has('mgmtKpis')">
+    <div class="kpis" :style="o('mgmtKpis')" v-if="has('mgmtKpis')">
       <div class="kpi" v-if="cost"><div class="l">Inventory value</div><div class="v">{{ aed(stockValue) }}</div><div class="s">assets at cost {{ aed(assetValue) }}</div></div>
       <div class="kpi bad"><div class="l">Stock-outs</div><div class="v">{{ stockOuts }}</div><div class="s">buffer in red: {{ redZone }}</div></div>
       <div class="kpi" v-if="cost"><div class="l">Overstock / non-moving</div><div class="v">{{ aed(overstockVal) }}</div><div class="s">older than 90 days {{ aed(over90) }}</div></div>
@@ -249,7 +324,7 @@ export const Dashboard = {
     </div>
 
     <!-- purchase -->
-    <div class="kpis" v-if="has('purKpis')">
+    <div class="kpis" :style="o('purKpis')" v-if="has('purKpis')">
       <div class="kpi bad"><div class="l">Stock-outs</div><div class="v">{{ stockOuts }}</div></div>
       <div class="kpi warn"><div class="l">Buffer in RED</div><div class="v">{{ redZone }}</div><div class="s">order urgently</div></div>
       <div class="kpi"><div class="l">Items to order</div><div class="v">{{ toOrder }}</div><div class="s"><a href="#/replenish">replenishment →</a></div></div>
@@ -257,7 +332,7 @@ export const Dashboard = {
       <div class="kpi" :class="{bad: (d.pos || []).some(p => p.delivery_date && p.delivery_date < today() && ['RELEASED','PARTIALLY_RECEIVED'].includes(p.status))}"><div class="l">Late deliveries</div>
         <div class="v">{{ (d.pos || []).filter(p => p.delivery_date && p.delivery_date < today() && ['RELEASED','PARTIALLY_RECEIVED'].includes(p.status)).length }}</div><div class="s">past PO delivery date</div></div>
     </div>
-    <div class="card" v-if="has('poLate')">
+    <div class="card" :style="o('poLate')" v-if="has('poLate')">
       <h3>Open purchase orders by delivery date</h3>
       <DataTable :rows="d.pos || []" :loading="loading" clickable @row="r => go('d/po/' + r.id)" :columns="[{k:'po_no',label:'PO'},{k: r => r.vendors?.name, label:'Vendor'},{k: r => r.projects?.code || 'Stock', label:'For'},
         {k:'delivery_date',label:'Delivery',fmt:'date'},{k: r => r.delivery_date && r.delivery_date < today() && ['RELEASED','PARTIALLY_RECEIVED'].includes(r.status) ? 'OVERDUE' : '', label:'', fmt:'badge'},
@@ -265,7 +340,7 @@ export const Dashboard = {
     </div>
 
     <!-- stores -->
-    <div class="kpis" v-if="has('stockKpis')">
+    <div class="kpis" :style="o('stockKpis')" v-if="has('stockKpis')">
       <div class="kpi" v-if="cost"><div class="l">Inventory value (stock)</div><div class="v">{{ aed(stockValue) }}</div><div class="s">FIFO / weighted average</div></div>
       <div class="kpi bad"><div class="l">Stock-outs</div><div class="v">{{ stockOuts }}</div><div class="s">items with zero available</div></div>
       <div class="kpi warn"><div class="l">Buffer in RED</div><div class="v">{{ redZone }}</div><div class="s">order urgently</div></div>
@@ -273,34 +348,34 @@ export const Dashboard = {
       <div class="kpi" :class="{warn: (d.expiring || []).length}"><div class="l">Lots expiring ≤ 60 days</div><div class="v">{{ (d.expiring || []).length }}</div></div>
       <div class="kpi" :class="{bad: toolsOverdue}"><div class="l">Tools overdue for return</div><div class="v">{{ toolsOverdue }}</div><div class="s">calibration due: {{ calibDue }}</div></div>
     </div>
-    <div class="card" v-if="has('expiring') && (d.expiring || []).length">
+    <div class="card" :style="o('expiring')" v-if="has('expiring') && (d.expiring || []).length">
       <h3>Expiring within 60 days</h3>
       <DataTable :searchable="false" :rows="d.expiring" :columns="[{k:'item_code',label:'Item'},{k:'item_name',label:'Description'},{k:'location_code',label:'Location'},{k:'lot_no',label:'Lot'},{k:'batch_no',label:'Batch'},
         {k:'expiry_date',label:'Expiry',fmt:'date'},{k:'qty_on_hand',label:'Qty',fmt:'qty'},{k:'uom',label:'UoM'}]" />
     </div>
 
     <!-- production -->
-    <div class="kpis" v-if="has('prodKpis') || has('production')">
+    <div class="kpis" :style="o('prodKpis')" v-if="has('prodKpis') || has('production')">
       <div class="kpi"><div class="l">Open production orders</div><div class="v">{{ wos.length }}</div></div>
       <div class="kpi" :class="{bad: woLate.length}"><div class="l">Late orders</div><div class="v">{{ woLate.length }}</div><div class="s">past due date</div></div>
       <div class="kpi"><div class="l">Stages running</div><div class="v">{{ count('stagesRunning') }}</div><div class="s"><a href="#/floor">stage board →</a></div></div>
       <div class="kpi" :class="{warn: count('qc')}"><div class="l">QC rejects awaiting FM</div><div class="v">{{ count('qc') }}</div></div>
       <div class="kpi" v-if="has('prodKpis')" :class="{bad: (d.wc || []).some(w => w.is_down)}"><div class="l">Machines down</div><div class="v">{{ (d.wc || []).filter(w => w.is_down).length }}</div></div>
     </div>
-    <div class="card" v-if="has('woLate')">
+    <div class="card" :style="o('woLate')" v-if="has('woLate')">
       <h3>Open production orders by due date</h3>
       <DataTable :rows="wos" :loading="loading" clickable @row="r => go('d/wo/' + r.id)" :columns="[{k:'wo_no',label:'Order'},{k:'description',label:'Description'},{k: r => r.projects?.code || 'MTS', label:'Project'},
         {k: r => qty(r.qty_completed) + ' / ' + qty(r.qty), label:'Done / qty'},{k:'due_date',label:'Due',fmt:'date'},{k: r => r.due_date && r.due_date < today() ? 'OVERDUE' : '', label:'', fmt:'badge'},
         {k:'priority',label:'Priority',fmt:'label'},{k:'status',label:'Status',fmt:'badge'}]" />
     </div>
-    <div class="card" v-if="has('wcLoad') && (d.wc || []).length">
+    <div class="card" :style="o('wcLoad')" v-if="has('wcLoad') && (d.wc || []).length">
       <h3>Work centre load</h3>
       <DataTable :searchable="false" :rows="d.wc" :columns="[{k:'code',label:'Code'},{k:'name',label:'Work centre'},{k:'open_stages',label:'Open stages',n:true},{k:'running',label:'Running',n:true},
         {k:'remaining_hours',label:'Hours queued',fmt:'qty'},{k:'load_days',label:'Load (days)',fmt:'qty'},{k:'availability_pct_30d',label:'Availability 30d %',n:true},{k: r => r.is_down ? 'DOWN' : 'RUNNING', label:'Now', fmt:'badge'}]" />
     </div>
 
     <!-- HR -->
-    <div class="kpis" v-if="has('hrKpis')">
+    <div class="kpis" :style="o('hrKpis')" v-if="has('hrKpis')">
       <div class="kpi"><div class="l">Active employees</div><div class="v">{{ (d.emps || []).length }}</div><div class="s">on leave {{ (d.emps || []).filter(e => e.emp_status === 'ON_LEAVE').length }}</div></div>
       <div class="kpi"><div class="l">Attendance today</div><div class="v">{{ (d.att || []).filter(a => ['PRESENT','HALF_DAY'].includes(a.status)).length }}</div>
         <div class="s">absent {{ (d.att || []).filter(a => a.status === 'ABSENT').length }} · not marked {{ Math.max((d.emps || []).length - (d.att || []).length, 0) }}</div></div>
@@ -311,19 +386,19 @@ export const Dashboard = {
         <div class="s"><span class="b" :class="d.payrollRun[0].status">{{ label(d.payrollRun[0].status) }}</span></div></div>
       <div class="kpi" v-if="cost"><div class="l">Advances outstanding</div><div class="v">{{ aed((d.advances || []).reduce((s, a) => s + Number(a.amount) - Number(a.recovered || 0), 0)) }}</div></div>
     </div>
-    <div class="card" v-if="has('docExpiry') && (d.docs || []).length">
+    <div class="card" :style="o('docExpiry')" v-if="has('docExpiry') && (d.docs || []).length">
       <h3>Employee documents expiring</h3>
       <DataTable :searchable="false" :rows="d.docs" clickable @row="r => go('d/emp/' + r.employee_id)" :columns="[{k:'emp_code',label:'Code'},{k:'name',label:'Employee'},{k:'doc_type',label:'Document',fmt:'label'},
         {k:'doc_no',label:'No.'},{k:'expiry_date',label:'Expiry',fmt:'date'},{k:'days_left',label:'Days left',n:true},{k:'expiry_status',label:'Status',fmt:'badge'}]" />
     </div>
-    <div class="card" v-if="has('onLeave') && (d.leaves || []).length">
+    <div class="card" :style="o('onLeave')" v-if="has('onLeave') && (d.leaves || []).length">
       <h3>Current & upcoming leave</h3>
       <DataTable :searchable="false" :rows="d.leaves" clickable @row="r => go('d/leave/' + r.id)" :columns="[{k: r => r.employees ? r.employees.name + ' (' + r.employees.emp_code + ')' : '', label:'Employee'},
         {k:'leave_type',label:'Type',fmt:'label'},{k:'from_date',label:'From',fmt:'date'},{k:'to_date',label:'To',fmt:'date'},{k:'days',label:'Days',n:true},{k:'status',label:'Status',fmt:'badge'}]" />
     </div>
 
     <!-- shared sections -->
-    <div class="card" v-if="has('projects') && (d.projects || []).length">
+    <div class="card" :style="o('projects')" v-if="has('projects') && (d.projects || []).length">
       <h3>Running projects ({{ d.projects.length }})</h3>
       <div class="tbl-wrap"><table class="t">
         <thead><tr><th>Project</th><th>Due</th><th style="min-width:160px">Progress (installed value)</th><th class="n">Units handed over</th><th class="n">Snagging</th>
@@ -343,26 +418,27 @@ export const Dashboard = {
         </tr></tbody>
       </table></div>
     </div>
-    <div class="card" v-if="has('payables') && (d.pay || []).some(p => Number(p.net_payable_aed))">
+    <div class="card" :style="o('payables')" v-if="has('payables') && (d.pay || []).some(p => Number(p.net_payable_aed))">
       <h3>Payables by vendor</h3>
       <DataTable :searchable="false" :rows="(d.pay || []).filter(p => Number(p.net_payable_aed))" :columns="[{k:'name',label:'Vendor'},{k:'payment_term',label:'Terms'},{k:'not_due_aed',label:'Not due',fmt:'money',sum:true},
         {k: r => Number(r.overdue_1_30_aed) + Number(r.overdue_31_60_aed) + Number(r.overdue_61_90_aed) + Number(r.overdue_90_plus_aed), label:'Overdue', fmt:'money', sum:true},
         {k:'pdc_not_matured_aed',label:'PDC not matured',fmt:'money',sum:true},{k:'net_payable_aed',label:'Net payable',fmt:'money',sum:true}]" />
     </div>
-    <div class="card" v-if="has('budgets') && (d.budgets || []).length">
+    <div class="card" :style="o('budgets')" v-if="has('budgets') && (d.budgets || []).length">
       <h3>Projects near or over material budget ({{ d.budgets.length }})</h3>
       <DataTable :searchable="false" :rows="d.budgets" :columns="[{k:'code',label:'Project'},{k:'name',label:'Name'},{k:'budget_material',label:'Budget AED',fmt:'money'},{k:'net_consumption',label:'Consumed AED',fmt:'money'},{k:'pct',label:'% used',n:true},{k:r=>r.pct>=100?'OVER':'WARNING',label:'Status',fmt:'badge'}]" />
     </div>
-    <div class="charts" v-if="has('stockCharts') || has('zoneChart')">
+    <div class="charts" :style="o('stockCharts', 'zoneChart')" v-if="has('stockCharts') || has('zoneChart')">
       <div class="card" v-if="has('stockCharts') && cost"><h3>Inventory valuation by class (AED)</h3><div class="chart-box"><canvas ref="cVal"></canvas></div></div>
       <div class="card" v-if="has('stockCharts') && cost"><h3>Inventory aging by class (AED)</h3><div class="chart-box"><canvas ref="cAge"></canvas></div></div>
       <div class="card"><h3>TOC buffer zones (items with a buffer)</h3><div class="chart-box"><canvas ref="cZone"></canvas></div></div>
       <div class="card" v-if="has('stockCharts')"><h3>Stock status (items)</h3><div class="chart-box"><canvas ref="cStatus"></canvas></div></div>
     </div>
-    <div class="card" v-if="has('valuation') && cost">
+    <div class="card" :style="o('valuation')" v-if="has('valuation') && cost">
       <h3>Valuation by category</h3>
       <DataTable :columns="[{k:'kind',label:'Kind',fmt:'label'},{k:'class_name',label:'Class'},{k:'category_name',label:'Category'},{k:'items',label:'Items',n:true},{k:'qty',label:'Qty',fmt:'qty'},{k:'value',label:'Value AED',fmt:'money',sum:true}]" :rows="d.val || []" filename="valuation_by_category" />
     </div>
+    </div>
   </div>`,
-  setup() { return { go, today }; },
+  setup() { return { go, today, SECTIONS }; },
 };
