@@ -50,6 +50,7 @@ const MENU = [
     { to: 'd/prt', t: 'Purchase returns', roles: ['stores', 'purchase', 'finance'] },
     { to: 'holds', t: 'Quarantine & exceptions', roles: ['stores', 'purchase', 'factory_manager', 'finance'], badge: 'holds' },
     { to: 'd/cnt', t: 'Stock counts', roles: ['stores', 'factory_manager', 'finance'] },
+    { to: 'r/offcuts', t: '✂ Offcut stock', roles: ['stores', 'factory_manager', 'production_incharge', 'purchase', 'finance', 'shop_floor'] },
     { to: 'labels/lots', t: 'Labels & QR codes', roles: ['stores', 'factory_manager'] },
     { sep: 'Assets & scrap' },
     { to: 'assets', t: 'Tool crib & assets', roles: ['stores', 'factory_manager', 'finance', 'production_incharge'] },
@@ -58,7 +59,7 @@ const MENU = [
   { g: 'Shop floor', icon: 'hammer', items: [
     { to: 'd/mr', t: 'Material requests', roles: ALL, badge: 'mr' },
     { to: 'd/ack', t: 'Receive material', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager', 'site_supervisor'], badge: 'ack' },
-    { to: 'd/ret', t: 'Return to store', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager', 'site_supervisor'], badge: 'ret' },
+    { to: 'd/ret', t: 'Return to store & offcuts', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager', 'site_supervisor'], badge: 'ret' },
     { to: 'd/scrap', t: 'Scrap notes', roles: ['stores', 'production_incharge', 'factory_manager', 'shop_floor'], badge: 'scrap' },
   ] },
   { g: 'Production', icon: 'building-factory', items: [

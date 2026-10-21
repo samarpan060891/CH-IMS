@@ -24,6 +24,12 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
 - **Snags & site app**: snag list per unit with phone-camera photos (private storage), site supervisor fixes (rework crew costed), Production In-charge / FM verifies or reopens; no handover with open snags; snag register; phone-first **Site app** (units, log work, snags, deliveries to confirm) that site supervisors land on.
 - **Tool crib & assets**: machines, power/hand/measuring tools, office and labour-accommodation equipment get an asset tag per unit; issue/return to workers, overdue tracking, calibration.
 - **Scrap**: scrap generation and write-off (FM approval), scrap-yard stock, disposal / sale with gate pass (Factory Manager → Finance confirms rates & receipt).
+- **Offcuts (panels & timber)**: a part-used sheet or length comes back on a material return as an offcut with its size (L × W, or L for timber) and number of pieces;
+  it is valued pro-rata to the full sheet / length (item master size) and credited to the job. The Production In-charge proposes keep or scrap for each offcut,
+  the Factory Manager approves (or sends back), then Stores receives: kept pieces become individual offcut lots with their size and QR label (Labels → Offcuts);
+  scrapped pieces stay charged to the job. Offcuts are never picked automatically and are issued as whole pieces; they are listed first in the issue's
+  batch / offcut choice, and production orders show offcuts in stock that fit cut-list parts (best fit first, grain respected). Free stock and replenishment ignore offcuts.
+  Offcut stock report; offcut value / pieces available as KPI-card measures.
 - **Project vs stock purchasing**: every requisition / PO / GRN line is either for general stock or for a named project. Project lines create stock **reserved** for that project (only its issues can use it; own stock is issued first). Leftovers go back to general stock through an FM-approved **Project stock release**. Buffers and re-order suggestions use free stock and stock POs only.
 - **Project budgets**: issue screen shows budget use; alerts at the warning % (default 80); issues above 100% need FM approval.
 - **Physical stock count**: blind count on phone (scan or search), found items, variances → FM-approved stock adjustment.

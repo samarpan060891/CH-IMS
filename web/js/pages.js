@@ -16,6 +16,12 @@ export const REPORTS = {
     { k: 'on_order', label: 'On order (stock)', fmt: 'qty' }, { k: 'on_order_projects', label: 'On order (projects)', fmt: 'qty' }, { k: 'open_demand', label: 'Open requests', fmt: 'qty' },
     { k: 'stock_value', label: 'Value AED', fmt: 'money', cost: true, sum: true }, { k: 'avg_daily_consumption', label: 'Avg/day', fmt: 'qty' }, { k: 'stock_cover_days', label: 'Cover days', n: true },
     { k: 'last_receipt', label: 'Last receipt', fmt: 'date' }, { k: 'last_issue', label: 'Last issue', fmt: 'date' }, { k: 'stock_status', label: 'Status', fmt: 'badge' }, Z] },
+  offcuts: { title: 'Offcut stock (panels & timber pieces)', src: 'v_offcuts', order: 'item_code', columns: [
+    { k: 'item_code', label: 'Item' }, { k: 'item_name', label: 'Description' }, { k: 'kind', label: 'Type', fmt: 'label' }, { k: 'thickness_mm', label: 'Thk mm', n: true },
+    { k: 'length_mm', label: 'Length mm', n: true }, { k: 'width_mm', label: 'Width mm', n: true }, { k: 'area_m2', label: 'Area m²', fmt: 'qty', sum: true },
+    { k: 'qty_on_hand', label: 'Share of unit', fmt: 'qty' }, { k: 'uom', label: 'UoM' }, { k: 'lot_no', label: 'Piece' }, { k: 'location_code', label: 'Location' },
+    { k: 'return_no', label: 'From return' }, { k: 'received_date', label: 'Returned', fmt: 'date' }, { k: 'age_days', label: 'Age days', n: true },
+    { k: 'value', label: 'Value AED', fmt: 'money', cost: true, sum: true }] },
   reserved: { title: 'Reserved stock by project', src: 'v_project_reserved', order: 'project_code', columns: [
     { k: 'project_code', label: 'Project' }, { k: 'project_name', label: 'Name' }, { k: 'project_status', label: 'Status', fmt: 'badge' },
     { k: 'item_code', label: 'Item' }, { k: 'item_name', label: 'Description' }, { k: 'class_code', label: 'Class' }, { k: 'location_code', label: 'Location' }, { k: 'lot_no', label: 'Lot' },

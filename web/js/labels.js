@@ -43,7 +43,7 @@ export const Labels = {
   props: { mode: { type: String, default: 'lots' }, ref_id: String },
   data: () => ({ rows: [], loading: false, grn: null, loc: null, q: '', skip: 0, grns: [], busy: false }),
   computed: {
-    tabs() { return [{ k: 'lots', t: 'Stock lots' }, { k: 'items', t: 'Items / bin labels' }, { k: 'assets', t: 'Tools & assets' }]; },
+    tabs() { return [{ k: 'lots', t: 'Stock lots' }, { k: 'offcuts', t: 'Offcuts' }, { k: 'items', t: 'Items / bin labels' }, { k: 'assets', t: 'Tools & assets' }]; },
     shown() {
       const q = this.q.toLowerCase().trim();
       return this.rows.filter(r => !q || JSON.stringify([r.title, r.name, r.line1]).toLowerCase().includes(q));
@@ -78,6 +78,13 @@ export const Labels = {
           this.rows = lots.map(l => ({ key: l.id, qr: qrText.lot(l.id), title: l.items.code, name: l.items.name,
             line1: `Lot ${l.lot_no}${l.batch_no ? ' · B ' + l.batch_no : ''}`, line2: `Rcvd ${dt(l.received_date)} · ${qty(l.qty_in)} ${l.items.uoms?.code || ''}${l.expiry_date ? ' · Exp ' + dt(l.expiry_date) : ''}`,
             _sel: true, _copies: 1, loc: l.locations?.code }));
+        } else if (this.mode === 'offcuts') {
+          // every offcut piece in stock, or only those kept from one return (ref_id = return)
+          let q = sb.from('v_offcuts').select('*').order('received_date', { ascending: false });
+          if (this.ref_id) q = q.eq('return_no', must(await sb.from('material_returns').select('return_no').eq('id', this.ref_id).single()).return_no);
+          this.rows = must(await q).map(o => ({ key: o.lot_id, qr: qrText.lot(o.lot_id), title: o.item_code, name: o.item_name,
+            line1: `OFFCUT ${qty(o.length_mm)}${o.width_mm ? ' × ' + qty(o.width_mm) : ''} mm${o.thickness_mm ? ' · ' + qty(o.thickness_mm) + ' thk' : ''}`,
+            line2: `${o.lot_no} · ${dt(o.received_date)}`, _sel: !!this.ref_id, _copies: 1, loc: o.location_code }));
         } else if (this.mode === 'items') {
           this.rows = (state.refs.items || []).filter(i => i.is_active && i.item_classes?.tracking === 'LOT').map(i => ({ key: i.id, qr: qrText.item(i.code), title: i.code, name: i.name,
             line1: i.item_classes?.name || '', line2: `UoM ${i.uoms?.code || ''}`, _sel: false, _copies: 1 }));
@@ -117,13 +124,13 @@ export const Labels = {
       </div>
       <p class="small muted" style="margin-top:0">Prints on standard A4 sticker sheets with 24 labels (70 × 37 mm). Scan the QR with the 📷 button in the app (phone camera) or a USB scanner.</p>
       <div class="tbl-wrap"><table class="t lines">
-        <thead><tr><th><input type="checkbox" @change="toggleAll($event.target.checked)"></th><th>Code</th><th>Description</th><th>Details</th><th v-if="mode === 'lots'">Location</th><th style="width:90px">Copies</th></tr></thead>
+        <thead><tr><th><input type="checkbox" @change="toggleAll($event.target.checked)"></th><th>Code</th><th>Description</th><th>Details</th><th v-if="mode === 'lots' || mode === 'offcuts'">Location</th><th style="width:90px">Copies</th></tr></thead>
         <tbody>
           <tr v-if="loading"><td colspan="6" class="empty">Loading…</td></tr>
           <tr v-else-if="!shown.length"><td colspan="6" class="empty">{{ mode === 'lots' ? 'Choose a GRN or a location' : 'Nothing to show' }}</td></tr>
           <tr v-for="r in shown" :key="r.key">
             <td><input type="checkbox" v-model="r._sel"></td><td><b>{{ r.title }}</b></td><td>{{ r.name }}</td>
-            <td class="small">{{ r.line1 }}<div class="muted">{{ r.line2 }}</div></td><td v-if="mode === 'lots'" class="small">{{ r.loc }}</td>
+            <td class="small">{{ r.line1 }}<div class="muted">{{ r.line2 }}</div></td><td v-if="mode === 'lots' || mode === 'offcuts'" class="small">{{ r.loc }}</td>
             <td><input type="number" min="0" v-model.number="r._copies"></td>
           </tr>
         </tbody>

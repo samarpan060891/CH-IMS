@@ -48,7 +48,7 @@ export const MASTERS = {
         { k: 'uom_id', label: 'Stock UoM', type: 'ref', ref: 'uoms', required: true },
         { k: 'brand', label: 'Brand / make' },
         { k: 'specification', label: 'Specification (grade, finish, colour)', wide: true },
-        { k: 'length_mm', label: 'Length mm', type: 'number' }, { k: 'width_mm', label: 'Width mm', type: 'number' }, { k: 'thickness_mm', label: 'Thickness mm', type: 'number' },
+        { k: 'length_mm', label: 'Length mm (full sheet / length — needed for offcuts)', type: 'number' }, { k: 'width_mm', label: 'Width mm (panels; blank for timber)', type: 'number' }, { k: 'thickness_mm', label: 'Thickness mm', type: 'number' },
         { k: 'description', label: 'Description', type: 'textarea', full: true },
         { k: 'is_active', label: 'Active', type: 'check' },
       ] },

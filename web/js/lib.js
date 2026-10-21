@@ -73,7 +73,7 @@ export async function rpc(name, args) {
 export const REF = {
   items: {
     table: 'items', order: 'code',
-    select: 'id,code,name,class_id,category_id,uom_id,vat_rate,is_active,avg_cost,last_purchase_rate,standard_cost,moq,has_expiry,shelf_life_days,batch_controlled,calibration_interval_days,item_classes(code,name,tracking,is_returnable,is_scrap),uoms(code)',
+    select: 'id,code,name,class_id,category_id,uom_id,vat_rate,is_active,avg_cost,last_purchase_rate,standard_cost,moq,has_expiry,shelf_life_days,batch_controlled,calibration_interval_days,length_mm,width_mm,thickness_mm,item_classes(code,name,tracking,is_returnable,is_scrap),uoms(code)',
     label: r => `${r.code} — ${r.name}`,
   },
   vendors: { table: 'vendors', order: 'name', select: 'id,code,name,currency,payment_term_id,vendor_type,status,trn,vat_registered', label: r => `${r.name} (${r.code})` },
@@ -194,6 +194,9 @@ export async function refreshPending() {
   if (hasRole('stores')) p.issue = await count('material_requests', q => q.in('status', ['APPROVED', 'PARTIALLY_ISSUED']));
   if (hasRole('stores', 'purchase')) p.holds = await count('stock_lots', q => q.eq('status', 'HOLD').gt('qty_on_hand', 0).not('hold_reason', 'is', null));
   if (hasRole('stores')) p.ret = await count('material_returns', q => q.eq('status', 'SUBMITTED'));
+  // offcut keep / scrap: In-charge proposes, Factory Manager approves
+  if (hasRole('production_incharge')) p.ret = (p.ret || 0) + await count('material_returns', q => q.eq('status', 'PENDING_PI'));
+  if (hasRole('factory_manager')) p.ret = (p.ret || 0) + await count('material_returns', q => q.eq('status', 'PENDING_FM'));
   if (hasRole('shop_floor', 'production_incharge', 'site_supervisor')) p.ack = await count('material_issues', q => q.eq('status', 'POSTED').eq('ack_status', 'PENDING'));
   if (hasRole('stores', 'factory_manager')) p.ack = (p.ack || 0) + await count('material_issues', q => q.eq('ack_status', 'DISCREPANCY'));
   if (hasRole('production_incharge', 'factory_manager')) p.wo = await count('production_orders', q => q.eq('status', 'DRAFT'));

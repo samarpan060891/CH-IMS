@@ -261,6 +261,15 @@ export const wo = {
     const y = yieldRows(ctx);
     if (y.length) out.push({ title: 'Board yield / nesting', rows: y, columns: [{ k: 'material', label: 'Material' }, { k: 'uom', label: 'UoM' }, { k: 'area', label: 'Parts area m²', fmt: 'qty' },
       { k: 'net', label: 'Net qty', fmt: 'qty' }, { k: 'req', label: 'Planned qty (with waste)', fmt: 'qty' }, { k: 'yield', label: 'Yield %', n: true }] });
+    // suggest offcuts in stock that a cut-list part fits into (best fit first; parts without grain may be turned)
+    if (['DRAFT', 'RELEASED', 'IN_PROGRESS'].includes(ctx.doc.status)) {
+      const m = must(await sb.rpc('offcut_matches', { p_wo: ctx.doc.id }));
+      if (m.length) out.push({ title: `✂ Offcuts in stock that fit this cut list (${new Set(m.map(r => r.lot_id)).size} pieces) — use before cutting new sheets`, rows: m, columns: [
+        { k: 'part_name', label: 'Part' }, { k: r => `${qty(r.part_length)}${r.part_width ? ' × ' + qty(r.part_width) : ''}${r.grain ? ' (grain)' : ''}`, label: 'Part size mm' },
+        { k: 'pieces', label: 'Pcs', fmt: 'qty' }, { k: 'lot_no', label: 'Offcut' }, { k: r => `${qty(r.offcut_length)}${r.offcut_width ? ' × ' + qty(r.offcut_width) : ''}`, label: 'Offcut size mm' },
+        { k: 'location_code', label: 'Location' }, { k: 'waste_pct', label: 'Left over %', n: true }, { k: 'age_days', label: 'Age (days)', n: true },
+        { k: 'value', label: 'Value', fmt: 'money', cost: true }] });
+    }
     const c = ctx.extra.cost;
     if (c && canSeeCost()) {
       const v = (p, a) => ({ plan: num(p), act: num(a), var: num(a) - num(p) });

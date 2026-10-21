@@ -299,6 +299,7 @@ export const Dashboard = {
         add(must(await q('stock_releases', 'id,release_no,status,created_at').eq('status', 'PENDING_APPROVAL')), 'Project stock release', 'rel', 'release_no');
         add(must(await q('variation_orders', 'id,vo_no,status,created_at').eq('status', 'SUBMITTED')), 'Variation order', 'vo', 'vo_no');
         add(must(await q('leave_requests', 'id,leave_no,status,created_at').eq('status', 'PENDING')), 'Leave request', 'leave', 'leave_no');
+        add(must(await q('material_returns', 'id,return_no,status,created_at').eq('status', 'PENDING_FM')), 'Offcuts: approve keep / scrap', 'ret', 'return_no');
       }
       if (this.is('finance')) {
         add(must(await q('purchase_orders', 'id,po_no,status,created_at').eq('status', 'PENDING_FINANCE')), 'Purchase order', 'po', 'po_no');
@@ -315,6 +316,7 @@ export const Dashboard = {
         add(must(await q('material_requests', 'id,mr_no,status,created_at').eq('status', 'PENDING_APPROVAL')), 'Material request', 'mr', 'mr_no');
         add(must(await q('production_orders', 'id,wo_no,status,created_at').eq('status', 'DRAFT')), 'Production order to release', 'wo', 'wo_no');
         add(must(await q('snags', 'id,snag_no,status,created_at').eq('status', 'FIXED')), 'Snag fixed — verify', 'snag', 'snag_no');
+        add(must(await q('material_returns', 'id,return_no,status,created_at').eq('status', 'PENDING_PI')), 'Offcuts: propose keep / scrap', 'ret', 'return_no');
       }
       if (this.is('stores')) {
         add(must(await q('material_requests', 'id,mr_no,status,created_at').in('status', ['APPROVED', 'PARTIALLY_ISSUED'])), 'Material request to issue', 'mr', 'mr_no');

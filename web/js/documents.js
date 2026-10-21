@@ -19,14 +19,18 @@ async function loadLotOpts(ctx) {
   const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
   opts.lots = {};
   if (!ids.length || !ctx.doc.from_location_id) return;
-  const rows = must(await sb.from('stock_lots').select('id,item_id,lot_no,batch_no,expiry_date,received_date,qty_on_hand,project_id,status')
+  const rows = must(await sb.from('stock_lots').select('id,item_id,lot_no,batch_no,expiry_date,received_date,qty_on_hand,project_id,status,is_offcut,length_mm,width_mm')
     .in('item_id', ids).eq('location_id', ctx.doc.from_location_id).eq('status', 'AVAILABLE').gt('qty_on_hand', 0)
     .order('expiry_date', { nullsFirst: false }).order('received_date'));
-  rows.filter(l => !l.project_id || l.project_id === ctx.doc.project_id).forEach(l => {
-    (opts.lots[l.item_id] ||= []).push({ id: l.id, qty: num(l.qty_on_hand),
-      label: `${l.batch_no || l.lot_no}${l.expiry_date ? ' · exp ' + dt(l.expiry_date) : ''} · rcvd ${dt(l.received_date)} · ${qty(l.qty_on_hand)}${l.project_id ? ' (reserved)' : ''}` });
+  // offcut pieces are listed first (use them before cutting a new sheet); they are only issued when chosen, and whole
+  rows.filter(l => !l.project_id || l.project_id === ctx.doc.project_id).sort((a, b) => (b.is_offcut ? 1 : 0) - (a.is_offcut ? 1 : 0)).forEach(l => {
+    (opts.lots[l.item_id] ||= []).push({ id: l.id, qty: num(l.qty_on_hand), offcut: l.is_offcut,
+      label: l.is_offcut
+        ? `✂ OFFCUT ${qty(l.length_mm)}${l.width_mm ? ' × ' + qty(l.width_mm) : ''} mm · ${l.lot_no} · ${qty(l.qty_on_hand)}`
+        : `${l.batch_no || l.lot_no}${l.expiry_date ? ' · exp ' + dt(l.expiry_date) : ''} · rcvd ${dt(l.received_date)} · ${qty(l.qty_on_hand)}${l.project_id ? ' (reserved)' : ''}` });
   });
 }
+const offcutCount = () => Object.values(opts.lots).flat().filter(l => l.offcut).length;
 
 // ---------- common field builders ----------
 const isLotItem = r => r.is_active && r.item_classes?.tracking === 'LOT' && !r.item_classes?.is_scrap && r.item_classes?.code !== 'SRV';
@@ -592,6 +596,9 @@ export const issue = {
         → <b style="color:${col}">${pct}%</b>${over ? (b.approved ? ' — over budget, <b>approved by FM</b>' : b.requested ? ' — over budget, <b>waiting for FM approval</b>' : ' — <b>over budget: FM approval needed before posting</b>') : ''}
         <div style="height:6px;background:#e5e7eb;border-radius:3px;margin-top:6px"><div style="height:6px;border-radius:3px;background:${col};width:${Math.min(pct, 100)}%"></div></div></div>`;
     }
+    if (ctx.doc.status === 'DRAFT' && offcutCount())
+      s += `<div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:#fffbeb;border:1px solid #fde68a">✂ <b>${offcutCount()} offcut piece(s)</b> in stock for items on this issue —
+        check whether they suit the job and pick them in the <b>Batch / offcut</b> column (issued as whole pieces) before cutting new sheets.</div>`;
     return s;
   },
   grids: [{
@@ -599,8 +606,8 @@ export const issue = {
     fields: [
       itemF({ filter: isLotItem, ro: r => !!r.mr_line_id, onChange: async (r, v, ctx) => { r.lot_id = null; await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); } }), uomF,
       { ...availF, show: d => d.status === 'DRAFT' },
-      { k: 'lot_id', label: 'Batch (blank = oldest / earliest expiry first)', type: 'ref', width: '260px', refOptions: r => opts.lots[r.item_id] || [],
-        show: d => d.status === 'DRAFT' },
+      { k: 'lot_id', label: 'Batch / offcut (blank = oldest / earliest expiry first)', type: 'ref', width: '280px', refOptions: r => opts.lots[r.item_id] || [],
+        show: d => d.status === 'DRAFT', onChange: (r, v) => { const l = (opts.lots[r.item_id] || []).find(x => x.id === v); if (l?.offcut) r.qty = l.qty; } },
       { k: 'qty', label: 'Issue qty', type: 'number', required: true },
       roMoney('value', 'Value', { show: d => d.status === 'POSTED' }),
       { k: 'received_qty', label: 'Received good', type: 'ro', fmt: (v, r) => v == null ? '' : (num(v) + num(r.damaged_qty) === num(r.qty) ? qty(v) : '⚠ ' + qty(v)), show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
@@ -613,6 +620,7 @@ export const issue = {
     for (const r of ctx.grids.lines) {
       if (r._avail !== undefined && num(r.qty) > num(r._avail)) throw new Error(`${itemName(r.item_id)}: only ${qty(r._avail)} available at this location`);
       const lot = r.lot_id && (opts.lots[r.item_id] || []).find(l => l.id === r.lot_id);
+      if (lot?.offcut && Math.abs(num(r.qty) - lot.qty) > 0.0005) throw new Error(`${itemName(r.item_id)}: an offcut is issued as a whole piece — qty ${qty(lot.qty)}; add another line for full sheets`);
       if (lot && num(r.qty) > lot.qty) throw new Error(`${itemName(r.item_id)}: the chosen batch has only ${qty(lot.qty)} — split the line or leave the batch blank`);
     }
   },
@@ -701,9 +709,26 @@ async function loadIssueIntoReturn(ctx, issueId) {
   ctx.grids.lines = lines.filter(l => num(l.qty) > num(l.returned_qty)).map(l => ({ issue_line_id: l.id, item_id: l.item_id, _bal: num(l.qty) - num(l.returned_qty), qty: null, condition: 'GOOD' }));
   ctx.dirty = true;
 }
+// offcuts: part of a sheet / length coming back; quantity is the share of a full unit (server recomputes)
+const isOffcut = r => r.condition === 'OFFCUT';
+const sheetSize = id => { const i = refRow('items', id); return i && num(i.length_mm) > 0 ? i : null; };
+function offcutQty(r) {
+  const i = sheetSize(r.item_id); if (!i || !num(r.offcut_length_mm)) return null;
+  const f = num(i.width_mm) > 0 ? num(r.offcut_length_mm) * num(r.offcut_width_mm) / (num(i.length_mm) * num(i.width_mm)) : num(r.offcut_length_mm) / num(i.length_mm);
+  return Math.round(f * Math.max(num(r.pieces) || 1, 1) * 10000) / 10000;
+}
+const offcutSize = r => isOffcut(r) ? `${qty(r.offcut_length_mm)}${r.offcut_width_mm ? ' × ' + qty(r.offcut_width_mm) : ''} mm × ${r.pieces || 1}` : '';
+async function proposeOffcuts(c) {
+  const oc = c.grids.lines.filter(isOffcut);
+  const v = await ask({ title: 'Offcuts: keep or scrap', message: 'Keep usable pieces as offcut stock; scrap pieces too small or damaged to use. The Factory Manager approves next.',
+    fields: [...oc.map((r, i) => ({ k: 'a' + i, label: `${itemName(r.item_id)} — ${offcutSize(r)}`, type: 'select', required: true, options: [{ v: 'KEEP', l: 'Keep as offcut' }, { v: 'SCRAP', l: 'Scrap' }], default: r.offcut_action || 'KEEP' })),
+      { k: 'c', label: 'Comments for the Factory Manager', type: 'textarea' }], okText: 'Send to Factory Manager' });
+  if (!v) return false;
+  return rpc('return_offcut_action', { p_ret: c.doc.id, p_action: 'PROPOSE', p_lines: oc.map((r, i) => ({ id: r.id, action: v['a' + i] })), p_comments: v.c || null });
+}
 export const ret = {
   key: 'ret', title: 'Returns to Store', single: 'Material Return', table: 'material_returns', noField: 'return_no', dateField: 'return_date',
-  statuses: ['DRAFT', 'SUBMITTED', 'POSTED', 'CANCELLED'], createRoles: ['stores', 'shop_floor', 'production_incharge', 'site_supervisor'],
+  statuses: ['DRAFT', 'PENDING_PI', 'PENDING_FM', 'SUBMITTED', 'POSTED', 'CANCELLED'], createRoles: ['stores', 'shop_floor', 'production_incharge', 'site_supervisor'],
   // floor drafts and submits; Stores verifies (can change qty / condition) and posts
   canEdit: ctx => (ctx.doc.status === 'DRAFT' && hasRole('stores', 'shop_floor', 'production_incharge', 'site_supervisor')) || (ctx.doc.status === 'SUBMITTED' && hasRole('stores')),
   refs: ['items', 'locations'],
@@ -711,44 +736,92 @@ export const ret = {
     { k: r => r.material_issues?.projects?.code || r.material_issues?.cost_centers?.code, label: 'Project / CC' }, { k: 'returned_by_name', label: 'Returned by' }, { k: 'total_value', label: 'Value', fmt: 'money', cost: true, sum: true }] },
   defaults: () => ({ return_date: today(), to_location_id: locId('MS'), returned_by_name: state.profile?.full_name || '' }),
   async onNew(ctx, parts) { await loadPostedIssues(); if (parts[0] === 'issue' && parts[1]) { ctx.doc.issue_id = parts[1]; await loadIssueIntoReturn(ctx, parts[1]); } },
-  async afterLoad(ctx) { await loadPostedIssues(ctx.doc.issue_id); },
+  async afterLoad(ctx) {
+    await loadPostedIssues(ctx.doc.issue_id);
+    // offcut size / decision are fixed once the return leaves draft
+    ctx.grids.lines.forEach(r => { r._lock = ctx.doc.status !== 'DRAFT'; });
+  },
   header: [
     { k: 'issue_id', label: 'Against issue slip', type: 'ref', refOptions: () => opts.issues, required: true, wide: true, onChange: (d, v, ctx) => v && loadIssueIntoReturn(ctx, v) },
     { k: 'return_date', label: 'Return date', type: 'date', required: true },
     { k: 'to_location_id', label: 'Return to location', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock },
     { k: 'returned_by_name', label: 'Returned by' },
     roMoney('total_value', 'Credit value AED', { show: d => d.status === 'POSTED' }),
+    { k: 'offcut_comments', label: 'Offcut comments', type: 'ro', wide: true, show: d => !!d.offcut_comments },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: ctx => ctx.doc.status === 'SUBMITTED'
-    ? '<b>Stores:</b> physically check the material, correct the quantity / condition if needed, then click <b>Receive & post</b>.'
-    : 'Shop floor: pick the issue slip, enter what you are returning and <b>Submit to Stores</b>. Good material goes back to its original lot (same cost and receipt date); damaged goes to Quarantine. The project is credited when Stores posts.',
+  headerNote: ctx => ({
+    PENDING_PI: '<b>Production In-charge:</b> decide for each offcut whether it is kept as offcut stock or scrapped, then send to the Factory Manager.',
+    PENDING_FM: '<b>Factory Manager:</b> approve the keep / scrap decisions on the offcuts (or send back to the In-charge). Stores receives after approval.',
+    SUBMITTED: '<b>Stores:</b> physically check the material, correct the quantity / condition of whole items if needed, then click <b>Receive & post</b>. Kept offcuts become separate pieces in offcut stock — print their labels after posting.',
+  })[ctx.doc.status] || 'Shop floor: pick the issue slip, enter what you are returning and <b>Submit</b>. Good material goes back to its original lot (same cost and receipt date); damaged goes to Quarantine. ' +
+    'For a <b>part-used sheet or length</b> use <b>✂ Add offcut</b> and enter its size: it is valued at its share of the full sheet / length and credited to the job if kept. ' +
+    'Offcuts need the Production In-charge\'s keep / scrap proposal and the Factory Manager\'s approval before Stores receives them.',
   grids: [{
-    key: 'lines', title: 'Items returned', table: 'return_lines', fk: 'return_id', lineNo: false, addable: false, saveKeys: ['issue_line_id'],
+    key: 'lines', title: 'Items returned', table: 'return_lines', fk: 'return_id', lineNo: false, addable: false, saveKeys: ['issue_line_id', 'item_id'],
+    importers: [{ label: '✂ Add offcut', run: async ctx => {
+      const src = ctx.grids.lines.filter(r => !isOffcut(r) && sheetSize(r.item_id) && r._bal !== undefined);
+      if (!src.length) throw new Error('No sheet / length items on this issue (the item needs its standard size in the item master)');
+      const v = await ask({ title: 'Add offcut', message: 'Size of the piece coming back. Panels: length × width; timber / profiles: length only.', okText: 'Add',
+        fields: [{ k: 'l', label: 'Item', type: 'select', required: true, options: src.map((r, i) => ({ v: i, l: `${itemName(r.item_id)} (full ${qty(sheetSize(r.item_id).length_mm)}${num(sheetSize(r.item_id).width_mm) ? ' × ' + qty(sheetSize(r.item_id).width_mm) : ''} mm)` })), default: 0 },
+                 { k: 'len', label: 'Length mm', type: 'number', required: true }, { k: 'wid', label: 'Width mm (panels)', type: 'number' }, { k: 'pcs', label: 'Pieces of this size', type: 'number', default: 1 }] });
+      if (!v) return;
+      const s = src[Number(v.l)];
+      const row = { issue_line_id: s.issue_line_id, item_id: s.item_id, _bal: s._bal, condition: 'OFFCUT', offcut_length_mm: v.len, offcut_width_mm: v.wid || null, pieces: v.pcs || 1, reason: 'Offcut' };
+      row.qty = offcutQty(row);
+      if (!row.qty) throw new Error('Enter the offcut size');
+      ctx.grids.lines.push(row); ctx.dirty = true;
+    } }],
     fields: [itemF({ ro: true }), uomF, { k: '_bal', label: 'Returnable', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.status === 'DRAFT' },
              roQty('requested_qty', 'Returned by floor', { show: d => ['SUBMITTED', 'POSTED'].includes(d.status) }),
-             { k: 'qty', label: 'Return qty (verified)', type: 'number', required: true },
-             { k: 'condition', label: 'Condition', type: 'select', required: true, options: ['GOOD', 'DAMAGED'] },
-             { k: 'reason', label: 'Reason', width: '200px' }, roMoney('value', 'Credit value', { show: d => d.status === 'POSTED' })],
+             { k: 'qty', label: 'Return qty (verified)', type: 'number', required: true, ro: r => isOffcut(r) },
+             { k: 'condition', label: 'Condition', type: 'select', required: true, ro: r => isOffcut(r), options: r => isOffcut(r) ? ['OFFCUT'] : ['GOOD', 'DAMAGED'] },
+             { k: 'offcut_length_mm', label: 'Offcut L mm', type: 'number', ro: r => !isOffcut(r) || r._lock, onChange: r => { r.qty = offcutQty(r); } },
+             { k: 'offcut_width_mm', label: 'W mm', type: 'number', ro: r => !isOffcut(r) || r._lock, onChange: r => { r.qty = offcutQty(r); } },
+             { k: 'pieces', label: 'Pcs', type: 'number', ro: r => !isOffcut(r) || r._lock, onChange: r => { r.qty = offcutQty(r); } },
+             { k: 'offcut_action', label: 'Keep / scrap', type: 'select', options: [{ v: 'KEEP', l: 'Keep' }, { v: 'SCRAP', l: 'Scrap' }],
+               ro: r => !isOffcut(r) || r._lock || !hasRole('production_incharge') },
+             { k: 'reason', label: 'Reason', width: '160px' }, roMoney('value', 'Credit value', { show: d => d.status === 'POSTED' })],
   }],
   validate(ctx) {
     ctx.grids.lines = ctx.grids.lines.filter(r => num(r.qty) > 0);
     if (!ctx.grids.lines.length) throw new Error('Enter a return quantity on at least one line');
-    for (const r of ctx.grids.lines) if (r._bal !== undefined && num(r.qty) > num(r._bal)) throw new Error(`${itemName(r.item_id)}: max returnable ${qty(r._bal)}`);
+    // whole items and offcuts together may not exceed what is still returnable on the issue line
+    const used = {}, bal = {};
+    for (const r of ctx.grids.lines) {
+      used[r.issue_line_id] = (used[r.issue_line_id] || 0) + num(r.qty);
+      if (r._bal !== undefined) bal[r.issue_line_id] = num(r._bal);
+    }
+    for (const [k, u] of Object.entries(used)) if (bal[k] !== undefined && u > bal[k] + 0.0005)
+      throw new Error(`${itemName(ctx.grids.lines.find(r => r.issue_line_id === k).item_id)}: whole items and offcuts add up to ${qty(u)}, max returnable ${qty(bal[k])}`);
   },
-  actions: ctx => [
-    { label: 'Submit to Stores', cls: 'primary', show: statusIs(ctx, 'DRAFT') && hasRole('shop_floor', 'production_incharge', 'site_supervisor') && !hasRole('stores'), done: 'Sent to Stores for verification',
+  actions: ctx => {
+    const hasOc = ctx.grids.lines.some(isOffcut);
+    return [
+    { label: hasOc ? 'Submit (offcuts → In-charge / FM)' : 'Submit to Stores', cls: 'primary', show: statusIs(ctx, 'DRAFT') && hasRole('shop_floor', 'production_incharge', 'site_supervisor') && (!hasRole('stores') || hasOc),
+      done: hasOc ? 'Submitted — offcuts go for keep / scrap approval' : 'Sent to Stores for verification',
       run: c => rpc('return_action', { p_ret: c.doc.id, p_action: 'SUBMIT' }) },
-    { label: '✔ Receive & post', cls: 'ok', show: statusIs(ctx, 'DRAFT', 'SUBMITTED') && hasRole('stores'), confirm: 'Material checked? Stock will be added back and the project credited.', done: 'Return posted',
-      run: c => rpc('post_return', { p_ret: c.doc.id }) },
-    { label: 'Cancel', show: statusIs(ctx, 'DRAFT', 'SUBMITTED') && ctx.editable, confirm: 'Cancel this return?', run: c => rpc('return_action', { p_ret: c.doc.id, p_action: 'CANCEL' }) },
+    { label: '✂ Propose keep / scrap', cls: 'primary', show: statusIs(ctx, 'PENDING_PI') && hasRole('production_incharge'), done: 'Sent to the Factory Manager', run: c => proposeOffcuts(c) },
+    { label: '✔ Approve offcuts', cls: 'ok', show: statusIs(ctx, 'PENDING_FM') && hasRole('factory_manager'), done: 'Approved — Stores can receive',
+      run: async c => { const v = await ask({ title: 'Approve offcut decisions', fields: [{ k: 'c', label: 'Comments (optional)', type: 'textarea' }], okText: 'Approve' });
+        if (!v) return false; return rpc('return_offcut_action', { p_ret: c.doc.id, p_action: 'APPROVE', p_comments: v.c || null }); } },
+    { label: '↩ Send back to In-charge', cls: 'bad', show: statusIs(ctx, 'PENDING_FM') && hasRole('factory_manager'), done: 'Sent back',
+      run: async c => { const v = await ask({ title: 'Send back', fields: [{ k: 'c', label: 'What should change?', type: 'textarea', required: true }], okText: 'Send back' });
+        if (!v) return false; return rpc('return_offcut_action', { p_ret: c.doc.id, p_action: 'SEND_BACK', p_comments: v.c }); } },
+    { label: '✔ Receive & post', cls: 'ok', show: (statusIs(ctx, 'SUBMITTED') || (statusIs(ctx, 'DRAFT') && !hasOc)) && hasRole('stores'),
+      confirm: hasOc ? 'Material checked? Whole items go back to stock, kept offcuts become offcut pieces, and the job is credited.' : 'Material checked? Stock will be added back and the project credited.',
+      done: 'Return posted', run: c => rpc('post_return', { p_ret: c.doc.id }) },
+    { label: '🏷 Offcut labels', show: statusIs(ctx, 'POSTED') && ctx.grids.lines.some(r => isOffcut(r) && r.offcut_action === 'KEEP'), reload: false, run: c => go('labels/offcuts/' + c.doc.id) },
+    { label: 'Cancel', show: statusIs(ctx, 'DRAFT', 'SUBMITTED', 'PENDING_PI', 'PENDING_FM') && (ctx.editable || hasRole('production_incharge', 'factory_manager')), confirm: 'Cancel this return?', run: c => rpc('return_action', { p_ret: c.doc.id, p_action: 'CANCEL' }) },
     { label: '🖨 Return note PDF', reload: false, run: c => makePdf({
         title: 'Material Return Note', no: c.doc.return_no, date: c.doc.return_date,
         meta: [['Against issue', opts.issues.find(i => i.id === c.doc.issue_id)?.label || ''], ['Returned to', refLabel('locations', c.doc.to_location_id)], ['Returned by', c.doc.returned_by_name || '-'], ['Status', label(c.doc.status)]],
         columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' },
-                  { h: 'Condition', k: r => label(r.condition) }, { h: 'Reason', k: 'reason' }, ...(canSeeCost() ? [{ h: 'Value', k: r => money(r.value), align: 'right' }] : [])],
-        rows: c.grids.lines, signatures: ['Returned by', 'Received by (Stores)', 'Production In-charge'] }) },
-  ],
+                  { h: 'Condition', k: r => label(r.condition) + (isOffcut(r) ? ` ${offcutSize(r)}${r.offcut_action ? ' · ' + label(r.offcut_action) : ''}` : '') },
+                  { h: 'Reason', k: 'reason' }, ...(canSeeCost() ? [{ h: 'Value', k: r => money(r.value), align: 'right' }] : [])],
+        rows: c.grids.lines, signatures: ['Returned by', 'Received by (Stores)', 'Production In-charge', ...(hasOc ? ['Factory Manager'] : [])] }) },
+    ];
+  },
 };
 
 // ======================================================================
