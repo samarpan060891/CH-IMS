@@ -29,6 +29,7 @@ export const DASHBOARDS = {
   floor:      { title: 'Floor app', roles: [], route: 'floorapp' },   // phone screen for the shop floor; given to users by the administrator
   approvals:  { title: 'Approvals inbox', roles: [], route: 'approvals' },   // phone inbox of decisions waiting; can be a user's landing screen
   counting:   { title: 'Count app', roles: [], route: 'countapp' },   // phone screen for physical stock counts
+  receiving:  { title: 'Receive app', roles: [], route: 'receiveapp' },   // phone screen for goods receipts at the gate / dock
 };
 export const dashboardFor = role => Object.keys(DASHBOARDS).find(k => DASHBOARDS[k].roles.includes(role)) || 'management';
 // dashboards a user may open: as set by the administrator, else all (administrator) or the role's own

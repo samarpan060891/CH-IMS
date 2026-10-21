@@ -181,6 +181,10 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .site-crew input { width: 56px; }
 
 /* ---------- filter chips (stage board) ---------- */
+/* receive app (phone) */
+.rcv-line { cursor: default; }
+.rcv-line.skip { opacity: .55; }
+.rcv-grid { display: grid; grid-template-columns: 70px 1fr; align-items: center; gap: 6px 8px; margin-top: 8px; }
 /* count app (phone) */
 .cnt-top { position: sticky; top: 0; z-index: 3; background: var(--bg, #f5f7fb); padding: 4px 0 8px; margin-bottom: 4px; }
 .cnt-top .chip { cursor: pointer; }

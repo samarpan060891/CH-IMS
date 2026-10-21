@@ -38,6 +38,10 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   and only on one open request at a time; the issue made from the request takes exactly that piece and its store location.
 - **Project vs stock purchasing**: every requisition / PO / GRN line is either for general stock or for a named project. Project lines create stock **reserved** for that project (only its issues can use it; own stock is issued first). Leftovers go back to general stock through an FM-approved **Project stock release**. Buffers and re-order suggestions use free stock and stock POs only.
 - **Project budgets**: issue screen shows budget use; alerts at the warning % (default 80); issues above 100% need FM approval.
+- **Receive app (phone)** (Inventory → 📱 Receive app, or the "Receive app" dashboard): open released POs (late ones flagged) → receiving location, DN no. / date,
+  vehicle; per line DN qty, received and damaged with − / + and a live preview of what goes to stock / quarantine (damaged, excess) and short vs DN; batch and
+  expiry asked only for items that require them (expiry filled from mfg date + shelf life); scan an item label to jump to its line; **Save draft** (add landed costs
+  on the desktop) or **Receive & post**; drafts list with Post; lot labels after posting. Site supervisors receive into site stores.
 - **Physical stock count**: blind count on phone (scan or search), found items, variances → FM-approved stock adjustment.
   Phone **Count app** (Inventory → 📱 Count app, or the "Count app" dashboard): counts in progress with progress bars; To count / Counted filters,
   scan a label to jump to its line, − / + steppers, ⏭ next uncounted, offcut pieces shown with their size and counted as here / missing; add found items; submit.

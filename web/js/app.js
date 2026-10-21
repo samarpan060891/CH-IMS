@@ -20,6 +20,7 @@ import { HR_DOCS, AttendanceSheet } from './hr.js';
 import { FIN_DOCS, Books } from './finance.js';
 import { FloorApp } from './floor.js';
 import { ApprovalsApp, myQueues } from './approve.js';
+import { ReceiveApp } from './receive.js';
 
 Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS);
 
@@ -45,6 +46,7 @@ const MENU = [
   ] },
   { g: 'Inventory', icon: 'building-warehouse', items: [
     { to: 'd/grn', t: 'Goods receipts (GRN)', roles: ['stores', 'purchase', 'finance', 'factory_manager', 'site_supervisor'] },
+    { to: 'receiveapp', t: '📱 Receive app (phone)', roles: ['stores', 'site_supervisor'] },
     { to: 'd/issue', t: 'Material issues', roles: ['stores', 'factory_manager', 'production_incharge'], badge: 'issue' },
     { to: 'd/trf', t: 'Stock transfers', roles: ['stores', 'factory_manager'] },
     { to: 'd/rel', t: 'Project stock releases', roles: ['stores', 'factory_manager', 'production_incharge', 'purchase', 'finance'], badge: 'rel' },
@@ -183,7 +185,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -227,6 +229,7 @@ const App = {
       if (a === 'site' || (a === 'dashboard' && !b && homeDashboard() === 'site')) return { comp: 'SiteApp', props: {}, title: 'Site' };
       if (a === 'floorapp' || (a === 'dashboard' && !b && homeDashboard() === 'floor')) return { comp: 'FloorApp', props: {}, title: 'Floor' };
       if (a === 'approvals' || (a === 'dashboard' && !b && homeDashboard() === 'approvals')) return { comp: 'ApprovalsApp', props: {}, title: 'Approvals' };
+      if (a === 'receiveapp' || (a === 'dashboard' && !b && homeDashboard() === 'receiving')) return { comp: 'ReceiveApp', props: {}, title: 'Receive goods' };
       if (a === 'countapp' || (a === 'dashboard' && !b && homeDashboard() === 'counting')) return { comp: 'CountApp', props: { id: a === 'countapp' ? b || null : null }, title: 'Stock count' };
       if (a === 'dashboard') return { comp: 'Dashboard', props: { kind: b || null }, title: 'Dashboard' };
       const simple = { replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
