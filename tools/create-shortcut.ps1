@@ -1,7 +1,7 @@
 ﻿# Creates a "CitiCore" desktop icon that opens the live app in its own window (Edge app mode).
 # Run on any staff PC:  powershell -ExecutionPolicy Bypass -File create-shortcut.ps1
 # Developer use:  -WebIcons  writes the PNG app icons for the web manifest (web/img) and exits.
-param([string]$Url = 'https://ch-ims-production.up.railway.app', [switch]$WebIcons)
+param([string]$Url = 'https://samarpan060891.github.io/CH-IMS/', [switch]$WebIcons)
 
 Add-Type -AssemblyName System.Drawing
 $dir = Join-Path $env:LOCALAPPDATA 'CitiHomesIMS'

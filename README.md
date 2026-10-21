@@ -3,12 +3,12 @@
 Cloud system for **Citi Homes Kitchen and Wooden Furniture Manufacturing LLC** (UAE): purchasing, stores & inventory, production,
 projects & site (BOQ, installation, snags, variations), HR / payroll and accounting (general ledger, customer billing, VAT).
 
-**Live app:** https://ch-ims-production.up.railway.app
+**Live app:** https://samarpan060891.github.io/CH-IMS/
 
 | Layer | Where |
 |---|---|
 | Database, logins, business rules | Supabase project `vvkkvudwbolhuveuxorc` (Mumbai) |
-| Web app (static HTML/JS, no build step) | `web/` — served by Caddy on Railway |
+| Web app (static HTML/JS, no build step) | `web/` — published free on GitHub Pages |
 | Admin user function | `supabase/functions/admin-users` |
 
 ## Modules
@@ -94,8 +94,11 @@ powershell -ExecutionPolicy Bypass -File tools/serve.ps1
 ```
 Open http://localhost:8080
 
-## Deploy (Railway)
-Railway builds the `Dockerfile` (Caddy serving `web/`). Connect the GitHub repo in Railway → *New Project → Deploy from GitHub repo*, then *Settings → Networking → Generate Domain*. Add that domain to Supabase → Authentication → URL Configuration (Site URL + Redirect URLs).
+## Deploy (GitHub Pages — free)
+`.github/workflows/pages.yml` publishes the `web/` folder to https://samarpan060891.github.io/CH-IMS/ on every push to `main` that changes `web/`
+(watch it under the repo's **Actions** tab; it takes about a minute). One-time setup: GitHub repo → *Settings → Pages → Build and deployment → Source: GitHub Actions*,
+and add the address to Supabase → Authentication → URL Configuration (Site URL + Redirect URLs).
+The `Dockerfile` / `Caddyfile` (Caddy serving `web/`) still work for any container host, e.g. Railway, if ever needed.
 
 ## Database migrations
 `supabase/migrations/001…039` — already applied to the Supabase project, kept here as the source of truth.
