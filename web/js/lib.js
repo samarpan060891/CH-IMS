@@ -85,7 +85,7 @@ export const REF = {
   payment_terms: { table: 'payment_terms', order: 'code', select: 'id,code,name,credit_days,basis,advance_pct', label: r => r.name },
   profiles: { table: 'profiles', order: 'full_name', select: 'id,full_name,email,role', label: r => r.full_name || r.email },
   work_centers: { table: 'work_centers', order: 'sort_order', select: 'id,code,name,kind,machine_rate_per_hour,labour_rate_per_hour,default_grade_id,sort_order,is_active', label: r => `${r.code} — ${r.name}` },
-  labour_grades: { table: 'labour_grades', order: 'sort_order', select: 'id,code,name,rate_per_hour,is_active', label: r => r.name },
+  labour_grades: { table: 'labour_grades', order: 'sort_order', select: 'id,code,name,rate_per_hour,ot_rate_per_hour,is_active', label: r => r.name },
   bom_templates: { table: 'bom_templates', order: 'name', select: 'id,item_id,name,version,is_active', label: r => `${r.name} (v${r.version})` },
 };
 
@@ -193,6 +193,8 @@ export async function refreshPending() {
   if (hasRole('production_incharge', 'factory_manager')) p.wo = await count('production_orders', q => q.eq('status', 'DRAFT'));
   if (hasRole('shop_floor', 'production_incharge')) p.stages = await count('wo_operations', q => q.eq('status', 'IN_PROGRESS'));
   if (hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'DRAFT'));
+  if (hasRole('factory_manager')) p.qc = await count('wo_receipts', q => q.eq('qc_status', 'PENDING_FM'));
+  if (hasRole('factory_manager', 'production_incharge', 'shop_floor')) p.down = await count('wc_downtime', q => q.eq('status', 'OPEN'));
   state.pending = p;
   try { await loadNotifications(); } catch (e) { console.warn('notifications', e); }
 }

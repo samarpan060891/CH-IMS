@@ -210,9 +210,17 @@ export const REPORTS = {
     { k: 'sale_value', label: 'Selling value', fmt: 'money', sum: true }, { k: 'margin', label: 'Margin', fmt: 'money', sum: true },
     { k: r => num(r.sale_value) ? Math.round(num(r.margin) / num(r.sale_value) * 1000) / 10 : null, label: 'Margin %', n: true },
     { k: 'plan_labour_hours', label: 'Plan man-h', n: true }, { k: 'act_labour_hours', label: 'Actual man-h', n: true }] },
-  wcload: { title: 'Work centre load', src: 'v_work_center_load', order: 'sort_order', columns: [
-    { k: 'code', label: 'Code' }, { k: 'name', label: 'Work centre' }, { k: 'kind', label: 'Type', fmt: 'label' }, { k: 'open_stages', label: 'Open stages', n: true },
-    { k: 'running', label: 'Running', n: true }, { k: 'remaining_hours', label: 'Remaining hours', n: true }, { k: 'hours_per_day', label: 'Hours/day', n: true }, { k: 'load_days', label: 'Load (days)', n: true }] },
+  wcload: { title: 'Work centre load & availability', src: 'v_work_center_load', order: 'sort_order', columns: [
+    { k: 'code', label: 'Code' }, { k: 'name', label: 'Work centre' }, { k: 'kind', label: 'Type', fmt: 'label' }, { k: r => r.is_down ? 'DOWN' : 'RUNNING', label: 'Now', fmt: 'badge' },
+    { k: 'open_stages', label: 'Open stages', n: true }, { k: 'running', label: 'Running', n: true }, { k: 'remaining_hours', label: 'Remaining hours', n: true },
+    { k: 'hours_per_day', label: 'Hours/day', n: true }, { k: 'planned_down_hours_14d', label: 'Planned stops next 14d (h)', n: true },
+    { k: 'load_days', label: 'Load (days, net of planned stops)', n: true }, { k: 'downtime_hours_30d', label: 'Downtime last 30d (h)', n: true },
+    { k: 'availability_pct_30d', label: 'Availability % (30d)', n: true }] },
+  downtime: { title: 'Downtime analysis', src: 'v_downtime_summary', order: 'start_at', columns: [
+    { k: 'down_no', label: 'No.' }, { k: 'wc_code', label: 'Code' }, { k: 'wc_name', label: 'Work centre' }, { k: 'kind', label: 'Reason', fmt: 'label' },
+    { k: 'status', label: 'Status', fmt: 'badge' }, { k: 'start_at', label: 'Stopped', fmt: 'datetime' }, { k: 'end_at', label: 'Restarted', fmt: 'datetime' },
+    { k: 'hours', label: 'Hours', n: true, sum: true }, { k: 'description', label: 'What happened' }, { k: 'action_taken', label: 'Action taken' },
+    { k: 'repair_cost', label: 'Repair cost', fmt: 'money', cost: true, sum: true }] },
   fg: { title: 'Finished goods in store', src: 'v_lot_values', filter: q => q.eq('class_code', 'FG'), order: 'received_date', columns: [
     { k: 'item_code', label: 'Product' }, { k: 'item_name', label: 'Description' }, { k: 'lot_no', label: 'Order / lot' }, { k: 'location_code', label: 'Location' },
     { k: r => r.project_id ? (refRow('projects', r.project_id)?.code || 'Project') : 'MTS stock', label: 'For' },

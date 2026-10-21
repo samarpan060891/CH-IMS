@@ -76,12 +76,20 @@ export const FieldInput = {
       const v = this.doc[this.f.k];
       if (this.f.fmt) return this.f.fmt(v, this.doc);
       if (this.f.type === 'date') return dt(v);
+      if (this.f.type === 'datetime') return dtm(v);
       if (this.f.type === 'number') return qty(v);
       return v ?? '';
     },
     tagText() { return (this.doc[this.f.k] || []).join(', '); },
   },
   methods: {
+    // timestamptz <-> <input type="datetime-local"> (local time, minutes)
+    toLocal(v) {
+      if (!v) return '';
+      const d = new Date(v);
+      return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    },
+    setLocal(v) { this.set(v ? new Date(v).toISOString() : null); },
     set(v) {
       const f = this.f;
       if (f.type === 'number') v = (v === '' || v === null) ? null : Number(v);
@@ -105,6 +113,7 @@ export const FieldInput = {
     <input v-else-if="f.type==='tags'" :value="tagText" @change="set($event.target.value)" :disabled="ro" placeholder="comma separated">
     <input v-else-if="f.type==='number'" type="number" :step="f.step || 'any'" :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro">
     <input v-else-if="f.type==='date'" type="date" :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro">
+    <input v-else-if="f.type==='datetime'" type="datetime-local" :value="toLocal(doc[f.k])" @change="setLocal($event.target.value)" :disabled="ro">
     <input v-else :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro" :placeholder="f.placeholder || ''">
   </label>
   <template v-else>

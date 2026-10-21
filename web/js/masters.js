@@ -1,5 +1,5 @@
 // Master data: generic list + modal form, and per-master configuration
-import { sb, state, must, run, hasRole, loadRefs, loadRef, refRow, refLabel, money, qty, label } from './lib.js';
+import { sb, state, must, run, hasRole, loadRefs, loadRef, refRow, refLabel, money, qty, label, num } from './lib.js';
 import { FieldInput, DataTable, Modal } from './components.js';
 
 const EMIRATES = ['Abu Dhabi', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah'];
@@ -180,11 +180,13 @@ export const MASTERS = {
   },
   labour_grades: {
     title: 'Worker Grades & Rates', single: 'Worker Grade', table: 'labour_grades', order: 'sort_order', editRoles: ['factory_manager', 'finance'],
-    columns: [{ k: 'code', label: 'Code' }, { k: 'name', label: 'Grade' }, { k: 'rate_per_hour', label: 'AED / hour', fmt: 'money', cost: true },
-      { k: 'sort_order', label: 'Order', n: true }, { k: 'is_active', label: 'Active', fmt: 'bool' }],
-    defaults: () => ({ rate_per_hour: 0, sort_order: 50, is_active: true }),
+    columns: [{ k: 'code', label: 'Code' }, { k: 'name', label: 'Grade' }, { k: 'rate_per_hour', label: 'Normal AED / hour', fmt: 'money', cost: true },
+      { k: 'ot_rate_per_hour', label: 'Overtime AED / hour', fmt: 'money', cost: true }, { k: 'sort_order', label: 'Order', n: true }, { k: 'is_active', label: 'Active', fmt: 'bool' }],
+    defaults: () => ({ rate_per_hour: 0, ot_rate_per_hour: 0, sort_order: 50, is_active: true }),
     sections: [{ title: 'Worker grade', fields: [{ k: 'code', label: 'Code', required: true }, { k: 'name', label: 'Grade name', required: true, wide: true },
-      { k: 'rate_per_hour', label: 'Cost rate AED / hour (salary + allowances + accommodation, per working hour)', type: 'number', required: true, cost: true, wide: true },
+      { k: 'rate_per_hour', label: 'Normal cost rate AED / hour (salary + allowances + accommodation, per working hour)', type: 'number', required: true, cost: true, wide: true,
+        onChange: (d, v) => { if (!num(d.ot_rate_per_hour)) d.ot_rate_per_hour = Math.round(num(v) * 125) / 100; } },
+      { k: 'ot_rate_per_hour', label: 'Overtime rate AED / hour (UAE: 125% of normal; 150% nights / rest days)', type: 'number', required: true, cost: true, wide: true },
       { k: 'sort_order', label: 'Display order', type: 'number' }, { k: 'is_active', label: 'Active', type: 'check' }] }],
     afterSave: () => loadRef('labour_grades', true),
   },
