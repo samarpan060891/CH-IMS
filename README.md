@@ -60,6 +60,13 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   **factory overheads vs absorbed** compares actual factory overheads (flagged expense heads + factory cost centres) with the overhead % absorbed into
   production orders and suggests the % that would cover them. Expense register; KPI measures for expenses and petty cash. Supplier invoices keyed by hand
   carry an expense head / cost centre / project on non-stock lines.
+- **Provisions & accruals** (Finance → General ledger): always at month end — depreciation, gratuity and leave-salary provisions. Optional, each **off until
+  Finance switches it on** ("Automate at month end"), and always available to preview and post by hand for any month:
+  **accruals** for bills not yet received (suggested from recurring bills; post at month end and reverse themselves on the 1st), **prepayments** spread over
+  months (expense lines can say "spread over N months"; monthly release, catches up late schedules), **doubtful debts** (% by days overdue),
+  **slow-moving stock** (% by days in stock), **warranty / defects** (% of contract revenue in the defects period less snag rework) and **contract work done
+  not yet billed** (unbilled earned value). The four provisions are true-ups to a target balance, so re-running a month posts nothing extra. Percentages
+  and periods are set by Finance on the page.
 - **Finance — payables**: vendor invoices (3-way match), payment vouchers (bank, cheque, PDC, cash, LC, advances), debit notes, net payables with aging.
 - **Finance — receivables**: customers master; project billing terms (advance %, advance recovery %, retention %, payment terms); sales invoices: advance invoice, progress claims filled from
   BOQ / unit progress (previous certified, cumulative, this claim) → submitted to the client → **payment certificate** (certified cumulative qty per line) → posted tax invoice with advance recovery,

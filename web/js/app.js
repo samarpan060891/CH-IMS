@@ -22,8 +22,9 @@ import { FloorApp } from './floor.js';
 import { ApprovalsApp, myQueues } from './approve.js';
 import { ReceiveApp } from './receive.js';
 import { EXP_DOCS, PettyCash } from './expenses.js';
+import { PROV_DOCS, Provisions } from './provisions.js';
 
-Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS);
+Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS);
 
 const ALL = null;
 // short menu names for reports (full titles show on the report page)
@@ -127,6 +128,9 @@ const MENU = [
     { to: 'books/ledger', t: 'Ledgers & bank reconciliation', roles: ['finance', 'factory_manager'] },
     { to: 'books/vat', t: 'VAT return (201)', roles: ['finance'] },
     { to: 'd/jv', t: 'Journals', roles: ['finance', 'factory_manager'] },
+    { to: 'provisions', t: 'Provisions & accruals', roles: ['finance', 'factory_manager'] },
+    { to: 'd/acr', t: 'Accruals', roles: ['finance', 'factory_manager'] },
+    { to: 'd/ppm', t: 'Prepayments', roles: ['finance', 'factory_manager'] },
     { to: 'books/periods', t: 'Month end & period close', roles: ['finance'] },
     { to: 'm/gl_accounts', t: 'Chart of accounts', roles: ['finance', 'factory_manager'] },
   ] },
@@ -194,7 +198,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -239,6 +243,7 @@ const App = {
       if (a === 'floorapp' || (a === 'dashboard' && !b && homeDashboard() === 'floor')) return { comp: 'FloorApp', props: {}, title: 'Floor' };
       if (a === 'approvals' || (a === 'dashboard' && !b && homeDashboard() === 'approvals')) return { comp: 'ApprovalsApp', props: {}, title: 'Approvals' };
       if (a === 'pettycash') return { comp: 'PettyCash', props: {}, title: 'Petty cash' };
+      if (a === 'provisions') return { comp: 'Provisions', props: {}, title: 'Provisions & accruals' };
       if (a === 'receiveapp' || (a === 'dashboard' && !b && homeDashboard() === 'receiving')) return { comp: 'ReceiveApp', props: {}, title: 'Receive goods' };
       if (a === 'countapp' || (a === 'dashboard' && !b && homeDashboard() === 'counting')) return { comp: 'CountApp', props: { id: a === 'countapp' ? b || null : null }, title: 'Stock count' };
       if (a === 'dashboard') return { comp: 'Dashboard', props: { kind: b || null }, title: 'Dashboard' };

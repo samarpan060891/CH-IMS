@@ -113,6 +113,8 @@ export const exp = {
       { k: 'amount', label: 'Amount (excl. VAT)', type: 'number', required: true },
       { k: 'vat_rate', label: 'VAT %', type: 'number' },
       { k: '_vat', label: 'VAT', type: 'ro', virtual: true, fmt: (v, r) => money(num(r.amount) * num(r.vat_rate) / 100) },
+      // prepaid (insurance, rent in advance …): held in Prepayments and released monthly to the expense head
+      { k: 'spread_months', label: 'Spread over months (prepaid)', type: 'number', show: () => isFin() },
     ] }],
   totals: ctx => {
     const a = ctx.grids.lines.reduce((s, r) => s + num(r.amount), 0), v = ctx.grids.lines.reduce((s, r) => s + Math.round(num(r.amount) * num(r.vat_rate)) / 100, 0);

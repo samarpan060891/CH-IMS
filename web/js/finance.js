@@ -350,9 +350,11 @@ export const Books = {
       this.syncing = false; await this.load();
     },
     async monthEnd(p) {
-      if (!(await confirmBox('Month end', `Post depreciation and the gratuity / leave-salary provision true-up for ${p.name}?`))) return;
+      if (!(await confirmBox('Month end', `Post depreciation and the gratuity / leave-salary provision true-up for ${p.name}, and run the provisions & accruals you have set to automate?`))) return;
       await run(async () => { const r = await rpc('gl_month_end', { p_month: p.period_month });
-        toast(`Depreciation ${money(r.depreciation)} · gratuity provision ${money(r.gratuity_provision)} · leave provision ${money(r.leave_provision)}`, 'ok', 8000); });
+        const names = { ACCRUALS: 'accruals suggested', PREPAYMENTS: 'prepayment releases', DOUBTFUL: 'doubtful debts adj.', SLOW_STOCK: 'slow stock adj.', WARRANTY: 'warranty adj.', ACCRUED_REVENUE: 'unbilled work adj.' };
+        const auto = Object.entries(r.automated || {}).map(([k, v]) => `${names[k] || k} ${['ACCRUALS', 'PREPAYMENTS'].includes(k) ? v : money(v)}`).join(' · ');
+        toast(`Depreciation ${money(r.depreciation)} · gratuity provision ${money(r.gratuity_provision)} · leave provision ${money(r.leave_provision)}${auto ? ' · ' + auto : ''}`, 'ok', 10000); });
       await this.load();
     },
     async closeP(p, close) {
@@ -496,7 +498,7 @@ export const Books = {
     <div class="card" v-if="t==='periods'">
       <div class="row" style="margin-bottom:10px">
         <span class="small muted" style="max-width:820px">Documents post to the ledger every 15 minutes. At month end: <b>post pending documents</b>, run <b>month end</b> (depreciation of fixed assets and the gratuity /
-          leave-salary provision true-up), review the trial balance, then <b>close</b> the month. Documents dated in a closed month post on the first open day.</span>
+          leave-salary provision true-up, plus any <a href="#/provisions">provisions & accruals</a> set to automate), review the trial balance, then <b>close</b> the month. Documents dated in a closed month post on the first open day.</span>
         <span class="spacer"></span>
         <button v-if="isFin" class="btn primary" :disabled="syncing" @click="sync">⟳ Post pending documents</button>
       </div>
