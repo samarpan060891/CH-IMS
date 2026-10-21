@@ -2,7 +2,7 @@
 // floor stage board with supervisor time logs, FG receipt and dispatch notes to site.
 import { reactive } from 'vue';
 import { sb, state, must, run, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, loadRefs, toast } from './lib.js';
-import { ask, confirmBox, Badge, Icon } from './components.js';
+import { ask, confirmBox, Badge, Icon, Modal } from './components.js';
 import { makePdf } from './pdf.js';
 import { logoPng } from './logo.js';
 import { qrMatrix, qrText } from './scan.js';
@@ -184,7 +184,8 @@ export const wo = {
   refs: ['items', 'projects', 'work_centers', 'bom_templates', 'profiles'],
   list: { select: '*, projects(code,name), items(code,name)', columns: [
     { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : '', label: 'Project / MTS' }, { k: r => r.items ? `${r.items.code} — ${r.items.name}` : '', label: 'Product' },
-    { k: 'description', label: 'Description' }, { k: 'qty', label: 'Qty', fmt: 'qty' }, { k: 'due_date', label: 'Due', fmt: 'date' }, { k: 'priority', label: 'Priority', fmt: 'badge' },
+    { k: r => (r.is_rework ? '↻ ' : '') + (r.description || ''), label: 'Description' }, { k: 'qty', label: 'Qty', fmt: 'qty' },
+    { k: 'qty_completed', label: 'To FG', fmt: 'qty' }, { k: 'due_date', label: 'Due', fmt: 'date' }, { k: 'priority', label: 'Priority', fmt: 'badge' },
     { k: 'cost_total', label: 'Cost AED', fmt: 'money', cost: true, sum: true }] },
   defaults: () => ({ wo_date: today(), priority: 'NORMAL', qty: 1 }),
   async onNew(ctx, parts) {
@@ -206,14 +207,19 @@ export const wo = {
       refOptions: d => (state.refs.bom_templates || []).filter(t => t.item_id === d.item_id && t.is_active).map(t => ({ id: t.id, label: `${t.name} (v${t.version})` })) },
     { k: 'board_waste_pct', label: 'Board waste % (blank = Settings default)', type: 'number' },
     { k: 'edge_waste_pct', label: 'Edge band waste % (blank = Settings default)', type: 'number' },
-    { k: 'qty_completed', label: 'Good qty to FG store', type: 'ro', fmt: v => qty(v), show: d => d.status === 'COMPLETED' },
-    { k: 'qty_rejected', label: 'Rejected', type: 'ro', fmt: v => qty(v), show: d => d.status === 'COMPLETED' },
+    { k: 'sale_value', label: 'Selling value of this order AED (optional, for margin)', type: 'number', cost: true },
+    { k: 'parent_wo_id', label: 'Rework of order', type: 'ro', fmt: (v, d) => d._parentNo || '', show: d => d.is_rework },
+    { k: 'carry_in_cost', label: 'Cost carried in from rejected units AED', type: 'ro', fmt: v => money(v), cost: true, show: d => d.is_rework },
+    { k: 'qty_completed', label: 'Good qty to FG store', type: 'ro', fmt: v => qty(v), show: d => ['IN_PROGRESS', 'COMPLETED'].includes(d.status) },
+    { k: 'qty_rejected', label: 'Rejected at QC (rework + scrap)', type: 'ro', fmt: v => qty(v), show: d => ['IN_PROGRESS', 'COMPLETED'].includes(d.status) },
     { k: 'cost_total', label: 'Total cost AED', type: 'ro', fmt: (v, d) => `${money(v)}  (unit ${money(num(v) / (num(d.qty_completed) || 1))})`, cost: true, show: d => d.status === 'COMPLETED' },
     { k: 'released_by', label: 'Released', type: 'ro', fmt: (v, d) => v ? `${refLabel('profiles', v)} · ${dt(d.released_at)}` : '', show: d => !!d.released_by },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
   headerNote: ctx => {
-    if (ctx.doc.status !== 'DRAFT') return 'Stages are tracked on the <b>Stage board</b> (Production menu or scan the job card QR). Material comes through the linked material request.';
+    if (ctx.doc.is_rework && ctx.doc.status === 'DRAFT') return '<b>Rework order</b> created at QC. The original route was copied — delete the stages that are not needed (or skip them later), add any replacement material, then <b>Release</b>.';
+    if (ctx.doc.status !== 'DRAFT') return 'Stages are tracked on the <b>Stage board</b> (Production menu or scan the job card QR). Material comes through the linked material request. ' +
+      'Send finished units to the FG store in batches with <b>Receive batch</b>; the <b>Final receipt</b> closes the order and absorbs all remaining cost.';
     return 'Pick a template and <b>Apply template</b>, or import / type the cut list. <b>Calculate materials</b> turns the cut list into sheets (with board waste %) and edge banding metres. ' +
       'Add hardware lines manually. Then <b>Release</b> — a material request goes to the Production In-charge and Stores.';
   },
@@ -238,8 +244,12 @@ export const wo = {
     await loadRef('bom_templates', true);
     const id = ctx.doc.id;
     ctx.extra.cost = must(await sb.from('v_wo_cost').select('*').eq('wo_id', id).maybeSingle());
-    ctx.extra.logs = must(await sb.from('wo_time_logs').select('*, wo_operations(seq, work_centers(name)), profiles:logged_by(full_name)').eq('wo_id', id).order('log_date').order('logged_at'));
+    ctx.extra.logs = must(await sb.from('wo_time_logs').select('*, wo_operations(seq, work_centers(name)), profiles:logged_by(full_name), wo_time_log_crew(workers,hours,labour_grades(name))')
+      .eq('wo_id', id).order('log_date').order('logged_at'));
     ctx.extra.mat = must(await sb.from('stock_ledger').select('txn_date,txn_type,doc_no,qty,value,item_id').eq('production_order_id', id).in('txn_type', ['ISSUE', 'RETURN']).order('txn_at'));
+    ctx.extra.receipts = must(await sb.from('wo_receipts').select('*, rw:production_orders!wo_receipts_rework_wo_id_fkey(id,wo_no), scrap_notes(id,scrap_no,status)').eq('wo_id', id).order('created_at'));
+    ctx.extra.reworks = must(await sb.from('production_orders').select('id,wo_no,status,qty').eq('parent_wo_id', id).order('created_at'));
+    if (ctx.doc.parent_wo_id) ctx.doc._parentNo = must(await sb.from('production_orders').select('wo_no').eq('id', ctx.doc.parent_wo_id).single()).wo_no;
   },
   async loadInfo(ctx) {
     const out = [];
@@ -253,11 +263,19 @@ export const wo = {
         { el: 'Material', ...v(c.plan_material, c.act_material) }, { el: `Labour (${qty(c.act_labour_hours)} of ${qty(c.plan_labour_hours)} man-h)`, ...v(c.plan_labour, c.act_labour) },
         { el: `Machine (${qty(c.act_machine_hours)} of ${qty(c.plan_machine_hours)} h)`, ...v(c.plan_machine, c.act_machine) },
         { el: `Overhead (${num(state.company?.overhead_pct)}% of labour + machine)`, ...v(c.plan_overhead, c.act_overhead) },
-        { el: 'TOTAL', ...v(c.plan_total, c.act_total) }],
+        ...(num(c.carry_in_cost) ? [{ el: 'Carried in from rejected units', ...v(c.carry_in_cost, c.carry_in_cost) }] : []),
+        { el: 'TOTAL', ...v(c.plan_total, c.act_total) },
+        ...(c.sale_value != null ? [{ el: 'Selling value', plan: num(c.sale_value), act: num(c.sale_value), var: 0 }, { el: 'MARGIN', ...v(num(c.sale_value) - num(c.plan_total), c.margin) }] : [])],
         columns: [{ k: 'el', label: 'Element' }, { k: 'plan', label: 'Planned', fmt: 'money' }, { k: 'act', label: 'Actual', fmt: 'money' }, { k: 'var', label: 'Variance', fmt: 'money' }] });
     }
+    if (ctx.extra.receipts?.length) out.push({ title: 'Finished goods receipts & QC', rows: ctx.extra.receipts, columns: [
+      { k: 'receipt_no', label: 'Receipt' }, { k: 'receipt_date', label: 'Date', fmt: 'date' }, { k: r => r.is_final ? 'Final' : 'Batch', label: 'Type' },
+      { k: 'good_qty', label: 'Good → FG', fmt: 'qty' }, { k: 'rework_qty', label: 'Rework', fmt: 'qty' }, { k: 'scrap_qty', label: 'Scrap', fmt: 'qty' },
+      { k: 'unit_cost', label: 'Unit cost', fmt: 'money', cost: true }, { k: 'value', label: 'FG value', fmt: 'money', cost: true, sum: true },
+      { k: r => r.rw?.wo_no || '', label: 'Rework order' }, { k: r => r.scrap_notes ? `${r.scrap_notes.scrap_no} (${label(r.scrap_notes.status)})` : '', label: 'Scrap note' }, { k: 'remarks', label: 'QC remarks' }] });
     if (ctx.extra.logs?.length) out.push({ title: 'Stage time logs', rows: ctx.extra.logs, columns: [
-      { k: 'log_date', label: 'Date', fmt: 'date' }, { k: r => `${r.wo_operations?.seq} · ${r.wo_operations?.work_centers?.name}`, label: 'Stage' }, { k: 'crew', label: 'Crew', n: true },
+      { k: 'log_date', label: 'Date', fmt: 'date' }, { k: r => `${r.wo_operations?.seq} · ${r.wo_operations?.work_centers?.name}`, label: 'Stage' },
+      { k: r => (r.wo_time_log_crew || []).map(x => `${x.workers}× ${x.labour_grades?.name} ${qty(x.hours)}h`).join(', ') || r.crew, label: 'Crew' },
       { k: 'labour_hours', label: 'Man-hours', n: true }, { k: 'machine_hours', label: 'Machine h', n: true }, { k: 'qty_done', label: 'Qty done', fmt: 'qty' },
       { k: r => num(r.labour_hours) * num(r.labour_rate) + num(r.machine_hours) * num(r.machine_rate), label: 'Cost', fmt: 'money', cost: true },
       { k: r => r.profiles?.full_name, label: 'Logged by' }, { k: 'notes', label: 'Notes' }] });
@@ -280,15 +298,10 @@ export const wo = {
       { label: '🖨 Job card', show: s !== 'CANCELLED', reload: false, run: c => jobCard(c) },
       { label: '⏱ Stage board', show: ['RELEASED', 'IN_PROGRESS'].includes(s), reload: false, run: c => go('floor/' + c.doc.id) },
       { label: '📦 Material request', show: !!ctx.doc.mr_id, reload: false, run: c => go('d/mr/' + c.doc.mr_id) },
-      { label: '✔ Complete → FG store', cls: 'ok', show: ['RELEASED', 'IN_PROGRESS'].includes(s) && plan,
-        run: async c => {
-          const v = await ask({ title: 'Complete ' + c.doc.wo_no, message: 'Good units go to the Finished Goods Store at full cost (material + labour + machine + overhead). Return any leftover material to store first.',
-            fields: [{ k: 'g', label: 'Good quantity', type: 'number', required: true, default: num(c.doc.qty) }, { k: 'r', label: 'Rejected quantity', type: 'number', default: 0 },
-                     { k: 'm', label: 'Remarks', type: 'textarea' }], okText: 'Complete' });
-          if (!v) return;
-          await rpc('wo_complete', { p_wo: c.doc.id, p_good: num(v.g), p_rejected: num(v.r), p_remarks: v.m || null });
-          toast('Completed — finished goods received into the FG store', 'ok');
-        } },
+      { label: '📥 Receive batch to FG', show: ['RELEASED', 'IN_PROGRESS'].includes(s) && plan, run: c => receiveFg(c, false) },
+      { label: '✔ Final receipt & complete', cls: 'ok', show: ['RELEASED', 'IN_PROGRESS'].includes(s) && plan, run: c => receiveFg(c, true) },
+      { label: '↻ Parent order', show: !!ctx.doc.parent_wo_id, reload: false, run: c => go('d/wo/' + c.doc.parent_wo_id) },
+      ...(ctx.extra.reworks || []).map(r => ({ label: `↻ ${r.wo_no} (${label(r.status)})`, reload: false, run: () => go('d/wo/' + r.id) })),
       { label: '🚚 Dispatch', cls: 'primary', show: s === 'COMPLETED' && hasRole('stores', 'factory_manager'), reload: false, run: c => go('d/dsp/new/wo/' + c.doc.id) },
       { label: 'Cancel order', show: ['RELEASED', 'IN_PROGRESS'].includes(s) && plan,
         run: async c => { const v = await ask({ title: 'Cancel ' + c.doc.wo_no, fields: [{ k: 'r', label: 'Reason', type: 'textarea', required: true }], okText: 'Cancel order', danger: true });
@@ -296,6 +309,26 @@ export const wo = {
     ];
   },
 };
+
+// ---------- FG receipt (batch or final) with QC outcome ----------
+async function receiveFg(c, final) {
+  const d = c.doc, open = Math.max(0, num(d.qty) - num(d.qty_completed) - num(d.qty_rejected));
+  const v = await ask({
+    title: (final ? 'Final receipt — ' : 'Receive batch — ') + d.wo_no,
+    message: (final
+      ? `All remaining cost goes to these units and the order closes. ${qty(open)} of ${qty(d.qty)} still open. Return leftover material to store first.`
+      : `Send a batch to the Finished Goods Store; the order stays open. ${qty(open)} of ${qty(d.qty)} still open.`) +
+      ' Units rejected at QC can go to a rework order (cost carried over) or be scrapped (cost written off, scrap note raised).',
+    fields: [{ k: 'g', label: 'Good quantity → FG store', type: 'number', required: true, default: final ? open : null },
+      { k: 'rw', label: 'Rejected — for rework', type: 'number', default: 0 }, { k: 'sc', label: 'Rejected — scrap', type: 'number', default: 0 },
+      { k: 'm', label: 'QC remarks (reason for rejection)', type: 'textarea' }],
+    okText: final ? 'Receive & complete' : 'Receive batch' });
+  if (!v) return;
+  if ((num(v.rw) || num(v.sc)) && !v.m) throw new Error('Enter the QC remarks for the rejected units');
+  await rpc('wo_receive_fg', { p_wo: d.id, p_good: num(v.g), p_rework: num(v.rw), p_scrap: num(v.sc), p_final: final, p_remarks: v.m || null });
+  const extra = [num(v.rw) ? 'rework order created' : '', num(v.sc) ? 'scrap note raised for Stores' : ''].filter(Boolean).join(', ');
+  toast(`${final ? 'Order completed' : 'Batch received'} — ${qty(v.g)} to FG store${extra ? '; ' + extra : ''}`, 'ok', 7000);
+}
 
 // ---------- job card PDF with QR (scan opens the stage board) ----------
 async function jobCard(c) {
@@ -356,20 +389,22 @@ async function jobCard(c) {
 // STAGE BOARD (supervisors log crew & hours per stage)
 // ======================================================================
 export const StageBoard = {
-  components: { Badge, Icon },
+  components: { Badge, Icon, Modal },
   props: { woId: String },
-  data: () => ({ rows: [], load: [], wc: '', busy: false, loading: true }),
+  data: () => ({ rows: [], load: [], wc: '', busy: false, loading: true, dlg: null }),
   computed: {
     shown() { return this.rows.filter(r => !this.wc || r.work_center_id === this.wc); },
     title() { return this.woId && this.rows[0] ? `${this.rows[0].wo_no} — open stages` : ''; },
+    grades() { return (state.refs.labour_grades || []).filter(g => g.is_active); },
   },
   async mounted() { await this.reload(); },
   methods: {
-    qty, dt, label, itemName,
+    qty, dt, label, itemName, money, canSeeCost,
     async reload() {
       this.loading = true;
       await run(async () => {
         await loadRefs(['items', 'work_centers', 'projects']);
+        await loadRef('labour_grades', true);
         let q = sb.from('v_wo_stage_board').select('*');
         if (this.woId) q = q.eq('wo_id', this.woId);
         this.rows = must(await q.order('due_date', { nullsFirst: false }).order('wo_no').order('seq'));
@@ -380,17 +415,28 @@ export const StageBoard = {
     proj(id) { return refRow('projects', id)?.code || ''; },
     late(r) { return r.due_date && r.due_date < today(); },
     async start(r) { this.busy = true; await run(() => rpc('wo_stage_action', { p_op: r.operation_id, p_action: 'START' }), 'Stage started'); this.busy = false; await this.reload(); },
-    async log(r, finish = false) {
-      const v = await ask({ title: `${r.wo_no} · ${r.wc_name}`, message: `Planned ${qty(r.planned_labour_hours)} man-hours · logged so far ${qty(r.act_labour_hours)}. Order qty ${qty(r.qty)}.`,
-        fields: [{ k: 'd', label: 'Date', type: 'date', required: true, default: today() }, { k: 'c', label: 'Crew (number of workers)', type: 'number', required: true, default: 1 },
-          { k: 'h', label: 'Hours worked', type: 'number', required: true }, { k: 'mh', label: 'Machine hours (blank = same as hours worked)', type: 'number' },
-          { k: 'q', label: 'Quantity completed in this session', type: 'number', default: 0 }, { k: 'n', label: 'Notes / issues', type: 'textarea' },
-          { k: 'f', label: 'Stage finished', type: 'check', default: finish, hint: 'Close this stage (next stage becomes current)' }], okText: 'Save log' });
-      if (!v) return;
+    // crew is logged per worker grade: each line = grade × workers × hours
+    log(r, finish = false) {
+      const wc = refRow('work_centers', r.work_center_id);
+      const g = wc?.default_grade_id || this.grades[0]?.id || null;
+      this.dlg = { r, d: today(), crew: [{ grade_id: g, workers: 1, hours: null }], mh: null, q: 0, n: '', f: finish, machine: wc?.kind === 'MACHINE' };
+    },
+    addCrew() { this.dlg.crew.push({ grade_id: null, workers: 1, hours: this.dlg.crew[0]?.hours ?? null }); },
+    gradeRate(id) { return num(refRow('labour_grades', id)?.rate_per_hour); },
+    manHours() { return this.dlg.crew.reduce((s, c) => s + num(c.workers) * num(c.hours), 0); },
+    crewCost() { return this.dlg.crew.reduce((s, c) => s + num(c.workers) * num(c.hours) * this.gradeRate(c.grade_id), 0); },
+    async saveLog() {
+      const v = this.dlg;
+      const crew = v.crew.filter(c => c.grade_id && num(c.workers) > 0 && c.hours !== null && c.hours !== '');
+      if (!crew.length) return toast('Enter at least one crew line: grade, workers and hours', 'error');
+      if (crew.length < v.crew.length) return toast('Complete or remove the empty crew lines', 'error');
       this.busy = true;
-      await run(() => rpc('wo_log_time', { p_op: r.operation_id, p_date: v.d, p_crew: num(v.c), p_hours: num(v.h), p_machine_hours: v.mh === null || v.mh === '' ? null : num(v.mh),
-        p_qty_done: num(v.q), p_notes: v.n || null, p_complete: !!v.f }), v.f ? 'Logged — stage closed' : 'Time logged');
-      this.busy = false; await this.reload();
+      const ok = await run(() => rpc('wo_log_time', { p_op: v.r.operation_id, p_date: v.d,
+        p_crew: crew.map(c => ({ grade_id: c.grade_id, workers: num(c.workers), hours: num(c.hours) })),
+        p_machine_hours: v.mh === null || v.mh === '' ? null : num(v.mh), p_qty_done: num(v.q), p_notes: v.n || null, p_complete: !!v.f }),
+        v.f ? 'Logged — stage closed' : 'Time logged');
+      this.busy = false;
+      if (ok) { this.dlg = null; await this.reload(); }
     },
     async done(r) {
       if (!(await confirmBox('Close stage', `Close ${r.wc_name} on ${r.wo_no} without logging more time?`))) return;
@@ -437,7 +483,35 @@ export const StageBoard = {
         </tbody>
       </table></div>
     </div>
-    <p class="small muted">Supervisors log <b>crew × hours</b> for each stage; machine hours default to the hours worked on machine stages. Scan the QR on the job card to open one order directly.</p>
+    <p class="small muted">Supervisors log the crew by <b>worker grade × workers × hours</b> for each stage; machine hours default to the longest crew line on machine stages. Scan the QR on the job card to open one order directly.</p>
+
+    <Modal v-if="dlg" :title="dlg.r.wo_no + ' · ' + dlg.r.wc_name" @close="dlg = null">
+      <p class="small muted" style="margin-top:0">Planned {{ qty(dlg.r.planned_labour_hours) }} man-hours · logged so far {{ qty(dlg.r.act_labour_hours) }} · order qty {{ qty(dlg.r.qty) }}</p>
+      <div class="grid">
+        <label class="f"><span>Date <span class="req">*</span></span><input type="date" v-model="dlg.d"></label>
+        <label class="f"><span>Qty completed this session</span><input type="number" step="any" v-model.number="dlg.q"></label>
+        <label class="f" v-if="dlg.machine"><span>Machine hours (blank = longest crew line)</span><input type="number" step="any" v-model.number="dlg.mh"></label>
+      </div>
+      <h3 style="margin:14px 0 6px">Crew</h3>
+      <div class="tbl-wrap"><table class="t lines">
+        <thead><tr><th>Worker grade</th><th style="width:90px">Workers</th><th style="width:100px">Hours each</th><th class="n">Man-hours</th><th class="n" v-if="canSeeCost()">Cost AED</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="(c, i) in dlg.crew" :key="i">
+            <td><select v-model="c.grade_id"><option :value="null" disabled>Select grade…</option><option v-for="g in grades" :value="g.id">{{ g.name }}</option></select></td>
+            <td><input type="number" min="1" step="1" v-model.number="c.workers"></td>
+            <td><input type="number" min="0" step="0.25" v-model.number="c.hours"></td>
+            <td class="n">{{ qty((c.workers || 0) * (c.hours || 0)) }}</td>
+            <td class="n" v-if="canSeeCost()">{{ money((c.workers || 0) * (c.hours || 0) * gradeRate(c.grade_id)) }}</td>
+            <td><button class="btn sm bad" v-if="dlg.crew.length > 1" @click="dlg.crew.splice(i, 1)">✕</button></td>
+          </tr>
+        </tbody>
+        <tfoot><tr><td colspan="3"><button class="btn sm" @click="addCrew">+ Add grade</button></td><td class="n"><b>{{ qty(manHours()) }}</b></td>
+          <td class="n" v-if="canSeeCost()"><b>{{ money(crewCost()) }}</b></td><td></td></tr></tfoot>
+      </table></div>
+      <label class="f full" style="margin-top:10px"><span>Notes / issues</span><textarea v-model="dlg.n"></textarea></label>
+      <label class="row small" style="margin-top:8px;gap:6px"><input type="checkbox" v-model="dlg.f"> Stage finished — close it (the next stage becomes current)</label>
+      <template #footer><button class="btn" @click="dlg = null">Cancel</button><button class="btn primary" :disabled="busy" @click="saveLog">Save log</button></template>
+    </Modal>
   </div>`,
 };
 

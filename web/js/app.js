@@ -21,7 +21,7 @@ const ALL = null;
 const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', reserved: 'Reserved for projects', stockout: 'Stock-outs', overstock: 'Overstock & non-moving',
   expiry: 'Expiring stock', buffer: 'Buffer status', aging: 'Aging', abc: 'ABC analysis', valuation: 'Valuation', projects: 'Project consumption',
   invoices: 'Open invoices', grni: 'Received, not invoiced', tools: 'Tools with workers', calibration: 'Calibration due',
-  jobcost: 'Job costing', wcload: 'Work centre load', fg: 'Finished goods stock', projprod: 'Project production & dispatch' };
+  jobcost: 'Job costing & margin', wcload: 'Work centre load', fg: 'Finished goods stock', projprod: 'Project cost & margin' };
 // Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
 const MENU = [
@@ -60,6 +60,7 @@ const MENU = [
     { to: 'd/bom', t: 'BOM templates', roles: ['production_incharge', 'factory_manager'] },
     { to: 'd/dsp', t: 'Dispatch notes', roles: ['stores', 'factory_manager', 'production_incharge', 'finance'], badge: 'dsp' },
     { to: 'm/work_centers', t: 'Work centres', roles: ['factory_manager', 'finance', 'production_incharge'] },
+    { to: 'm/labour_grades', t: 'Worker grades & rates', roles: ['factory_manager', 'finance'] },
     { sep: 'Production reports' },
     ...['jobcost', 'wcload', 'fg', 'projprod'].map(rep),
   ] },

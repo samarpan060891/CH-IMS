@@ -205,7 +205,10 @@ export const REPORTS = {
     { k: 'plan_total', label: 'Planned AED', fmt: 'money', sum: true }, { k: 'act_material', label: 'Material', fmt: 'money', sum: true }, { k: 'act_labour', label: 'Labour', fmt: 'money', sum: true },
     { k: 'act_machine', label: 'Machine', fmt: 'money', sum: true }, { k: 'act_overhead', label: 'Overhead', fmt: 'money', sum: true }, { k: 'act_total', label: 'Actual AED', fmt: 'money', sum: true },
     { k: r => num(r.plan_total) ? Math.round((num(r.act_total) / num(r.plan_total) - 1) * 1000) / 10 : null, label: 'Variance %', n: true },
-    { k: r => num(r.qty_completed) ? num(r.act_total) / num(r.qty_completed) : null, label: 'Unit cost', fmt: 'money' },
+    { k: r => num(r.qty_completed) ? num(r.fg_value) / num(r.qty_completed) : null, label: 'Unit cost (FG)', fmt: 'money' },
+    { k: 'qty_rejected', label: 'Rejected', fmt: 'qty' }, { k: 'scrap_value', label: 'Scrap written off', fmt: 'money', sum: true },
+    { k: 'sale_value', label: 'Selling value', fmt: 'money', sum: true }, { k: 'margin', label: 'Margin', fmt: 'money', sum: true },
+    { k: r => num(r.sale_value) ? Math.round(num(r.margin) / num(r.sale_value) * 1000) / 10 : null, label: 'Margin %', n: true },
     { k: 'plan_labour_hours', label: 'Plan man-h', n: true }, { k: 'act_labour_hours', label: 'Actual man-h', n: true }] },
   wcload: { title: 'Work centre load', src: 'v_work_center_load', order: 'sort_order', columns: [
     { k: 'code', label: 'Code' }, { k: 'name', label: 'Work centre' }, { k: 'kind', label: 'Type', fmt: 'label' }, { k: 'open_stages', label: 'Open stages', n: true },
@@ -215,9 +218,12 @@ export const REPORTS = {
     { k: r => r.project_id ? (refRow('projects', r.project_id)?.code || 'Project') : 'MTS stock', label: 'For' },
     { k: 'received_date', label: 'Completed', fmt: 'date' }, { k: 'age_days', label: 'Age days', n: true }, { k: 'qty_on_hand', label: 'Qty', fmt: 'qty' },
     { k: 'value_rate', label: 'Unit cost', fmt: 'money', cost: true }, { k: 'value', label: 'Value AED', fmt: 'money', cost: true, sum: true }] },
-  projprod: { title: 'Project production & dispatch', src: 'v_project_production', filter: q => q.gt('orders', 0), order: 'code', cost: true, columns: [
+  projprod: { title: 'Project production, cost & margin', src: 'v_project_margin', filter: q => q.or('orders.gt.0,contract_value.not.is.null'), order: 'code', cost: true, columns: [
     { k: 'code', label: 'Code' }, { k: 'name', label: 'Project' }, { k: 'project_type', label: 'Type', fmt: 'label' }, { k: 'orders', label: 'Orders', n: true }, { k: 'wip_orders', label: 'In WIP', n: true },
-    { k: 'wip_value', label: 'WIP value', fmt: 'money', sum: true }, { k: 'fg_in_store', label: 'FG in store', fmt: 'money', sum: true }, { k: 'dispatched_value', label: 'Dispatched (charged)', fmt: 'money', sum: true }] },
+    { k: 'contract_value', label: 'Contract value', fmt: 'money', sum: true },
+    { k: 'wip_value', label: 'WIP', fmt: 'money', sum: true }, { k: 'fg_in_store', label: 'FG in store', fmt: 'money', sum: true }, { k: 'dispatched_value', label: 'Dispatched', fmt: 'money', sum: true },
+    { k: 'scrap_written_off', label: 'Scrap written off', fmt: 'money', sum: true }, { k: 'site_material', label: 'Other material issued', fmt: 'money', sum: true },
+    { k: 'total_cost', label: 'Total cost', fmt: 'money', sum: true }, { k: 'margin', label: 'Margin', fmt: 'money', sum: true }, { k: 'margin_pct', label: 'Margin %', n: true }] },
 };
 
 export const Reports = {
