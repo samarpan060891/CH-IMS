@@ -18,6 +18,7 @@ import { PROJ_DOCS, Mrp } from './projects.js';
 import { SiteApp } from './site.js';
 import { HR_DOCS, AttendanceSheet } from './hr.js';
 import { FIN_DOCS, Books } from './finance.js';
+import { FloorApp } from './floor.js';
 
 Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS);
 
@@ -57,6 +58,7 @@ const MENU = [
     { to: 'd/disposal', t: 'Scrap disposals', roles: ['stores', 'factory_manager', 'finance'], badge: 'disposal' },
   ] },
   { g: 'Shop floor', icon: 'hammer', items: [
+    { to: 'floorapp', t: '📱 Floor app (phone)', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager'] },
     { to: 'd/mr', t: 'Material requests', roles: ALL, badge: 'mr' },
     { to: 'd/ack', t: 'Receive material', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager', 'site_supervisor'], badge: 'ack' },
     { to: 'd/ret', t: 'Return to store & offcuts', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager', 'site_supervisor'], badge: 'ret' },
@@ -179,7 +181,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -219,6 +221,7 @@ const App = {
       if (a === 'books') return { comp: 'Books', props: { tab: b || 'tb', arg: c || null }, title: 'Books of account' };
       // site supervisors land on the phone-friendly site app
       if (a === 'site' || (a === 'dashboard' && !b && homeDashboard() === 'site')) return { comp: 'SiteApp', props: {}, title: 'Site' };
+      if (a === 'floorapp' || (a === 'dashboard' && !b && homeDashboard() === 'floor')) return { comp: 'FloorApp', props: {}, title: 'Floor' };
       if (a === 'dashboard') return { comp: 'Dashboard', props: { kind: b || null }, title: 'Dashboard' };
       const simple = { replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };

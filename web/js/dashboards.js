@@ -26,6 +26,7 @@ export const DASHBOARDS = {
   production: { title: 'Production', roles: ['production_incharge', 'shop_floor'], sections: ['pending', 'prodKpis', 'woLate', 'wcLoad', 'projects'] },
   hr:         { title: 'HR', roles: ['hr_officer'], sections: ['pending', 'hrKpis', 'docExpiry', 'onLeave'] },
   site:       { title: 'Site', roles: ['site_supervisor'], route: 'site' },
+  floor:      { title: 'Floor app', roles: [], route: 'floorapp' },   // phone screen for the shop floor; given to users by the administrator
 };
 export const dashboardFor = role => Object.keys(DASHBOARDS).find(k => DASHBOARDS[k].roles.includes(role)) || 'management';
 // dashboards a user may open: as set by the administrator, else all (administrator) or the role's own
