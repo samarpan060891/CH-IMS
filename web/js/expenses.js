@@ -74,7 +74,7 @@ export const exp = {
   statuses: ['DRAFT', 'PENDING_FM', 'APPROVED', 'POSTED', 'REIMBURSED', 'REJECTED', 'CANCELLED'],
   createRoles: ['finance', 'factory_manager', 'purchase', 'stores', 'production_incharge', 'shop_floor', 'site_supervisor', 'hr_officer'],
   canEdit: ctx => ['DRAFT', 'REJECTED'].includes(ctx.doc.status) && (!ctx.doc.id || ctx.doc.created_by === state.profile?.id || isFin()),
-  refs: ['gl_accounts', 'cost_centers', 'projects', 'vendors', 'employees', 'profiles'],
+  refs: ['gl_accounts', 'cost_centers', 'projects', 'vendors', 'employees', 'profiles', 'work_centers'],
   panel: ExpenseFiles,
   list: { select: '*, vendors(name), employees(name)', columns: [{ k: r => TYPE_SHORT[r.exp_type], label: 'Type' },
     { k: r => r.vendors?.name || r.employees?.name || r.payee_name, label: 'Paid to' }, { k: 'bill_no', label: 'Bill no.' },
@@ -110,6 +110,8 @@ export const exp = {
       { k: 'description', label: 'Description', width: '200px' },
       { k: 'cost_center_id', label: 'Cost centre', type: 'ref', ref: 'cost_centers', required: true, width: '150px', filter: r => r.is_active },
       { k: 'project_id', label: 'Project (optional)', type: 'ref', ref: 'projects', width: '150px', filter: r => r.status === 'OPEN' },
+      // repairs, spares, service of a specific machine: counts in its machine-rate calculation
+      { k: 'work_center_id', label: 'Machine (optional)', type: 'ref', ref: 'work_centers', width: '140px', filter: r => r.kind === 'MACHINE' && r.is_active },
       { k: 'amount', label: 'Amount (excl. VAT)', type: 'number', required: true },
       { k: 'vat_rate', label: 'VAT %', type: 'number' },
       { k: '_vat', label: 'VAT', type: 'ro', virtual: true, fmt: (v, r) => money(num(r.amount) * num(r.vat_rate) / 100) },

@@ -867,6 +867,7 @@ export const Settings = {
         { k: 'ot_rate_normal_pct', label: 'Overtime % (normal)', type: 'number' }, { k: 'ot_rate_holiday_pct', label: 'Overtime % (night / rest day / holiday)', type: 'number' },
         { k: 'ot_basis', label: 'Overtime based on', type: 'select', options: [{ v: 'BASIC', l: 'Basic salary' }, { v: 'GROSS', l: 'Gross salary' }] },
         { k: 'labour_rate_per_hour', label: 'Production: labour rate AED / man-hour', type: 'number' },
+        { k: 'power_tariff_aed_kwh', label: 'Electricity tariff AED / kWh (machine-rate calculator)', type: 'number' },
         { k: 'overhead_pct', label: 'Production: overhead % on labour + machine', type: 'number' },
         { k: 'board_waste_pct', label: 'Production: board waste % (cut list)', type: 'number' },
         { k: 'edge_waste_pct', label: 'Production: edge band waste %', type: 'number' },

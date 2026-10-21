@@ -258,7 +258,14 @@ export const MASTERS = {
       { k: 'default_grade_id', label: 'Usual worker grade (planning rate + default crew line)', type: 'ref', ref: 'labour_grades' },
       { k: 'labour_rate_per_hour', label: 'Planning labour rate override AED / man-hour (blank = grade rate)', type: 'number', cost: true },
       { k: 'hours_per_day', label: 'Available hours per day', type: 'number' },
-      { k: 'sort_order', label: 'Default route order', type: 'number' }, { k: 'is_active', label: 'Active', type: 'check' }] }],
+      { k: 'sort_order', label: 'Default route order', type: 'number' }, { k: 'is_active', label: 'Active', type: 'check' }] },
+      { title: 'Machine-rate calculator inputs (machines only)', cost: true, fields: [
+        { k: 'power_kw', label: 'Connected power kW', type: 'number', show: d => d.kind === 'MACHINE' },
+        { k: 'load_factor_pct', label: 'Average load while running %', type: 'number', show: d => d.kind === 'MACHINE' },
+        { k: 'tooling_cost_per_year', label: 'Tooling & consumables per year AED', type: 'number', show: d => d.kind === 'MACHINE' },
+        { k: 'working_days_per_year', label: 'Working days per year', type: 'number', show: d => d.kind === 'MACHINE' },
+        { k: 'utilisation_pct', label: 'Expected utilisation %', type: 'number', show: d => d.kind === 'MACHINE' }] }],
+    note: 'Machine rates can be worked out from real costs in Production → Machine-rate calculator.',
     afterSave: () => loadRef('work_centers', true),
   },
   labour_grades: {

@@ -23,6 +23,7 @@ import { ApprovalsApp, myQueues } from './approve.js';
 import { ReceiveApp } from './receive.js';
 import { EXP_DOCS, PettyCash } from './expenses.js';
 import { PROV_DOCS, Provisions } from './provisions.js';
+import { MachineRates } from './machinerates.js';
 
 Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS);
 
@@ -77,6 +78,7 @@ const MENU = [
     { to: 'd/down', t: 'Machine downtime', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'stores'], badge: 'down' },
     { to: 'd/bom', t: 'BOM templates', roles: ['production_incharge', 'factory_manager'] },
     { to: 'm/work_centers', t: 'Work centres', roles: ['factory_manager', 'finance', 'production_incharge'] },
+    { to: 'machinerates', t: 'Machine-rate calculator', roles: ['factory_manager', 'finance', 'production_incharge'] },
     { to: 'm/labour_grades', t: 'Worker grades & rates', roles: ['factory_manager', 'finance'] },
     { sep: 'Production reports' },
     ...['jobcost', 'wcload', 'downtime', 'fg'].map(rep),
@@ -198,7 +200,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions, MachineRates },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -244,6 +246,7 @@ const App = {
       if (a === 'approvals' || (a === 'dashboard' && !b && homeDashboard() === 'approvals')) return { comp: 'ApprovalsApp', props: {}, title: 'Approvals' };
       if (a === 'pettycash') return { comp: 'PettyCash', props: {}, title: 'Petty cash' };
       if (a === 'provisions') return { comp: 'Provisions', props: {}, title: 'Provisions & accruals' };
+      if (a === 'machinerates') return { comp: 'MachineRates', props: {}, title: 'Machine-rate calculator' };
       if (a === 'receiveapp' || (a === 'dashboard' && !b && homeDashboard() === 'receiving')) return { comp: 'ReceiveApp', props: {}, title: 'Receive goods' };
       if (a === 'countapp' || (a === 'dashboard' && !b && homeDashboard() === 'counting')) return { comp: 'CountApp', props: { id: a === 'countapp' ? b || null : null }, title: 'Stock count' };
       if (a === 'dashboard') return { comp: 'Dashboard', props: { kind: b || null }, title: 'Dashboard' };
