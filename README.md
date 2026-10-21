@@ -52,6 +52,14 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   variation orders, snags to verify, scrap disposals, leave; Finance: POs, top-management references, stock releases, disposals, salary advances, payroll;
   Production In-charge: material requests, offcut keep / scrap, snags; Purchase: top-management references; HR: leave. "Open" goes to the full document.
 - **Notifications**: in-app bell; every approval step notifies the next approver's role and informs the requester of approvals/rejections.
+- **Running expenses** (Finance → Expenses): utilities, rent, telecom, fuel, repairs, fees … as expense vouchers of four kinds — **supplier bill** (posted as a
+  supplier invoice → payables, paid through Payments), **paid now** (bank / card / cash), **petty cash** (per-float ledger accounts, top-ups) and **employee claim**
+  (owed to the employee until reimbursed). Each line → expense head + cost centre (+ optional project, which then counts in project margin); bill photo / PDF
+  attached from the phone; above the approval limit (Settings) the Factory Manager approves, Finance posts. Staff can raise claims and petty-cash spends.
+  **Recurring bills** create a monthly draft to check against the actual bill. **Budgets** per cost centre / expense head / month with budget vs actual;
+  **factory overheads vs absorbed** compares actual factory overheads (flagged expense heads + factory cost centres) with the overhead % absorbed into
+  production orders and suggests the % that would cover them. Expense register; KPI measures for expenses and petty cash. Supplier invoices keyed by hand
+  carry an expense head / cost centre / project on non-stock lines.
 - **Finance — payables**: vendor invoices (3-way match), payment vouchers (bank, cheque, PDC, cash, LC, advances), debit notes, net payables with aging.
 - **Finance — receivables**: customers master; project billing terms (advance %, advance recovery %, retention %, payment terms); sales invoices: advance invoice, progress claims filled from
   BOQ / unit progress (previous certified, cumulative, this claim) → submitted to the client → **payment certificate** (certified cumulative qty per line) → posted tax invoice with advance recovery,

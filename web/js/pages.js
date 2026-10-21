@@ -143,6 +143,26 @@ export const REPORTS = {
     { k: 'due_date', label: 'Due', fmt: 'date' }, { k: r => r.is_overdue ? 'OVERDUE' : '', label: '', fmt: 'badge' }, { k: 'status', label: 'Status', fmt: 'badge' },
     { k: 'age_days', label: 'Age (days)', n: true }, { k: 'reopen_count', label: 'Reopened', n: true }, { k: 'photos', label: 'Photos', n: true },
     { k: 'labour_cost', label: 'Rework labour', fmt: 'money', cost: true, sum: true }, { k: 'material_cost', label: 'Rework material', fmt: 'money', cost: true, sum: true }] },
+  // ---------- running expenses (Finance menu) ----------
+  expreg: { title: 'Expense register (posted)', src: 'expense_lines', order: 'line_no', roles: ['finance', 'factory_manager'],
+    select: '*, expenses!inner(exp_no,exp_date,exp_type,status,payee_name,bill_no,vendors(name),employees(name)), gl_accounts(code,name), cost_centers(code,name), projects(code)',
+    filter: q => q.in('expenses.status', ['POSTED', 'REIMBURSED']), columns: [
+    { k: r => r.expenses.exp_date, label: 'Date', fmt: 'date' }, { k: r => r.expenses.exp_no, label: 'Expense' }, { k: r => label(r.expenses.exp_type), label: 'Type' },
+    { k: r => r.expenses.vendors?.name || r.expenses.employees?.name || r.expenses.payee_name, label: 'Paid to' }, { k: r => r.expenses.bill_no, label: 'Bill no.' },
+    { k: r => `${r.gl_accounts?.code} ${r.gl_accounts?.name}`, label: 'Expense head' }, { k: 'description', label: 'Description' },
+    { k: r => r.cost_centers?.code, label: 'Cost centre' }, { k: r => r.projects?.code, label: 'Project' },
+    { k: 'amount', label: 'Amount', fmt: 'money', sum: true }, { k: 'vat_amount', label: 'VAT', fmt: 'money', sum: true }] },
+  budget: { title: 'Budget vs actual by cost centre', src: 'v_budget_vs_actual', order: 'period_month', roles: ['finance', 'factory_manager'], columns: [
+    { k: r => new Date(r.period_month + 'T00:00:00').toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }), label: 'Month' },
+    { k: r => `${r.cost_center_code} — ${r.cost_center_name}`, label: 'Cost centre' }, { k: r => r.account_code ? `${r.account_code} ${r.account_name}` : '— all heads —', label: 'Expense head' },
+    { k: 'budget', label: 'Budget', fmt: 'money' }, { k: 'actual', label: 'Actual', fmt: 'money' }, { k: r => num(r.actual) - num(r.budget), label: 'Over / (under)', fmt: 'money' },
+    { k: r => num(r.budget) ? Math.round(100 * num(r.actual) / num(r.budget)) : null, label: '% used', n: true },
+    { k: r => num(r.budget) && num(r.actual) > num(r.budget) ? 'OVER' : '', label: '', fmt: 'badge' }] },
+  overhead: { title: 'Factory overheads: actual vs absorbed into production', src: 'v_overhead_absorption', order: 'period_month', roles: ['finance', 'factory_manager'], columns: [
+    { k: r => new Date(r.period_month + 'T00:00:00').toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }), label: 'Month' },
+    { k: 'actual_overhead', label: 'Actual factory overheads', fmt: 'money', sum: true }, { k: 'absorbed_overhead', label: 'Absorbed into jobs', fmt: 'money', sum: true },
+    { k: 'over_under', label: 'Over / (under) absorbed', fmt: 'money', sum: true }, { k: 'labour_machine_base', label: 'Labour + machine cost', fmt: 'money', sum: true },
+    { k: 'current_pct', label: 'Overhead % used', n: true }, { k: 'suggested_pct', label: 'Overhead % that would cover actual', n: true }] },
   unitprog: { title: 'Unit progress & billing (unit-wise)', src: 'v_unit_progress', order: 'project_code', columns: [
     { k: 'project_code', label: 'Project' }, { k: r => r.billing_basis === 'UNIT' ? 'Unit-wise' : 'BOQ item', label: 'Billing' }, { k: 'unit_code', label: 'Unit' },
     { k: 'unit_type', label: 'Type' }, { k: 'building', label: 'Building' }, { k: 'floor', label: 'Floor' }, { k: 'status', label: 'Status', fmt: 'badge' },
@@ -835,6 +855,7 @@ export const Settings = {
         { k: 'company_name', label: 'Company name', required: true, full: true }, { k: 'trn', label: 'Company TRN' }, { k: 'phone', label: 'Phone' }, { k: 'email', label: 'Email' },
         { k: 'address', label: 'Address', type: 'textarea', full: true },
         { k: 'emirate', label: 'Emirate (VAT return box 1)', type: 'select', options: ['Abu Dhabi', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah'].map(v => ({ v, l: v })) },
+        { k: 'expense_approval_limit', label: 'Expenses above AED … need Factory Manager approval', type: 'number' },
         { k: 'default_vat_rate', label: 'Default VAT %', type: 'number' }, { k: 'grn_over_receipt_pct', label: 'Allowed over-receipt vs PO %', type: 'number' },
         { k: 'overstock_months', label: 'Overstock if cover > months', type: 'number' },
         { k: 'budget_warn_pct', label: 'Project budget warning at %', type: 'number' },

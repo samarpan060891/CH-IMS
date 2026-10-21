@@ -214,6 +214,9 @@ export async function refreshPending() {
     p.pdc = await count('customer_receipts', q => q.eq('status', 'POSTED').in('mode', ['CHEQUE', 'PDC']).lte('cheque_date', today()));
   }
   if (hasRole('hr_officer')) p.payroll = (p.payroll || 0) + await count('payroll_runs', q => q.eq('status', 'APPROVED'));
+  // expenses: FM approves above the limit; Finance posts and reimburses claims
+  if (hasRole('factory_manager')) p.exp = await count('expenses', q => q.eq('status', 'PENDING_FM'));
+  if (hasRole('finance')) p.exp = (p.exp || 0) + await count('expenses', q => q.or('status.eq.APPROVED,and(status.eq.POSTED,exp_type.eq.CLAIM)'));
   if (hasRole('production_incharge', 'factory_manager')) p.snagVerify = await count('snags', q => q.eq('status', 'FIXED'));
   if (hasRole('site_supervisor') && !hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'POSTED'));
   if (hasRole('factory_manager', 'production_incharge', 'shop_floor')) p.down = await count('wc_downtime', q => q.eq('status', 'OPEN'));

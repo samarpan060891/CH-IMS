@@ -21,8 +21,9 @@ import { FIN_DOCS, Books } from './finance.js';
 import { FloorApp } from './floor.js';
 import { ApprovalsApp, myQueues } from './approve.js';
 import { ReceiveApp } from './receive.js';
+import { EXP_DOCS, PettyCash } from './expenses.js';
 
-Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS);
+Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS);
 
 const ALL = null;
 // short menu names for reports (full titles show on the report page)
@@ -100,6 +101,14 @@ const MENU = [
     ...['leavebal', 'docexpiry', 'gratuity', 'attmonth'].map(rep),
   ] },
   { g: 'Finance', icon: 'report-money', items: [
+    { sep: 'Expenses' },
+    { to: 'd/exp', t: 'Expenses, bills & claims', roles: ['finance', 'factory_manager', 'purchase', 'stores', 'production_incharge', 'shop_floor', 'site_supervisor', 'hr_officer'], badge: 'exp' },
+    { to: 'd/rexp', t: 'Recurring bills', roles: ['finance', 'factory_manager'] },
+    { to: 'pettycash', t: 'Petty cash', roles: ['finance', 'factory_manager'] },
+    { to: 'r/expreg', t: 'Expense register', roles: ['finance', 'factory_manager'] },
+    { to: 'm/cc_budgets', t: 'Expense budgets', roles: ['finance', 'factory_manager'] },
+    { to: 'r/budget', t: 'Budget vs actual', roles: ['finance', 'factory_manager'] },
+    { to: 'r/overhead', t: 'Factory overheads vs absorbed', roles: ['finance', 'factory_manager'] },
     { sep: 'Receivables' },
     { to: 'd/si', t: 'Sales invoices & claims', roles: ['finance', 'factory_manager'], badge: 'siCert' },
     { to: 'd/rcv', t: 'Customer receipts', roles: ['finance', 'factory_manager'], badge: 'pdc' },
@@ -185,7 +194,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -229,6 +238,7 @@ const App = {
       if (a === 'site' || (a === 'dashboard' && !b && homeDashboard() === 'site')) return { comp: 'SiteApp', props: {}, title: 'Site' };
       if (a === 'floorapp' || (a === 'dashboard' && !b && homeDashboard() === 'floor')) return { comp: 'FloorApp', props: {}, title: 'Floor' };
       if (a === 'approvals' || (a === 'dashboard' && !b && homeDashboard() === 'approvals')) return { comp: 'ApprovalsApp', props: {}, title: 'Approvals' };
+      if (a === 'pettycash') return { comp: 'PettyCash', props: {}, title: 'Petty cash' };
       if (a === 'receiveapp' || (a === 'dashboard' && !b && homeDashboard() === 'receiving')) return { comp: 'ReceiveApp', props: {}, title: 'Receive goods' };
       if (a === 'countapp' || (a === 'dashboard' && !b && homeDashboard() === 'counting')) return { comp: 'CountApp', props: { id: a === 'countapp' ? b || null : null }, title: 'Stock count' };
       if (a === 'dashboard') return { comp: 'Dashboard', props: { kind: b || null }, title: 'Dashboard' };

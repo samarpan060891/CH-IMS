@@ -85,6 +85,23 @@ const QUEUES = [
     },
     actions: [{ label: '✔ Approve', cls: 'ok', run: async r => { if (!(await confirmBox('Approve ' + r.no, r.sub === 'Confirm sale rates & post' ? 'Rates checked? Posting releases the scrap for the gate pass.' : 'Approve this disposal?'))) return false; return rpc('disposal_action', { p_d: r.id, p_action: 'APPROVE' }); } },
               { label: '✖ Reject', cls: 'bad', run: async r => { const x = await reason('Reject ' + r.no); if (!x) return false; return rpc('disposal_action', { p_d: r.id, p_action: 'REJECT', p_comments: x }); } }] },
+  { k: 'exp', t: 'Expenses above the limit', roles: ['factory_manager'],
+    load: async () => must(await sb.from('expenses').select('id,exp_no,exp_type,payee_name,total,submitted_at,created_at,vendors(name),employees(name),profiles:created_by(full_name),expense_lines(description,amount,gl_accounts(name),cost_centers(code))').eq('status', 'PENDING_FM').order('submitted_at'))
+      .map(e => ({ id: e.id, no: e.exp_no, title: e.vendors?.name || e.employees?.name || e.payee_name || '', sub: `${label(e.exp_type)} · raised by ${e.profiles?.full_name || ''}`, amount: e.total, at: e.submitted_at || e.created_at, link: 'd/exp/' + e.id,
+                   lines: e.expense_lines.map(l => `${l.gl_accounts?.name} · ${l.cost_centers?.code}${l.description ? ' · ' + l.description : ''} — ${money(l.amount)}`) })),
+    actions: [{ label: '✔ Approve', cls: 'ok', run: r => rpc('expense_action', { p_exp: r.id, p_action: 'APPROVE', p_data: {} }) },
+              { label: '✖ Reject', cls: 'bad', run: async r => { const x = await reason('Reject ' + r.no); if (!x) return false; return rpc('expense_action', { p_exp: r.id, p_action: 'REJECT', p_data: { comments: x } }); } }] },
+  { k: 'exppost', t: 'Expenses to post', roles: ['finance'],
+    load: async () => must(await sb.from('expenses').select('id,exp_no,exp_type,payee_name,total,attachments,submitted_at,created_at,vendors(name),employees(name)').eq('status', 'APPROVED').order('submitted_at'))
+      .map(e => ({ id: e.id, no: e.exp_no, title: e.vendors?.name || e.employees?.name || e.payee_name || '', sub: `${label(e.exp_type)} · ${(e.attachments || []).length ? '📎 bill attached' : 'no bill attached'}`, amount: e.total, at: e.submitted_at || e.created_at, link: 'd/exp/' + e.id })),
+    actions: [{ label: '✔ Post', cls: 'ok', run: r => rpc('expense_action', { p_exp: r.id, p_action: 'POST', p_data: {} }) }] },
+  { k: 'claim', t: 'Claims to reimburse', roles: ['finance'],
+    load: async () => must(await sb.from('expenses').select('id,exp_no,total,posted_at,employees(name,emp_code)').eq('status', 'POSTED').eq('exp_type', 'CLAIM').order('posted_at'))
+      .map(e => ({ id: e.id, no: e.exp_no, title: e.employees ? `${e.employees.name} (${e.employees.emp_code})` : '', sub: 'Employee claim — posted, not yet paid', amount: e.total, at: e.posted_at, link: 'd/exp/' + e.id })),
+    actions: [{ label: '💸 Reimburse', cls: 'ok', run: async r => {
+      const accts = must(await sb.from('gl_accounts').select('id,code,name,is_bank,system_key').eq('is_group', false).eq('is_active', true)).filter(a => a.is_bank || ['CASH', 'BANK'].includes(a.system_key));
+      const v = await ask({ title: 'Reimburse ' + r.no, okText: 'Reimburse', fields: [{ k: 'a', label: 'Paid from', type: 'select', required: true, options: accts.map(a => ({ v: a.id, l: `${a.code} — ${a.name}` })) }, { k: 'r', label: 'Reference' }] });
+      if (!v) return false; return rpc('expense_action', { p_exp: r.id, p_action: 'REIMBURSE', p_data: { account_id: v.a, ref: v.r || null } }); } }] },
   { k: 'leave', t: 'Leave requests', roles: ['hr_officer', 'factory_manager'],
     load: async () => must(await sb.from('leave_requests').select('id,leave_no,leave_type,from_date,to_date,days,reason,created_at,employees(name,emp_code)').eq('status', 'PENDING').order('from_date'))
       .map(l => ({ id: l.id, no: l.leave_no, title: `${l.employees?.name} (${l.employees?.emp_code})`, sub: `${label(l.leave_type)} · ${dt(l.from_date)} – ${dt(l.to_date)} · ${qty(l.days)} day(s)${l.reason ? ' · ' + l.reason : ''}`, at: l.created_at, link: 'd/leave/' + l.id })),

@@ -1169,7 +1169,7 @@ async function fillInvoicePending(ctx) {
 const invClaim = r => r.grn_line_id && r._pend !== undefined ? Math.max(num(r.qty) - Math.max(num(r._pend), 0), 0) : 0;
 export const inv = {
   key: 'inv', title: 'Vendor Invoices', single: 'Vendor Invoice', table: 'vendor_invoices', noField: 'inv_no', dateField: 'invoice_date',
-  statuses: ['DRAFT', 'POSTED', 'CANCELLED'], createRoles: ['finance'], refs: ['items', 'vendors', 'payment_terms'],
+  statuses: ['DRAFT', 'POSTED', 'CANCELLED'], createRoles: ['finance'], refs: ['items', 'vendors', 'payment_terms', 'gl_accounts', 'cost_centers', 'projects'],
   list: { select: '*, vendors(name)', columns: [{ k: r => r.vendors?.name, label: 'Vendor' }, { k: 'vendor_invoice_no', label: 'Vendor inv no.' }, { k: 'due_date', label: 'Due', fmt: 'date' },
           { k: 'total_aed', label: 'Total AED', fmt: 'money', sum: true }, { k: 'has_variance', label: 'Variance', fmt: 'bool' }] },
   defaults: () => ({ invoice_date: today(), currency: 'AED', exchange_rate: 1 }),
@@ -1218,6 +1218,11 @@ export const inv = {
         } },
     ],
     fields: [{ ...itemF({ required: false }), width: '200px' }, { k: 'description', label: 'Description', width: '220px' },
+             // non-stock lines (no GRN, no item): which expense head / cost centre / project the cost goes to
+             { k: 'account_id', label: 'Expense head', type: 'ref', ref: 'gl_accounts', width: '200px', ro: r => !!(r.grn_line_id || r.grn_charge_id || r.item_id),
+               filter: r => !r.is_group && r.is_active && ['EXPENSE', 'ASSET'].includes(r.acc_type) && !['PROD_ABSORBED', 'LABOUR_ABSORBED'].includes(r.system_key) },
+             { k: 'cost_center_id', label: 'Cost centre', type: 'ref', ref: 'cost_centers', width: '130px', ro: r => !!(r.grn_line_id || r.grn_charge_id || r.item_id) },
+             { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', width: '130px', ro: r => !!(r.grn_line_id || r.grn_charge_id) },
              { k: '_pend', label: 'Accepted (GRN)', type: 'ro', virtual: true, fmt: v => v === undefined ? '' : qty(v), show: d => d.status === 'DRAFT' },
              { k: 'qty', label: 'Billed qty', type: 'number', required: true },
              { k: '_claim', label: 'Claim qty', type: 'ro', virtual: true, fmt: (v, r) => { const c = invClaim(r); return c > 0 ? '⚠ ' + qty(c) : ''; }, show: d => d.status === 'DRAFT' },

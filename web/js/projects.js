@@ -476,7 +476,7 @@ export const vo = {
 // SNAGS (site supervisor raises / fixes with photos, Production In-charge or FM verifies)
 // ======================================================================
 // photos: shrunk to max 1600 px JPEG on the phone, stored in the private "snags" bucket
-async function shrink(file, max = 1600) {
+export async function shrink(file, max = 1600) {
   try {
     const img = await createImageBitmap(file);
     const k = Math.min(1, max / Math.max(img.width, img.height));

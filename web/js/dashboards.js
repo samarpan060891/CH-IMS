@@ -306,6 +306,7 @@ export const Dashboard = {
         add(must(await q('variation_orders', 'id,vo_no,status,created_at').eq('status', 'SUBMITTED')), 'Variation order', 'vo', 'vo_no');
         add(must(await q('leave_requests', 'id,leave_no,status,created_at').eq('status', 'PENDING')), 'Leave request', 'leave', 'leave_no');
         add(must(await q('material_returns', 'id,return_no,status,created_at').eq('status', 'PENDING_FM')), 'Offcuts: approve keep / scrap', 'ret', 'return_no');
+        add(must(await q('expenses', 'id,exp_no,status,created_at').eq('status', 'PENDING_FM')), 'Expense above the limit', 'exp', 'exp_no');
       }
       if (this.is('finance')) {
         add(must(await q('purchase_orders', 'id,po_no,status,created_at').eq('status', 'PENDING_FINANCE')), 'Purchase order', 'po', 'po_no');
@@ -315,6 +316,8 @@ export const Dashboard = {
         add(must(await q('employee_advances', 'id,adv_no,status,created_at').eq('status', 'DRAFT')), 'Salary advance to approve', 'adv', 'adv_no');
         add(must(await q('sales_invoices', 'id,inv_no,status,created_at').eq('status', 'SUBMITTED')), 'Claim awaiting payment certificate', 'si', 'inv_no');
         add(must(await q('sales_invoices', 'id,inv_no,status,created_at').eq('status', 'CERTIFIED')), 'Certified claim to invoice', 'si', 'inv_no');
+        add(must(await q('expenses', 'id,exp_no,status,created_at').eq('status', 'APPROVED')), 'Expense to post', 'exp', 'exp_no');
+        add(must(await q('expenses', 'id,exp_no,status,created_at').eq('status', 'POSTED').eq('exp_type', 'CLAIM')), 'Claim to reimburse', 'exp', 'exp_no');
         add(must(await q('customer_receipts', 'id,receipt_no,status,created_at').eq('status', 'POSTED').in('mode', ['CHEQUE', 'PDC']).lte('cheque_date', today())), 'Cheque due — deposit / clear', 'rcv', 'receipt_no');
       }
       if (this.is('purchase')) add(must(await q('purchase_orders', 'id,po_no,status,created_at').in('status', ['PENDING_TOP_MGMT', 'APPROVED'])), 'Purchase order (top mgmt / release)', 'po', 'po_no');

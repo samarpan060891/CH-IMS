@@ -154,7 +154,7 @@ export const CountApp = {
       });
       this.loading = false;
     },
-    progress(c) { const n = c.stock_count_lines.length; return n ? Math.round(100 * c.stock_count_lines.filter(isCounted).length / n) : 0; },
+    progress(c) { const l = c.stock_count_lines || [], n = l.length; return n ? Math.round(100 * l.filter(isCounted).length / n) : 0; },
     async save(l, v) {
       if (v !== undefined) l.counted_qty = v;
       const val = isCounted(l) ? Number(l.counted_qty) : null;
