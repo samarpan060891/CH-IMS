@@ -46,6 +46,9 @@ export const SECTIONS = {
   prodKpis: 'Production figures', woLate: 'Open production orders', wcLoad: 'Work centre load',
   hrKpis: 'HR figures (headcount, attendance, leave, documents)', docExpiry: 'Employee documents expiring', onLeave: 'Current & upcoming leave',
 };
+// section sizes: width in columns of a 12-column grid (full width on phones); height cap with scrolling
+const WIDTHS = [{ v: 12, l: 'Full width' }, { v: 9, l: '¾ width' }, { v: 8, l: '⅔ width' }, { v: 6, l: '½ width' }, { v: 4, l: '⅓ width' }, { v: 3, l: '¼ width' }];
+const HEIGHTS = [{ v: '', l: 'Auto height' }, { v: 'S', l: 'Short', px: 260 }, { v: 'M', l: 'Medium', px: 420 }, { v: 'L', l: 'Tall', px: 640 }];
 // sections a user may put on a dashboard: those of all dashboards granted to them (so the data is theirs to see)
 export function userSections(p = state.profile) {
   const out = new Set(['pending']);
@@ -104,16 +107,30 @@ export const Dashboard = {
     money, aed, qty, label, dt,
     has(s) { return this.sections.includes(s); },
     any(...s) { return s.some(x => this.has(x)); },
-    // blocks are laid out in the user's order (flex order)
-    o(...s) { const i = Math.min(...s.map(x => this.sections.indexOf(x)).filter(i => i >= 0)); return { order: Number.isFinite(i) ? i : 99 }; },
-    customise() { this.ed = { list: [...this.sections], home: homeDashboard(), add: '' }; },
+    // blocks follow the user's order, width (of 12 columns) and height
+    o(...s) {
+      const i = Math.min(...s.map(x => this.sections.indexOf(x)).filter(i => i >= 0));
+      const z = this.size(s.find(x => this.has(x)) || s[0]), h = HEIGHTS.find(x => x.v === z.h)?.px;
+      return { order: Number.isFinite(i) ? i : 99, gridColumn: `span ${z.w}`, ...(h ? { maxHeight: h + 'px', overflow: 'auto' } : {}) };
+    },
+    size(s) { const z = (this.ed?.sizes || state.profile?.dashboard_prefs?.sizes?.[this.k] || {})[s] || {}; return { w: z.w || 12, h: z.h || '' }; },
+    setSize(s, key, v) { const cur = this.ed.sizes[s] || {}; this.ed.sizes[s] = { ...cur, [key]: v }; },
+    customise() {
+      this.ed = { list: [...this.sections], home: homeDashboard(), add: '', sizes: JSON.parse(JSON.stringify(state.profile?.dashboard_prefs?.sizes?.[this.k] || {})) };
+    },
     move(i, dir) { const l = this.ed.list, j = i + dir; if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; },
     addSection() { if (this.ed.add) { this.ed.list.push(this.ed.add); this.ed.add = ''; } },
     async savePrefs(reset) {
       const cur = state.profile.dashboard_prefs || {};
-      const layouts = { ...(cur.layouts || {}) };
-      if (reset) delete layouts[this.k]; else layouts[this.k] = this.ed.list;
-      const prefs = { home: this.ed.home, layouts };
+      const layouts = { ...(cur.layouts || {}) }, sizes = { ...(cur.sizes || {}) };
+      if (reset) { delete layouts[this.k]; delete sizes[this.k]; }
+      else {
+        layouts[this.k] = this.ed.list;
+        // keep only non-default sizes of sections still on the dashboard
+        const z = Object.fromEntries(Object.entries(this.ed.sizes).filter(([s, v]) => this.ed.list.includes(s) && ((v.w && v.w !== 12) || v.h)));
+        if (Object.keys(z).length) sizes[this.k] = z; else delete sizes[this.k];
+      }
+      const prefs = { home: this.ed.home, layouts, sizes };
       const ok = await run(async () => must(await sb.rpc('save_my_dashboard_prefs', { p_prefs: prefs })), reset ? 'Dashboard reset to standard' : 'Dashboard saved');
       if (ok) { state.profile.dashboard_prefs = prefs; this.ed = null; await this.load(); }
     },
@@ -267,10 +284,12 @@ export const Dashboard = {
 
     <div class="card" v-if="ed">
       <h3>Customise the {{ cfg.title }} dashboard</h3>
-      <p class="small muted" style="margin-top:0">Choose the sections you want and their order. These settings are yours only.</p>
+      <p class="small muted" style="margin-top:0">Choose the sections you want, their order and size — the dashboard below changes as you edit. Sections side by side need widths that add up to a full row (e.g. ½ + ½, ⅓ + ⅔). On phones every section is full width. These settings are yours only.</p>
       <div class="dash-ed">
         <div v-for="(s, i) in ed.list" :key="s" class="row">
           <span class="muted small" style="width:20px">{{ i + 1 }}</span><span style="flex:1">{{ SECTIONS[s] }}</span>
+          <select class="sm" title="Width" :value="size(s).w" @change="setSize(s, 'w', Number($event.target.value))"><option v-for="w in WIDTHS" :value="w.v">{{ w.l }}</option></select>
+          <select class="sm" title="Height" :value="size(s).h" @change="setSize(s, 'h', $event.target.value)"><option v-for="h in HEIGHTS" :value="h.v">{{ h.l }}</option></select>
           <button class="btn sm" :disabled="i === 0" @click="move(i, -1)" title="Move up">↑</button>
           <button class="btn sm" :disabled="i === ed.list.length - 1" @click="move(i, 1)" title="Move down">↓</button>
           <button class="btn sm bad" @click="ed.list.splice(i, 1)" title="Remove">✕</button>
@@ -440,5 +459,5 @@ export const Dashboard = {
     </div>
     </div>
   </div>`,
-  setup() { return { go, today, SECTIONS }; },
+  setup() { return { go, today, SECTIONS, WIDTHS, HEIGHTS }; },
 };

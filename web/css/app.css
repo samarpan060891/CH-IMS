@@ -109,7 +109,11 @@ table.t tr.click:hover td { background: var(--brand-soft); }
 table.t td.n, table.t th.n { text-align: right; font-variant-numeric: tabular-nums; }
 table.t tfoot td { font-weight: 600; background: #fafafa; }
 /* dashboards: blocks follow the user's chosen order */
-.dash-body { display: flex; flex-direction: column; }
+.dash-body { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: 16px; align-items: start; }
+.dash-body > * { min-width: 0; }
+.dash-body > .charts { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); column-gap: 16px; row-gap: 0; }
+@media (max-width: 900px) { .dash-body > * { grid-column: span 12 !important; } }
+.dash-ed select.sm { padding: 3px 6px; font-size: 12px; width: auto; }
 .dash-ed { display: flex; flex-direction: column; gap: 4px; max-width: 620px; }
 .dash-ed > .row { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
 /* financial statements */

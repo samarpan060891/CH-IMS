@@ -54,7 +54,7 @@ Each user lands on the dashboard of their role:
 
 The Administrator has a **Dashboards** menu with every dashboard, showing each role's approvals.
 In **Users & roles** the Administrator can tick which dashboards each user sees (none ticked = the role's default); users with more than one get a Dashboards menu.
-Each user can **✎ Customise** their own dashboards: add or remove sections (from the dashboards they have been given), change the order, choose the dashboard
+Each user can **✎ Customise** their own dashboards: add or remove sections (from the dashboards they have been given), change the order, resize sections (width ¼ – full, height auto / short / medium / tall with scrolling), choose the dashboard
 that opens at sign-in, or reset to the standard layout. These settings are personal (stored on the user's profile).
 
 ## Valuation
