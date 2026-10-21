@@ -10,7 +10,7 @@ import { Reports, REPORTS, Replenishment, Assets, Users, Settings, BufferReview,
 import { CONFIG } from './config.js';
 import { Importer } from './importer.js';
 import { Logo } from './logo.js';
-import { CountSheet } from './counting.js';
+import { CountSheet, CountApp } from './counting.js';
 import { Labels } from './labels.js';
 import { Scanner, describeCode } from './scan.js';
 import { PROD_DOCS, StageBoard, QcApprovals } from './production.js';
@@ -52,6 +52,7 @@ const MENU = [
     { to: 'd/prt', t: 'Purchase returns', roles: ['stores', 'purchase', 'finance'] },
     { to: 'holds', t: 'Quarantine & exceptions', roles: ['stores', 'purchase', 'factory_manager', 'finance'], badge: 'holds' },
     { to: 'd/cnt', t: 'Stock counts', roles: ['stores', 'factory_manager', 'finance'] },
+    { to: 'countapp', t: '📱 Count app (phone)', roles: ['stores', 'factory_manager'] },
     { to: 'r/offcuts', t: '✂ Offcut stock', roles: ['stores', 'factory_manager', 'production_incharge', 'purchase', 'finance', 'shop_floor'] },
     { to: 'labels/lots', t: 'Labels & QR codes', roles: ['stores', 'factory_manager'] },
     { sep: 'Assets & scrap' },
@@ -182,7 +183,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -226,6 +227,7 @@ const App = {
       if (a === 'site' || (a === 'dashboard' && !b && homeDashboard() === 'site')) return { comp: 'SiteApp', props: {}, title: 'Site' };
       if (a === 'floorapp' || (a === 'dashboard' && !b && homeDashboard() === 'floor')) return { comp: 'FloorApp', props: {}, title: 'Floor' };
       if (a === 'approvals' || (a === 'dashboard' && !b && homeDashboard() === 'approvals')) return { comp: 'ApprovalsApp', props: {}, title: 'Approvals' };
+      if (a === 'countapp' || (a === 'dashboard' && !b && homeDashboard() === 'counting')) return { comp: 'CountApp', props: { id: a === 'countapp' ? b || null : null }, title: 'Stock count' };
       if (a === 'dashboard') return { comp: 'Dashboard', props: { kind: b || null }, title: 'Dashboard' };
       const simple = { replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };

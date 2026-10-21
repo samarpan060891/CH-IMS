@@ -181,6 +181,12 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .site-crew input { width: 56px; }
 
 /* ---------- filter chips (stage board) ---------- */
+/* count app (phone) */
+.cnt-top { position: sticky; top: 0; z-index: 3; background: var(--bg, #f5f7fb); padding: 4px 0 8px; margin-bottom: 4px; }
+.cnt-top .chip { cursor: pointer; }
+.cnt-line { cursor: default; }
+.cnt-line.hi { border: 2px solid var(--brand); }
+.cnt-line.done { background: #f6fdf8; }
 /* approvals inbox (phone) */
 .appr-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 6px; }
 .appr-chips .chip { cursor: pointer; flex: none; }

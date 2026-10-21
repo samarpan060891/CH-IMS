@@ -39,6 +39,8 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
 - **Project vs stock purchasing**: every requisition / PO / GRN line is either for general stock or for a named project. Project lines create stock **reserved** for that project (only its issues can use it; own stock is issued first). Leftovers go back to general stock through an FM-approved **Project stock release**. Buffers and re-order suggestions use free stock and stock POs only.
 - **Project budgets**: issue screen shows budget use; alerts at the warning % (default 80); issues above 100% need FM approval.
 - **Physical stock count**: blind count on phone (scan or search), found items, variances → FM-approved stock adjustment.
+  Phone **Count app** (Inventory → 📱 Count app, or the "Count app" dashboard): counts in progress with progress bars; To count / Counted filters,
+  scan a label to jump to its line, − / + steppers, ⏭ next uncounted, offcut pieces shown with their size and counted as here / missing; add found items; submit.
 - **QR labels & scanning**: A4 sticker sheets (3×8) for lots, items/bins and tools; scan with phone camera or USB scanner from the top bar or while counting.
 - **Excel import**: templates for Items, Vendors and Opening stock (opening stock becomes a draft GRN for Stores to post); rows are validated before import.
 - **My approvals (phone inbox)**: one screen (sidebar → My approvals, or the "Approvals inbox" dashboard) listing everything waiting for the signed-in person's
