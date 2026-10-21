@@ -30,6 +30,8 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   scrapped pieces stay charged to the job. Offcuts are never picked automatically and are issued as whole pieces; they are listed first in the issue's
   batch / offcut choice, and production orders show offcuts in stock that fit cut-list parts (best fit first, grain respected). Free stock and replenishment ignore offcuts.
   Offcut stock report; offcut value / pieces available as KPI-card measures.
+  Material requests can name the exact **board lot or offcut piece** (✂ Request offcuts lists pieces that fit the linked production order); offcuts are requested whole
+  and only on one open request at a time; the issue made from the request takes exactly that piece and its store location.
 - **Project vs stock purchasing**: every requisition / PO / GRN line is either for general stock or for a named project. Project lines create stock **reserved** for that project (only its issues can use it; own stock is issued first). Leftovers go back to general stock through an FM-approved **Project stock release**. Buffers and re-order suggestions use free stock and stock POs only.
 - **Project budgets**: issue screen shows budget use; alerts at the warning % (default 80); issues above 100% need FM approval.
 - **Physical stock count**: blind count on phone (scan or search), found items, variances → FM-approved stock adjustment.

@@ -6,7 +6,7 @@ import { ask } from './components.js';
 import { makePdf } from './pdf.js';
 
 // shared dynamic option lists for ref fields ({id,label})
-export const opts = reactive({ pos: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [], lots: {}, snags: [] });
+export const opts = reactive({ pos: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [], lots: {}, mrLots: {}, snags: [] });
 // open snags, so rework material can be issued against them
 async function loadOpenSnags(extraId) {
   let q = sb.from('snags').select('id,snag_no,project_id,description,status');
@@ -454,6 +454,52 @@ const mrTarget = [
     filter: (r, d) => r.status === 'OPEN' && r.project_type === (d.purpose === 'MTS' ? 'MTS' : 'PROJECT') },
   { k: 'cost_center_id', label: 'Cost centre', type: 'ref', ref: 'cost_centers', required: true, show: d => d.purpose === 'COST_CENTER' },
 ];
+// specific boards / offcut pieces that can be named on a request: available, not in quarantine / scrap, free or reserved for this project
+async function loadMrLots(ctx) {
+  const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
+  opts.mrLots = {};
+  if (!ids.length) return;
+  const rows = must(await sb.from('v_lot_values').select('lot_id,item_id,lot_no,batch_no,received_date,qty_on_hand,project_id,location_id,location_code,loc_type,is_offcut,length_mm,width_mm')
+    .in('item_id', ids).eq('lot_status', 'AVAILABLE').not('loc_type', 'in', '(QUARANTINE,SCRAP_YARD)').order('received_date'));
+  const taken = await requestedOffcuts(ctx.doc.id);
+  rows.filter(l => (!l.project_id || l.project_id === ctx.doc.project_id) && !(l.is_offcut && taken[l.lot_id]))
+    .sort((a, b) => (b.is_offcut ? 1 : 0) - (a.is_offcut ? 1 : 0)).forEach(l => {
+      (opts.mrLots[l.item_id] ||= []).push({ id: l.lot_id, qty: num(l.qty_on_hand), offcut: l.is_offcut, location_id: l.location_id,
+        label: l.is_offcut ? `✂ OFFCUT ${qty(l.length_mm)}${l.width_mm ? ' × ' + qty(l.width_mm) : ''} mm · ${l.lot_no} · ${l.location_code}`
+                           : `Board lot ${l.batch_no || l.lot_no} · ${l.location_code} · ${qty(l.qty_on_hand)} in stock` });
+    });
+}
+// offcut pieces already on another open request (keyed by lot)
+async function requestedOffcuts(mrId) {
+  const rows = must(await sb.from('mr_lines').select('lot_id,mr_id,issued_qty,requested_qty,approved_qty,material_requests!inner(mr_no,status)').not('lot_id', 'is', null)
+    .in('material_requests.status', ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PARTIALLY_ISSUED', 'REJECTED']));
+  return Object.fromEntries(rows.filter(r => r.mr_id !== mrId && num(r.issued_qty) < num(r.approved_qty ?? r.requested_qty)).map(r => [r.lot_id, r.material_requests.mr_no]));
+}
+// choose offcuts to request: those fitting the linked production order's parts, else any offcut of the items on the request
+async function pickOffcuts(ctx) {
+  let cands;
+  if (ctx.doc.production_order_id) {
+    const m = must(await sb.rpc('offcut_matches', { p_wo: ctx.doc.production_order_id }));
+    const by = {};
+    m.forEach(x => { (by[x.lot_id] ||= { lot_id: x.lot_id, lot_no: x.lot_no, item_code: x.item_code, size: `${qty(x.offcut_length)}${x.offcut_width ? ' × ' + qty(x.offcut_width) : ''}`, loc: x.location_code, parts: [] }).parts.push(x.part_name); });
+    cands = Object.values(by);
+  } else {
+    const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
+    if (!ids.length) throw new Error('Add the board items first (or raise the request from a production order)');
+    cands = must(await sb.from('v_offcuts').select('*').in('item_id', ids).eq('lot_status', 'AVAILABLE'))
+      .map(o => ({ lot_id: o.lot_id, lot_no: o.lot_no, item_code: o.item_code, size: `${qty(o.length_mm)}${o.width_mm ? ' × ' + qty(o.width_mm) : ''}`, loc: o.location_code, parts: [] }));
+  }
+  const taken = await requestedOffcuts(ctx.doc.id);
+  cands = cands.filter(c => !taken[c.lot_id] && !ctx.grids.lines.some(r => r.lot_id === c.lot_id));
+  if (!cands.length) throw new Error('No free offcuts for these items');
+  const v = await ask({ title: 'Request offcut pieces', message: 'Tick the pieces to request (each is issued whole). Request full sheets on separate lines for the rest.', okText: 'Add to request',
+    fields: cands.map((c, i) => ({ k: 'c' + i, type: 'check', label: `${c.item_code} — ${c.size} mm · ${c.lot_no} · ${c.loc}`, hint: c.parts.length ? 'fits: ' + [...new Set(c.parts)].join(', ') : 'Request' })) });
+  if (!v) return;
+  const lots = must(await sb.from('stock_lots').select('id,item_id,qty_on_hand').in('id', cands.filter((c, i) => v['c' + i]).map(c => c.lot_id)));
+  lots.forEach(l => ctx.grids.lines.push({ item_id: l.item_id, lot_id: l.id, requested_qty: num(l.qty_on_hand), remarks: 'Offcut' }));
+  await loadMrLots(ctx); await fillAvail(ctx, 'lines');
+  ctx.dirty = true;
+}
 export const mr = {
   key: 'mr', title: 'Material Requests', single: 'Material Request', table: 'material_requests', noField: 'mr_no', dateField: 'mr_date',
   statuses: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PARTIALLY_ISSUED', 'ISSUED', 'REJECTED', 'CANCELLED', 'CLOSED'],
@@ -468,6 +514,7 @@ export const mr = {
   defaults: () => ({ mr_date: today(), purpose: 'PROJECT', priority: 'NORMAL' }),
   async afterLoad(ctx) {
     await fillAvail(ctx, 'lines');
+    await loadMrLots(ctx);
     if (['APPROVED', 'PARTIALLY_ISSUED'].includes(ctx.doc.status)) {
       const sh = must(await sb.rpc('mr_shortage', { p_mr: ctx.doc.id }));
       ctx.grids.lines.forEach(r => { const x = sh.find(s => s.mr_line_id === r.id); r._short = x ? num(x.shortage) : 0; r._onord = x ? num(x.on_order) + num(x.requested) : 0; });
@@ -490,12 +537,16 @@ export const mr = {
     { k: 'approval_comments', label: 'Approval comments', type: 'ro', show: d => !!d.approval_comments, wide: true },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: ctx => ctx.doc.status === 'PENDING_APPROVAL' && hasRole('production_incharge') ? 'You can adjust <b>Approved qty</b> on each line, then Save and Approve.' : '',
+  headerNote: ctx => (ctx.doc.status === 'PENDING_APPROVAL' && hasRole('production_incharge') ? 'You can adjust <b>Approved qty</b> or the board / offcut on each line, then Save and Approve. ' : '') +
+    (['DRAFT', 'REJECTED', 'PENDING_APPROVAL'].includes(ctx.doc.status) ? 'For boards you can name the exact <b>board lot or offcut piece</b> (✂ Request offcuts, or the Board / offcut column) — Stores issues exactly that piece; offcuts are requested whole.' : ''),
   grids: [{
     key: 'lines', title: 'Materials requested', table: 'mr_lines', fk: 'mr_id', order: 'line_no',
+    importers: [{ label: '✂ Request offcuts', run: ctx => pickOffcuts(ctx) }],
     fields: [
-      itemF({ filter: isLotItem, lockSaved: false, onChange: async (r, v, ctx) => { await fillAvail(ctx, 'lines'); } }), uomF, availF,
-      { k: 'requested_qty', label: 'Requested', type: 'number', required: true },
+      itemF({ filter: isLotItem, lockSaved: false, onChange: async (r, v, ctx) => { r.lot_id = null; await fillAvail(ctx, 'lines'); await loadMrLots(ctx); } }), uomF, availF,
+      { k: 'lot_id', label: 'Board / offcut (optional)', type: 'ref', width: '270px', refOptions: r => opts.mrLots?.[r.item_id] || [],
+        onChange: (r, v) => { const l = (opts.mrLots?.[r.item_id] || []).find(x => x.id === v); if (l?.offcut) { r.requested_qty = l.qty; if (r.approved_qty != null) r.approved_qty = l.qty; } } },
+      { k: 'requested_qty', label: 'Requested', type: 'number', required: true, ro: r => !!(opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.offcut },
       { k: 'approved_qty', label: 'Approved qty', type: 'number', show: d => d.status !== 'DRAFT' },
       roQty('issued_qty', 'Issued', { show: d => !['DRAFT', 'PENDING_APPROVAL'].includes(d.status) }),
       { k: '_onord', label: 'On order / requisitioned', type: 'ro', virtual: true, fmt: v => v ? qty(v) : '', show: d => ['APPROVED', 'PARTIALLY_ISSUED'].includes(d.status) },
@@ -524,7 +575,8 @@ export const mr = {
           title: 'Material Request', no: c.doc.mr_no, date: c.doc.mr_date, subtitle: label(c.doc.status),
           meta: [['Purpose', label(c.doc.purpose)], ['Project / CC', refLabel('projects', c.doc.project_id) || refLabel('cost_centers', c.doc.cost_center_id)], ['Priority', c.doc.priority], ['Required by', dt(c.doc.required_date)],
                  ['Requested by', refLabel('profiles', c.doc.requested_by)], ['Approved by', refLabel('profiles', c.doc.approved_by) || '-']],
-          columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
+          columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 },
+                    { h: 'Item', k: r => itemName(r.item_id) + (r.lot_id ? '\n' + ((opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.label || 'specific board') : '') }, { h: 'UoM', k: r => itemUom(r.item_id) },
                     { h: 'Requested', k: r => qty(r.requested_qty), align: 'right' }, { h: 'Approved', k: r => qty(r.approved_qty), align: 'right' }, { h: 'Issued', k: r => qty(r.issued_qty), align: 'right' }, { h: 'Remarks', k: 'remarks' }],
           rows: c.grids.lines, notes: c.doc.remarks || '', signatures: ['Requested by', 'Production In-charge', 'Stores'] }) },
     ];
@@ -546,8 +598,14 @@ async function loadMrIntoIssue(ctx, mrId) {
   const m = must(await sb.from('material_requests').select('*').eq('id', mrId).single());
   Object.assign(ctx.doc, { mr_id: m.id, purpose: m.purpose, project_id: m.project_id, cost_center_id: m.cost_center_id });
   const lines = must(await sb.from('mr_lines').select('*').eq('mr_id', mrId).order('line_no'));
-  ctx.grids.lines = lines.map(l => ({ mr_line_id: l.id, item_id: l.item_id, qty: num(l.approved_qty ?? l.requested_qty) - num(l.issued_qty), remarks: l.remarks }))
+  ctx.grids.lines = lines.map(l => ({ mr_line_id: l.id, item_id: l.item_id, lot_id: l.lot_id, _mrLot: !!l.lot_id, qty: num(l.approved_qty ?? l.requested_qty) - num(l.issued_qty), remarks: l.remarks }))
     .filter(l => l.qty > 0);
+  // requested boards / offcuts fix the store location when it is not chosen yet
+  const named = ctx.grids.lines.filter(l => l.lot_id).map(l => l.lot_id);
+  if (named.length && !ctx.doc.from_location_id) {
+    const locs = [...new Set(must(await sb.from('stock_lots').select('location_id').in('id', named)).map(l => l.location_id))];
+    if (locs.length === 1) ctx.doc.from_location_id = locs[0];
+  }
   await fillAvail(ctx, 'lines', ctx.doc.from_location_id);
   await loadLotOpts(ctx);
   ctx.dirty = true;
@@ -607,7 +665,7 @@ export const issue = {
       itemF({ filter: isLotItem, ro: r => !!r.mr_line_id, onChange: async (r, v, ctx) => { r.lot_id = null; await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); } }), uomF,
       { ...availF, show: d => d.status === 'DRAFT' },
       { k: 'lot_id', label: 'Batch / offcut (blank = oldest / earliest expiry first)', type: 'ref', width: '280px', refOptions: r => opts.lots[r.item_id] || [],
-        show: d => d.status === 'DRAFT', onChange: (r, v) => { const l = (opts.lots[r.item_id] || []).find(x => x.id === v); if (l?.offcut) r.qty = l.qty; } },
+        show: d => d.status === 'DRAFT', ro: r => !!r._mrLot, onChange: (r, v) => { const l = (opts.lots[r.item_id] || []).find(x => x.id === v); if (l?.offcut) r.qty = l.qty; } },
       { k: 'qty', label: 'Issue qty', type: 'number', required: true },
       roMoney('value', 'Value', { show: d => d.status === 'POSTED' }),
       { k: 'received_qty', label: 'Received good', type: 'ro', fmt: (v, r) => v == null ? '' : (num(v) + num(r.damaged_qty) === num(r.qty) ? qty(v) : '⚠ ' + qty(v)), show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
