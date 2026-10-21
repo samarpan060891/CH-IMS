@@ -113,6 +113,12 @@ table.t tfoot td { font-weight: 600; background: #fafafa; }
 .dash-body > * { min-width: 0; }
 .dash-body > .charts { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); column-gap: 16px; row-gap: 0; }
 @media (max-width: 900px) { .dash-body > * { grid-column: span 12 !important; } }
+.dash-body.editing > [data-sec] { outline: 2px dashed #cbd5e1; outline-offset: -2px; cursor: grab; border-radius: var(--radius); }
+.dash-body.editing > [data-sec]:hover { outline-color: var(--brand); }
+.dash-body > .drop-at, .dash-ed > .row.drop-at { outline: 2px solid var(--brand) !important; background: var(--brand-soft); }
+.dash-ed > .row { cursor: grab; }
+.dash-ed > .row.dragging, .dash-body > [data-sec][draggable="true"]:active { opacity: .5; }
+.dash-ed .grip { color: #94a3b8; cursor: grab; font-size: 14px; user-select: none; }
 .dash-ed select.sm { padding: 3px 6px; font-size: 12px; width: auto; }
 .dash-ed { display: flex; flex-direction: column; gap: 4px; max-width: 620px; }
 .dash-ed > .row { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }

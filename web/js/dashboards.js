@@ -59,7 +59,7 @@ export function userSections(p = state.profile) {
 export const Dashboard = {
   components: { DataTable, Badge },
   props: { kind: String },
-  data: () => ({ loading: true, d: {}, myPending: [], charts: [], ed: null }),
+  data: () => ({ loading: true, d: {}, myPending: [], charts: [], ed: null, drag: null, over: null }),
   computed: {
     isAdmin: () => state.profile?.role === 'admin',
     // only dashboards granted to the user open, whatever the address says
@@ -118,6 +118,25 @@ export const Dashboard = {
     customise() {
       this.ed = { list: [...this.sections], home: homeDashboard(), add: '', sizes: JSON.parse(JSON.stringify(state.profile?.dashboard_prefs?.sizes?.[this.k] || {})) };
     },
+    // drag & drop (while customising): drag a section on the dashboard or a row in the panel onto another to take its place
+    secOf(el) { const b = el?.closest?.('[data-sec]'); return b ? b.dataset.sec.split(',').find(s => this.ed?.list.includes(s)) : null; },
+    dragStart(e, key) {
+      const s = key || this.secOf(e.target); if (!this.ed || !s) return;
+      this.drag = s; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', s);
+    },
+    dragOver(e, key) {
+      const s = key || this.secOf(e.target); if (!this.drag || !s) return;
+      e.preventDefault(); this.over = s;
+      if (!key) this.mark(e.target.closest('[data-sec]'));
+    },
+    // highlight the dashboard block a section would be dropped on
+    mark(el) { this.$el.querySelectorAll('.dash-body .drop-at').forEach(x => x !== el && x.classList.remove('drop-at')); if (el && this.secOf(el) !== this.drag) el.classList.add('drop-at'); },
+    drop(e, key) {
+      const s = key || this.secOf(e.target), l = this.ed?.list;
+      if (l && this.drag && s && s !== this.drag) { e.preventDefault(); const from = l.indexOf(this.drag), to = l.indexOf(s); l.splice(to, 0, ...l.splice(from, 1)); }
+      this.dragEnd();
+    },
+    dragEnd() { this.drag = this.over = null; this.mark(null); },
     move(i, dir) { const l = this.ed.list, j = i + dir; if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; },
     addSection() { if (this.ed.add) { this.ed.list.push(this.ed.add); this.ed.add = ''; } },
     async savePrefs(reset) {
@@ -284,9 +303,11 @@ export const Dashboard = {
 
     <div class="card" v-if="ed">
       <h3>Customise the {{ cfg.title }} dashboard</h3>
-      <p class="small muted" style="margin-top:0">Choose the sections you want, their order and size — the dashboard below changes as you edit. Sections side by side need widths that add up to a full row (e.g. ½ + ½, ⅓ + ⅔). On phones every section is full width. These settings are yours only.</p>
+      <p class="small muted" style="margin-top:0">Choose the sections you want, their order and size — <b>drag</b> a row here or a section on the dashboard below onto the place you want it (or use ↑ ↓); the dashboard changes as you edit. Sections side by side need widths that add up to a full row (e.g. ½ + ½, ⅓ + ⅔). On phones every section is full width. These settings are yours only.</p>
       <div class="dash-ed">
-        <div v-for="(s, i) in ed.list" :key="s" class="row">
+        <div v-for="(s, i) in ed.list" :key="s" class="row" draggable="true" :class="{dragging: drag === s, 'drop-at': over === s && drag !== s}"
+             @dragstart="dragStart($event, s)" @dragover="dragOver($event, s)" @drop="drop($event, s)" @dragend="dragEnd">
+          <span class="grip" title="Drag to reorder">⠿</span>
           <span class="muted small" style="width:20px">{{ i + 1 }}</span><span style="flex:1">{{ SECTIONS[s] }}</span>
           <select class="sm" title="Width" :value="size(s).w" @change="setSize(s, 'w', Number($event.target.value))"><option v-for="w in WIDTHS" :value="w.v">{{ w.l }}</option></select>
           <select class="sm" title="Height" :value="size(s).h" @change="setSize(s, 'h', $event.target.value)"><option v-for="h in HEIGHTS" :value="h.v">{{ h.l }}</option></select>
@@ -308,15 +329,15 @@ export const Dashboard = {
       </div>
     </div>
 
-    <div class="dash-body">
+    <div class="dash-body" :class="{editing: !!ed}" @dragstart="ed && dragStart($event)" @dragover="ed && dragOver($event)" @drop="ed && drop($event)" @dragend="dragEnd">
 
-    <div class="card" :style="o('pending')" v-if="has('pending') && myPending.length">
+    <div class="card" data-sec="pending" :draggable="!!ed" :style="o('pending')" v-if="has('pending') && myPending.length">
       <h3>Waiting for {{ viewRole !== $root.state.profile.role ? label(viewRole) : 'your action' }} ({{ myPending.length }})</h3>
       <DataTable :columns="[{k:'type',label:'Document'},{k:'no',label:'No.'},{k:'date',label:'Created',fmt:'datetime'},{k:'status',label:'Status',fmt:'badge'}]" :rows="myPending" clickable @row="open" :searchable="false" />
     </div>
 
     <!-- finance -->
-    <div class="kpis" :style="o('finKpis')" v-if="has('finKpis')">
+    <div class="kpis" data-sec="finKpis" :draggable="!!ed" :style="o('finKpis')" v-if="has('finKpis')">
       <div class="kpi"><div class="l">Bank balance</div><div class="v">{{ aed(fin.bank) }}</div><div class="s">cash {{ aed(fin.cash) }} · cheques in hand {{ aed(fin.pdc) }}</div></div>
       <div class="kpi" :class="{warn: ar.over > 0}"><div class="l">Receivables</div><div class="v">{{ aed(ar.bal) }}</div><div class="s">overdue {{ aed(ar.over) }}</div></div>
       <div class="kpi" :class="{warn: overduePay > 0}"><div class="l">Net payables</div><div class="v">{{ aed(netPayable) }}</div><div class="s">overdue {{ aed(overduePay) }}</div></div>
@@ -325,7 +346,7 @@ export const Dashboard = {
       <div class="kpi"><div class="l">VAT payable (net)</div><div class="v">{{ aed(fin.vat) }}</div><div class="s">output − input to date</div></div>
       <div class="kpi"><div class="l">Unbilled work</div><div class="v">{{ aed(unbilled) }}</div><div class="s">retention held {{ aed(retention) }}</div></div>
     </div>
-    <div class="card" :style="o('billing')" v-if="has('billing') && (d.billing || []).length">
+    <div class="card" data-sec="billing" :draggable="!!ed" :style="o('billing')" v-if="has('billing') && (d.billing || []).length">
       <h3>Project billing</h3>
       <DataTable :searchable="false" :rows="d.billing" clickable @row="r => go('d/si/new/project/' + r.project_id)" :columns="[{k:'project_code',label:'Project'},{k:'customer_name',label:'Customer'},
         {k:'contract_value',label:'Contract',fmt:'money',sum:true},{k:'billed_pct',label:'Billed %',n:true},{k: r => Math.max(Number(r.earned_value) - Number(r.certified_to_date), 0), label:'Unbilled work', fmt:'money', sum:true},
@@ -333,7 +354,7 @@ export const Dashboard = {
     </div>
 
     <!-- management -->
-    <div class="kpis" :style="o('mgmtKpis')" v-if="has('mgmtKpis')">
+    <div class="kpis" data-sec="mgmtKpis" :draggable="!!ed" :style="o('mgmtKpis')" v-if="has('mgmtKpis')">
       <div class="kpi" v-if="cost"><div class="l">Inventory value</div><div class="v">{{ aed(stockValue) }}</div><div class="s">assets at cost {{ aed(assetValue) }}</div></div>
       <div class="kpi bad"><div class="l">Stock-outs</div><div class="v">{{ stockOuts }}</div><div class="s">buffer in red: {{ redZone }}</div></div>
       <div class="kpi" v-if="cost"><div class="l">Overstock / non-moving</div><div class="v">{{ aed(overstockVal) }}</div><div class="s">older than 90 days {{ aed(over90) }}</div></div>
@@ -343,7 +364,7 @@ export const Dashboard = {
     </div>
 
     <!-- purchase -->
-    <div class="kpis" :style="o('purKpis')" v-if="has('purKpis')">
+    <div class="kpis" data-sec="purKpis" :draggable="!!ed" :style="o('purKpis')" v-if="has('purKpis')">
       <div class="kpi bad"><div class="l">Stock-outs</div><div class="v">{{ stockOuts }}</div></div>
       <div class="kpi warn"><div class="l">Buffer in RED</div><div class="v">{{ redZone }}</div><div class="s">order urgently</div></div>
       <div class="kpi"><div class="l">Items to order</div><div class="v">{{ toOrder }}</div><div class="s"><a href="#/replenish">replenishment →</a></div></div>
@@ -351,7 +372,7 @@ export const Dashboard = {
       <div class="kpi" :class="{bad: (d.pos || []).some(p => p.delivery_date && p.delivery_date < today() && ['RELEASED','PARTIALLY_RECEIVED'].includes(p.status))}"><div class="l">Late deliveries</div>
         <div class="v">{{ (d.pos || []).filter(p => p.delivery_date && p.delivery_date < today() && ['RELEASED','PARTIALLY_RECEIVED'].includes(p.status)).length }}</div><div class="s">past PO delivery date</div></div>
     </div>
-    <div class="card" :style="o('poLate')" v-if="has('poLate')">
+    <div class="card" data-sec="poLate" :draggable="!!ed" :style="o('poLate')" v-if="has('poLate')">
       <h3>Open purchase orders by delivery date</h3>
       <DataTable :rows="d.pos || []" :loading="loading" clickable @row="r => go('d/po/' + r.id)" :columns="[{k:'po_no',label:'PO'},{k: r => r.vendors?.name, label:'Vendor'},{k: r => r.projects?.code || 'Stock', label:'For'},
         {k:'delivery_date',label:'Delivery',fmt:'date'},{k: r => r.delivery_date && r.delivery_date < today() && ['RELEASED','PARTIALLY_RECEIVED'].includes(r.status) ? 'OVERDUE' : '', label:'', fmt:'badge'},
@@ -359,7 +380,7 @@ export const Dashboard = {
     </div>
 
     <!-- stores -->
-    <div class="kpis" :style="o('stockKpis')" v-if="has('stockKpis')">
+    <div class="kpis" data-sec="stockKpis" :draggable="!!ed" :style="o('stockKpis')" v-if="has('stockKpis')">
       <div class="kpi" v-if="cost"><div class="l">Inventory value (stock)</div><div class="v">{{ aed(stockValue) }}</div><div class="s">FIFO / weighted average</div></div>
       <div class="kpi bad"><div class="l">Stock-outs</div><div class="v">{{ stockOuts }}</div><div class="s">items with zero available</div></div>
       <div class="kpi warn"><div class="l">Buffer in RED</div><div class="v">{{ redZone }}</div><div class="s">order urgently</div></div>
@@ -367,34 +388,34 @@ export const Dashboard = {
       <div class="kpi" :class="{warn: (d.expiring || []).length}"><div class="l">Lots expiring ≤ 60 days</div><div class="v">{{ (d.expiring || []).length }}</div></div>
       <div class="kpi" :class="{bad: toolsOverdue}"><div class="l">Tools overdue for return</div><div class="v">{{ toolsOverdue }}</div><div class="s">calibration due: {{ calibDue }}</div></div>
     </div>
-    <div class="card" :style="o('expiring')" v-if="has('expiring') && (d.expiring || []).length">
+    <div class="card" data-sec="expiring" :draggable="!!ed" :style="o('expiring')" v-if="has('expiring') && (d.expiring || []).length">
       <h3>Expiring within 60 days</h3>
       <DataTable :searchable="false" :rows="d.expiring" :columns="[{k:'item_code',label:'Item'},{k:'item_name',label:'Description'},{k:'location_code',label:'Location'},{k:'lot_no',label:'Lot'},{k:'batch_no',label:'Batch'},
         {k:'expiry_date',label:'Expiry',fmt:'date'},{k:'qty_on_hand',label:'Qty',fmt:'qty'},{k:'uom',label:'UoM'}]" />
     </div>
 
     <!-- production -->
-    <div class="kpis" :style="o('prodKpis')" v-if="has('prodKpis') || has('production')">
+    <div class="kpis" data-sec="prodKpis" :draggable="!!ed" :style="o('prodKpis')" v-if="has('prodKpis') || has('production')">
       <div class="kpi"><div class="l">Open production orders</div><div class="v">{{ wos.length }}</div></div>
       <div class="kpi" :class="{bad: woLate.length}"><div class="l">Late orders</div><div class="v">{{ woLate.length }}</div><div class="s">past due date</div></div>
       <div class="kpi"><div class="l">Stages running</div><div class="v">{{ count('stagesRunning') }}</div><div class="s"><a href="#/floor">stage board →</a></div></div>
       <div class="kpi" :class="{warn: count('qc')}"><div class="l">QC rejects awaiting FM</div><div class="v">{{ count('qc') }}</div></div>
       <div class="kpi" v-if="has('prodKpis')" :class="{bad: (d.wc || []).some(w => w.is_down)}"><div class="l">Machines down</div><div class="v">{{ (d.wc || []).filter(w => w.is_down).length }}</div></div>
     </div>
-    <div class="card" :style="o('woLate')" v-if="has('woLate')">
+    <div class="card" data-sec="woLate" :draggable="!!ed" :style="o('woLate')" v-if="has('woLate')">
       <h3>Open production orders by due date</h3>
       <DataTable :rows="wos" :loading="loading" clickable @row="r => go('d/wo/' + r.id)" :columns="[{k:'wo_no',label:'Order'},{k:'description',label:'Description'},{k: r => r.projects?.code || 'MTS', label:'Project'},
         {k: r => qty(r.qty_completed) + ' / ' + qty(r.qty), label:'Done / qty'},{k:'due_date',label:'Due',fmt:'date'},{k: r => r.due_date && r.due_date < today() ? 'OVERDUE' : '', label:'', fmt:'badge'},
         {k:'priority',label:'Priority',fmt:'label'},{k:'status',label:'Status',fmt:'badge'}]" />
     </div>
-    <div class="card" :style="o('wcLoad')" v-if="has('wcLoad') && (d.wc || []).length">
+    <div class="card" data-sec="wcLoad" :draggable="!!ed" :style="o('wcLoad')" v-if="has('wcLoad') && (d.wc || []).length">
       <h3>Work centre load</h3>
       <DataTable :searchable="false" :rows="d.wc" :columns="[{k:'code',label:'Code'},{k:'name',label:'Work centre'},{k:'open_stages',label:'Open stages',n:true},{k:'running',label:'Running',n:true},
         {k:'remaining_hours',label:'Hours queued',fmt:'qty'},{k:'load_days',label:'Load (days)',fmt:'qty'},{k:'availability_pct_30d',label:'Availability 30d %',n:true},{k: r => r.is_down ? 'DOWN' : 'RUNNING', label:'Now', fmt:'badge'}]" />
     </div>
 
     <!-- HR -->
-    <div class="kpis" :style="o('hrKpis')" v-if="has('hrKpis')">
+    <div class="kpis" data-sec="hrKpis" :draggable="!!ed" :style="o('hrKpis')" v-if="has('hrKpis')">
       <div class="kpi"><div class="l">Active employees</div><div class="v">{{ (d.emps || []).length }}</div><div class="s">on leave {{ (d.emps || []).filter(e => e.emp_status === 'ON_LEAVE').length }}</div></div>
       <div class="kpi"><div class="l">Attendance today</div><div class="v">{{ (d.att || []).filter(a => ['PRESENT','HALF_DAY'].includes(a.status)).length }}</div>
         <div class="s">absent {{ (d.att || []).filter(a => a.status === 'ABSENT').length }} · not marked {{ Math.max((d.emps || []).length - (d.att || []).length, 0) }}</div></div>
@@ -405,19 +426,19 @@ export const Dashboard = {
         <div class="s"><span class="b" :class="d.payrollRun[0].status">{{ label(d.payrollRun[0].status) }}</span></div></div>
       <div class="kpi" v-if="cost"><div class="l">Advances outstanding</div><div class="v">{{ aed((d.advances || []).reduce((s, a) => s + Number(a.amount) - Number(a.recovered || 0), 0)) }}</div></div>
     </div>
-    <div class="card" :style="o('docExpiry')" v-if="has('docExpiry') && (d.docs || []).length">
+    <div class="card" data-sec="docExpiry" :draggable="!!ed" :style="o('docExpiry')" v-if="has('docExpiry') && (d.docs || []).length">
       <h3>Employee documents expiring</h3>
       <DataTable :searchable="false" :rows="d.docs" clickable @row="r => go('d/emp/' + r.employee_id)" :columns="[{k:'emp_code',label:'Code'},{k:'name',label:'Employee'},{k:'doc_type',label:'Document',fmt:'label'},
         {k:'doc_no',label:'No.'},{k:'expiry_date',label:'Expiry',fmt:'date'},{k:'days_left',label:'Days left',n:true},{k:'expiry_status',label:'Status',fmt:'badge'}]" />
     </div>
-    <div class="card" :style="o('onLeave')" v-if="has('onLeave') && (d.leaves || []).length">
+    <div class="card" data-sec="onLeave" :draggable="!!ed" :style="o('onLeave')" v-if="has('onLeave') && (d.leaves || []).length">
       <h3>Current & upcoming leave</h3>
       <DataTable :searchable="false" :rows="d.leaves" clickable @row="r => go('d/leave/' + r.id)" :columns="[{k: r => r.employees ? r.employees.name + ' (' + r.employees.emp_code + ')' : '', label:'Employee'},
         {k:'leave_type',label:'Type',fmt:'label'},{k:'from_date',label:'From',fmt:'date'},{k:'to_date',label:'To',fmt:'date'},{k:'days',label:'Days',n:true},{k:'status',label:'Status',fmt:'badge'}]" />
     </div>
 
     <!-- shared sections -->
-    <div class="card" :style="o('projects')" v-if="has('projects') && (d.projects || []).length">
+    <div class="card" data-sec="projects" :draggable="!!ed" :style="o('projects')" v-if="has('projects') && (d.projects || []).length">
       <h3>Running projects ({{ d.projects.length }})</h3>
       <div class="tbl-wrap"><table class="t">
         <thead><tr><th>Project</th><th>Due</th><th style="min-width:160px">Progress (installed value)</th><th class="n">Units handed over</th><th class="n">Snagging</th>
@@ -437,23 +458,23 @@ export const Dashboard = {
         </tr></tbody>
       </table></div>
     </div>
-    <div class="card" :style="o('payables')" v-if="has('payables') && (d.pay || []).some(p => Number(p.net_payable_aed))">
+    <div class="card" data-sec="payables" :draggable="!!ed" :style="o('payables')" v-if="has('payables') && (d.pay || []).some(p => Number(p.net_payable_aed))">
       <h3>Payables by vendor</h3>
       <DataTable :searchable="false" :rows="(d.pay || []).filter(p => Number(p.net_payable_aed))" :columns="[{k:'name',label:'Vendor'},{k:'payment_term',label:'Terms'},{k:'not_due_aed',label:'Not due',fmt:'money',sum:true},
         {k: r => Number(r.overdue_1_30_aed) + Number(r.overdue_31_60_aed) + Number(r.overdue_61_90_aed) + Number(r.overdue_90_plus_aed), label:'Overdue', fmt:'money', sum:true},
         {k:'pdc_not_matured_aed',label:'PDC not matured',fmt:'money',sum:true},{k:'net_payable_aed',label:'Net payable',fmt:'money',sum:true}]" />
     </div>
-    <div class="card" :style="o('budgets')" v-if="has('budgets') && (d.budgets || []).length">
+    <div class="card" data-sec="budgets" :draggable="!!ed" :style="o('budgets')" v-if="has('budgets') && (d.budgets || []).length">
       <h3>Projects near or over material budget ({{ d.budgets.length }})</h3>
       <DataTable :searchable="false" :rows="d.budgets" :columns="[{k:'code',label:'Project'},{k:'name',label:'Name'},{k:'budget_material',label:'Budget AED',fmt:'money'},{k:'net_consumption',label:'Consumed AED',fmt:'money'},{k:'pct',label:'% used',n:true},{k:r=>r.pct>=100?'OVER':'WARNING',label:'Status',fmt:'badge'}]" />
     </div>
-    <div class="charts" :style="o('stockCharts', 'zoneChart')" v-if="has('stockCharts') || has('zoneChart')">
+    <div class="charts" data-sec="stockCharts,zoneChart" :draggable="!!ed" :style="o('stockCharts', 'zoneChart')" v-if="has('stockCharts') || has('zoneChart')">
       <div class="card" v-if="has('stockCharts') && cost"><h3>Inventory valuation by class (AED)</h3><div class="chart-box"><canvas ref="cVal"></canvas></div></div>
       <div class="card" v-if="has('stockCharts') && cost"><h3>Inventory aging by class (AED)</h3><div class="chart-box"><canvas ref="cAge"></canvas></div></div>
       <div class="card"><h3>TOC buffer zones (items with a buffer)</h3><div class="chart-box"><canvas ref="cZone"></canvas></div></div>
       <div class="card" v-if="has('stockCharts')"><h3>Stock status (items)</h3><div class="chart-box"><canvas ref="cStatus"></canvas></div></div>
     </div>
-    <div class="card" :style="o('valuation')" v-if="has('valuation') && cost">
+    <div class="card" data-sec="valuation" :draggable="!!ed" :style="o('valuation')" v-if="has('valuation') && cost">
       <h3>Valuation by category</h3>
       <DataTable :columns="[{k:'kind',label:'Kind',fmt:'label'},{k:'class_name',label:'Class'},{k:'category_name',label:'Category'},{k:'items',label:'Items',n:true},{k:'qty',label:'Qty',fmt:'qty'},{k:'value',label:'Value AED',fmt:'money',sum:true}]" :rows="d.val || []" filename="valuation_by_category" />
     </div>
