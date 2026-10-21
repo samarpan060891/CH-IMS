@@ -55,7 +55,9 @@ Each user lands on the dashboard of their role:
 The Administrator has a **Dashboards** menu with every dashboard, showing each role's approvals.
 In **Users & roles** the Administrator can tick which dashboards each user sees (none ticked = the role's default); users with more than one get a Dashboards menu.
 Each user can **✎ Customise** their own dashboards: add or remove sections (from the dashboards they have been given), change the order by dragging (sections on the dashboard or rows in the panel; ↑ ↓ on phones), resize sections (width ¼ – full, height auto / short / medium / tall with scrolling), choose the dashboard
-that opens at sign-in, or reset to the standard layout. These settings are personal (stored on the user's profile).
+that opens at sign-in, or reset to the standard layout. **★ New KPI card** adds a user's own figure: pick a measure (33 measures across stores, purchasing,
+production, projects, finance and HR — only those of the user's dashboards, money measures only for users who see costs), a period (today … all time, compared with
+the previous period), an optional project and a goal (card turns green / red). Cards are shared by all of the user's dashboards and can be dragged and resized like any section. These settings are personal (stored on the user's profile).
 
 ## Valuation
 Per item class: Raw materials **FIFO**; consumables, packing, spares, scrap **weighted average**; machines/tools/equipment **fixed assets at landed cost**. An item may override FIFO/WAVG until it has transactions.

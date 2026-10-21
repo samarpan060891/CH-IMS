@@ -1,7 +1,10 @@
 // Role dashboards: every user lands on the dashboard of their role; the administrator can open all of them
 // (Dashboards menu). A dashboard is a list of sections; data is loaded only for the sections shown.
-import { sb, state, must, run, hasRole, canSeeCost, go, loadRefs, money, qty, aed, dt, label, num, today } from './lib.js';
-import { DataTable, Badge } from './components.js';
+import { sb, state, must, run, hasRole, canSeeCost, go, loadRefs, refRow, money, qty, aed, dt, label, num, today } from './lib.js';
+import { DataTable, Badge, ask, confirmBox } from './components.js';
+import { METRICS, PERIODS, userMetrics, computeKpi } from './kpis.js';
+
+const fmtVal = (v, f) => f === 'money' ? aed(v) : f === 'hours' ? qty(v) + ' h' : Math.round(num(v)).toLocaleString('en-GB');
 
 const PALETTE = ['#1b3a6b', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#dc2626', '#475569', '#a16207'];
 const ZONE_COLORS = { BLACK: '#111827', RED: '#dc2626', YELLOW: '#eab308', GREEN: '#16a34a', BLUE: '#2563eb' };
@@ -59,7 +62,7 @@ export function userSections(p = state.profile) {
 export const Dashboard = {
   components: { DataTable, Badge },
   props: { kind: String },
-  data: () => ({ loading: true, d: {}, myPending: [], charts: [], ed: null, drag: null, over: null }),
+  data: () => ({ loading: true, d: {}, kv: {}, myPending: [], charts: [], ed: null, drag: null, over: null }),
   computed: {
     isAdmin: () => state.profile?.role === 'admin',
     // only dashboards granted to the user open, whatever the address says
@@ -70,13 +73,19 @@ export const Dashboard = {
       return this.allowed.includes(h) ? h : (this.allowed[0] || dashboardFor(state.profile?.role));
     },
     cfg() { return DASHBOARDS[this.k]; },
-    // the user's own layout for this dashboard, else the standard one
+    // the layout being edited, else the user's own layout for this dashboard, else the standard one
     sections() {
-      const mine = state.profile?.dashboard_prefs?.layouts?.[this.k], ok = userSections();
-      return (Array.isArray(mine) ? mine : this.cfg.sections).filter(s => ok.includes(s));
+      const mine = this.ed ? this.ed.list : state.profile?.dashboard_prefs?.layouts?.[this.k], ok = userSections();
+      return (Array.isArray(mine) ? mine : this.cfg.sections).filter(s => ok.includes(s) || (s.startsWith('kpi:') && this.card(s)));
     },
     customised() { return Array.isArray(state.profile?.dashboard_prefs?.layouts?.[this.k]); },
-    addable() { return this.ed ? userSections().filter(s => !this.ed.list.includes(s)) : []; },
+    // the user's own KPI cards (shared by all their dashboards)
+    cards() { return (this.ed ? this.ed.kpis : state.profile?.dashboard_prefs?.kpis) || []; },
+    myCards() { return this.sections.filter(s => s.startsWith('kpi:')).map(s => this.card(s)).filter(Boolean); },
+    addable() {
+      if (!this.ed) return [];
+      return [...userSections(), ...this.cards.map(c => 'kpi:' + c.id)].filter(s => !this.ed.list.includes(s));
+    },
     homeOpts() { return userDashboards().map(k => ({ v: k, l: DASHBOARDS[k].title })); },
     // approvals: the user's own; the administrator sees those of the dashboard's role
     viewRole() { const r = state.profile?.role; return this.cfg.roles.includes(r) || !this.isAdmin ? r : this.cfg.roles[0]; },
@@ -113,10 +122,61 @@ export const Dashboard = {
       const z = this.size(s.find(x => this.has(x)) || s[0]), h = HEIGHTS.find(x => x.v === z.h)?.px;
       return { order: Number.isFinite(i) ? i : 99, gridColumn: `span ${z.w}`, ...(h ? { maxHeight: h + 'px', overflow: 'auto' } : {}) };
     },
-    size(s) { const z = (this.ed?.sizes || state.profile?.dashboard_prefs?.sizes?.[this.k] || {})[s] || {}; return { w: z.w || 12, h: z.h || '' }; },
+    // KPI cards default to a quarter of the row so four sit side by side
+    size(s) { const z = (this.ed?.sizes || state.profile?.dashboard_prefs?.sizes?.[this.k] || {})[s] || {}; return { w: z.w || (s?.startsWith('kpi:') ? 3 : 12), h: z.h || '' }; },
     setSize(s, key, v) { const cur = this.ed.sizes[s] || {}; this.ed.sizes[s] = { ...cur, [key]: v }; },
     customise() {
-      this.ed = { list: [...this.sections], home: homeDashboard(), add: '', sizes: JSON.parse(JSON.stringify(state.profile?.dashboard_prefs?.sizes?.[this.k] || {})) };
+      const p = state.profile?.dashboard_prefs || {};
+      this.ed = { list: [...this.sections], home: homeDashboard(), add: '', sizes: JSON.parse(JSON.stringify(p.sizes?.[this.k] || {})), kpis: JSON.parse(JSON.stringify(p.kpis || [])) };
+    },
+    card(s) { const id = s.slice(4); return this.cards.find(c => c.id === id); },
+    secLabel(s) { const c = s.startsWith('kpi:') && this.card(s); return c ? `★ ${c.title} (my KPI card)` : SECTIONS[s]; },
+    // create / edit a KPI card: measure from the catalogue, period, project, goal
+    async editCard(s) {
+      const c = s ? this.card(s) : null;
+      await loadRefs(['projects']);
+      const metrics = userMetrics(userDashboards());
+      const v = await ask({ title: c ? 'Edit KPI card' : 'New KPI card', okText: c ? 'Update' : 'Add card',
+        message: 'Pick what to measure. Period and project apply only to measures that support them; a goal colours the card green (met) or red (missed).',
+        fields: [
+          { k: 'metric', label: 'Measure', type: 'select', required: true, options: metrics, default: c?.metric || metrics[0]?.v },
+          { k: 'title', label: 'Card title (blank = measure name)', default: c?.title || '' },
+          { k: 'period', label: 'Period', type: 'select', options: PERIODS, default: c?.period || 'month' },
+          { k: 'project_id', label: 'Project (optional)', type: 'select', options: (state.refs.projects || []).filter(p => p.status === 'OPEN').map(p => ({ v: p.id, l: `${p.code} — ${p.name}` })), default: c?.project_id || '' },
+          { k: 'goal', label: 'Goal (optional)', type: 'number', default: c?.goal ?? null },
+          { k: 'dir', label: 'Goal is met when the value is', type: 'select', options: [{ v: 'min', l: 'at least the goal' }, { v: 'max', l: 'at most the goal' }], default: c?.dir || '' },
+        ] });
+      if (!v) return;
+      const m = METRICS[v.metric];
+      const card = { id: c?.id || Math.random().toString(36).slice(2, 10), metric: v.metric, title: (v.title || '').trim() || m.l,
+        period: m.period ? (v.period || 'month') : null, project_id: m.project ? (v.project_id || null) : null,
+        goal: v.goal === null || v.goal === '' ? null : num(v.goal), dir: v.dir || (m.lowerBetter ? 'max' : 'min') };
+      if (c) Object.assign(c, card); else { this.ed.kpis.push(card); this.ed.list.unshift('kpi:' + card.id); }
+      await this.loadCard(card);
+    },
+    async removeCard(s) {
+      if (!(await confirmBox('Delete KPI card', 'Delete this KPI card from all your dashboards (when you save)?', true))) return;
+      this.ed.kpis = this.ed.kpis.filter(c => 'kpi:' + c.id !== s); this.ed.list = this.ed.list.filter(x => x !== s);
+    },
+    async loadCard(c) {
+      try { this.kv = { ...this.kv, [c.id]: await computeKpi(c) }; }
+      catch (e) { this.kv = { ...this.kv, [c.id]: { err: e.message || String(e) } }; }
+    },
+    kpiText(c) { const r = this.kv[c.id], m = METRICS[c.metric]; if (!r || r.err) return '—'; return fmtVal(r.v, m?.fmt); },
+    kpiSub(c) {
+      const r = this.kv[c.id], m = METRICS[c.metric]; if (!m) return 'measure no longer available'; if (r?.err) return 'not available: ' + r.err;
+      const parts = [];
+      if (m.period) parts.push(PERIODS.find(p => p.v === c.period)?.l || '');
+      if (c.project_id) parts.push(refRow('projects', c.project_id)?.code || 'project');
+      if (r && r.prev !== null && r.prev !== undefined && c.period !== 'all') {
+        const d = r.v - r.prev; parts.push(r.prev ? `${d >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(d / Math.abs(r.prev) * 100))}% vs previous` : `previous ${fmtVal(r.prev, m.fmt)}`);
+      }
+      if (c.goal !== null && c.goal !== undefined) parts.push(`goal ${c.dir === 'max' ? '≤' : '≥'} ${fmtVal(c.goal, m.fmt)}`);
+      return parts.filter(Boolean).join(' · ');
+    },
+    kpiClass(c) {
+      const r = this.kv[c.id]; if (!r || r.err || c.goal === null || c.goal === undefined) return '';
+      return (c.dir === 'max' ? r.v <= c.goal : r.v >= c.goal) ? 'ok' : 'bad';
     },
     // drag & drop (while customising): drag a section on the dashboard or a row in the panel onto another to take its place
     secOf(el) { const b = el?.closest?.('[data-sec]'); return b ? b.dataset.sec.split(',').find(s => this.ed?.list.includes(s)) : null; },
@@ -138,7 +198,11 @@ export const Dashboard = {
     },
     dragEnd() { this.drag = this.over = null; this.mark(null); },
     move(i, dir) { const l = this.ed.list, j = i + dir; if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; },
-    addSection() { if (this.ed.add) { this.ed.list.push(this.ed.add); this.ed.add = ''; } },
+    async addSection() {
+      if (!this.ed.add) return;
+      const s = this.ed.add; this.ed.list.push(s); this.ed.add = '';
+      if (s.startsWith('kpi:')) await this.loadCard(this.card(s)); else await this.load();
+    },
     async savePrefs(reset) {
       const cur = state.profile.dashboard_prefs || {};
       const layouts = { ...(cur.layouts || {}) }, sizes = { ...(cur.sizes || {}) };
@@ -149,7 +213,10 @@ export const Dashboard = {
         const z = Object.fromEntries(Object.entries(this.ed.sizes).filter(([s, v]) => this.ed.list.includes(s) && ((v.w && v.w !== 12) || v.h)));
         if (Object.keys(z).length) sizes[this.k] = z; else delete sizes[this.k];
       }
-      const prefs = { home: this.ed.home, layouts, sizes };
+      // keep the KPI cards still used on any dashboard
+      const used = new Set(Object.values(layouts).flat());
+      const kpis = this.ed.kpis.filter(c => used.has('kpi:' + c.id));
+      const prefs = { home: this.ed.home, layouts, sizes, kpis };
       const ok = await run(async () => must(await sb.rpc('save_my_dashboard_prefs', { p_prefs: prefs })), reset ? 'Dashboard reset to standard' : 'Dashboard saved');
       if (ok) { state.profile.dashboard_prefs = prefs; this.ed = null; await this.load(); }
     },
@@ -194,6 +261,8 @@ export const Dashboard = {
             d.budgets = must(r).map(p => ({ ...p, pct: Math.round(num(p.net_consumption) / num(p.budget_material) * 1000) / 10 })).filter(p => p.pct >= warn).sort((a, b) => b.pct - a.pct); }));
         }
         if (this.has('pending')) jobs.push(this.loadPending());
+        if (this.myCards.some(c => METRICS[c.metric]?.project)) jobs.push(loadRefs(['projects']));
+        this.myCards.forEach(c => jobs.push(this.loadCard(c)));
         await Promise.all(jobs);
         this.d = d;
       });
@@ -303,12 +372,16 @@ export const Dashboard = {
 
     <div class="card" v-if="ed">
       <h3>Customise the {{ cfg.title }} dashboard</h3>
-      <p class="small muted" style="margin-top:0">Choose the sections you want, their order and size — <b>drag</b> a row here or a section on the dashboard below onto the place you want it (or use ↑ ↓); the dashboard changes as you edit. Sections side by side need widths that add up to a full row (e.g. ½ + ½, ⅓ + ⅔). On phones every section is full width. These settings are yours only.</p>
+      <p class="small muted" style="margin-top:0">Choose the sections you want, their order and size — <b>drag</b> a row here or a section on the dashboard below onto the place you want it (or use ↑ ↓); the dashboard changes as you edit. Sections side by side need widths that add up to a full row (e.g. ½ + ½, ⅓ + ⅔). On phones every section is full width. <b>★ New KPI card</b> adds your own figure (any measure from your dashboards, for a period / project, with an optional goal); cards are shared by all your dashboards. These settings are yours only.</p>
       <div class="dash-ed">
         <div v-for="(s, i) in ed.list" :key="s" class="row" draggable="true" :class="{dragging: drag === s, 'drop-at': over === s && drag !== s}"
              @dragstart="dragStart($event, s)" @dragover="dragOver($event, s)" @drop="drop($event, s)" @dragend="dragEnd">
           <span class="grip" title="Drag to reorder">⠿</span>
-          <span class="muted small" style="width:20px">{{ i + 1 }}</span><span style="flex:1">{{ SECTIONS[s] }}</span>
+          <span class="muted small" style="width:20px">{{ i + 1 }}</span><span style="flex:1">{{ secLabel(s) }}</span>
+          <template v-if="s.startsWith('kpi:')">
+            <button class="btn sm" @click="editCard(s)" title="Edit card">✎</button>
+            <button class="btn sm" @click="removeCard(s)" title="Delete card everywhere">🗑</button>
+          </template>
           <select class="sm" title="Width" :value="size(s).w" @change="setSize(s, 'w', Number($event.target.value))"><option v-for="w in WIDTHS" :value="w.v">{{ w.l }}</option></select>
           <select class="sm" title="Height" :value="size(s).h" @change="setSize(s, 'h', $event.target.value)"><option v-for="h in HEIGHTS" :value="h.v">{{ h.l }}</option></select>
           <button class="btn sm" :disabled="i === 0" @click="move(i, -1)" title="Move up">↑</button>
@@ -318,8 +391,9 @@ export const Dashboard = {
         <div v-if="!ed.list.length" class="muted small">No sections — add at least one below.</div>
       </div>
       <div class="row" style="flex-wrap:wrap;gap:10px;margin-top:10px">
-        <select v-model="ed.add" style="max-width:340px"><option value="">+ Add a section…</option><option v-for="s in addable" :value="s">{{ SECTIONS[s] }}</option></select>
+        <select v-model="ed.add" style="max-width:340px"><option value="">+ Add a section…</option><option v-for="s in addable" :value="s">{{ secLabel(s) }}</option></select>
         <button class="btn sm" :disabled="!ed.add" @click="addSection">Add</button>
+        <button class="btn sm primary" @click="editCard(null)">★ New KPI card</button>
         <label class="row small" style="gap:6px" v-if="homeOpts.length > 1">Open at sign-in
           <select v-model="ed.home"><option v-for="h in homeOpts" :value="h.v">{{ h.l }}</option></select></label>
         <span class="spacer"></span>
@@ -330,6 +404,14 @@ export const Dashboard = {
     </div>
 
     <div class="dash-body" :class="{editing: !!ed}" @dragstart="ed && dragStart($event)" @dragover="ed && dragOver($event)" @drop="ed && drop($event)" @dragend="dragEnd">
+
+    <!-- the user's own KPI cards -->
+    <div v-for="c in myCards" :key="c.id" class="kpi my-kpi" :class="kpiClass(c)" :data-sec="'kpi:' + c.id" :draggable="!!ed" :style="o('kpi:' + c.id)"
+         :title="kv[c.id]?.err || ''">
+      <div class="l">{{ c.title }}<span v-if="ed" class="kpi-tools"><a href="javascript:void 0" @click="editCard('kpi:' + c.id)" title="Edit">✎</a></span></div>
+      <div class="v">{{ kpiText(c) }}</div>
+      <div class="s">{{ kpiSub(c) }}</div>
+    </div>
 
     <div class="card" data-sec="pending" :draggable="!!ed" :style="o('pending')" v-if="has('pending') && myPending.length">
       <h3>Waiting for {{ viewRole !== $root.state.profile.role ? label(viewRole) : 'your action' }} ({{ myPending.length }})</h3>

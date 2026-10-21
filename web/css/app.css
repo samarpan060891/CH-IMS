@@ -119,6 +119,9 @@ table.t tfoot td { font-weight: 600; background: #fafafa; }
 .dash-ed > .row { cursor: grab; }
 .dash-ed > .row.dragging, .dash-body > [data-sec][draggable="true"]:active { opacity: .5; }
 .dash-ed .grip { color: #94a3b8; cursor: grab; font-size: 14px; user-select: none; }
+.dash-body > .my-kpi { margin-bottom: 16px; }
+.my-kpi.ok { border-left: 4px solid var(--ok); } .my-kpi.bad { border-left: 4px solid var(--bad); }
+.my-kpi .kpi-tools { float: right; } .my-kpi .kpi-tools a { text-decoration: none; margin-left: 6px; }
 .dash-ed select.sm { padding: 3px 6px; font-size: 12px; width: auto; }
 .dash-ed { display: flex; flex-direction: column; gap: 4px; max-width: 620px; }
 .dash-ed > .row { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
