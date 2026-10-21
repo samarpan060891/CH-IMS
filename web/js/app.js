@@ -16,8 +16,9 @@ import { PROD_DOCS, StageBoard, QcApprovals } from './production.js';
 import { PROJ_DOCS, Mrp } from './projects.js';
 import { SiteApp } from './site.js';
 import { HR_DOCS, AttendanceSheet } from './hr.js';
+import { FIN_DOCS, Books } from './finance.js';
 
-Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS);
+Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS);
 
 const ALL = null;
 // short menu names for reports (full titles show on the report page)
@@ -91,10 +92,26 @@ const MENU = [
     ...['leavebal', 'docexpiry', 'gratuity', 'attmonth'].map(rep),
   ] },
   { g: 'Finance', icon: 'report-money', items: [
+    { sep: 'Receivables' },
+    { to: 'd/si', t: 'Sales invoices & claims', roles: ['finance', 'factory_manager'], badge: 'siCert' },
+    { to: 'd/rcv', t: 'Customer receipts', roles: ['finance', 'factory_manager'], badge: 'pdc' },
+    { to: 'books/billing', t: 'Project billing', roles: ['finance', 'factory_manager'] },
+    { to: 'books/aging', t: 'Receivables aging', roles: ['finance', 'factory_manager'] },
+    { to: 'm/customers', t: 'Customers', roles: ['finance', 'factory_manager'] },
+    { sep: 'Payables' },
     { to: 'd/inv', t: 'Vendor invoices', roles: ['finance', 'factory_manager'] },
     { to: 'd/pay', t: 'Payments', roles: ['finance', 'factory_manager'] },
     { to: 'd/dn', t: 'Debit notes', roles: ['finance'] },
     { to: 'r/payables', t: 'Net payables', roles: ['finance', 'factory_manager', 'purchase'] },
+    { sep: 'General ledger' },
+    { to: 'books/tb', t: 'Trial balance', roles: ['finance', 'factory_manager'] },
+    { to: 'books/pl', t: 'Profit & loss', roles: ['finance', 'factory_manager'] },
+    { to: 'books/bs', t: 'Balance sheet', roles: ['finance', 'factory_manager'] },
+    { to: 'books/ledger', t: 'Ledgers & bank reconciliation', roles: ['finance', 'factory_manager'] },
+    { to: 'books/vat', t: 'VAT return (201)', roles: ['finance'] },
+    { to: 'd/jv', t: 'Journals', roles: ['finance', 'factory_manager'] },
+    { to: 'books/periods', t: 'Month end & period close', roles: ['finance'] },
+    { to: 'm/gl_accounts', t: 'Chart of accounts', roles: ['finance', 'factory_manager'] },
   ] },
   { g: 'Reports', icon: 'chart-bar', items: [
     { sep: 'Stock' },
@@ -160,7 +177,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -191,6 +208,7 @@ const App = {
       if (a === 'qc') return { comp: 'QcApprovals', props: {}, title: 'QC approvals' };
       if (a === 'mrp') return { comp: 'Mrp', props: { projectId: b || null }, title: 'Material planning (MRP)' };
       if (a === 'attendance') return { comp: 'AttendanceSheet', props: {}, title: 'Attendance & overtime' };
+      if (a === 'books') return { comp: 'Books', props: { tab: b || 'tb', arg: c || null }, title: 'Books of account' };
       // site supervisors land on the phone-friendly site app
       if (a === 'site' || (a === 'dashboard' && state.profile?.role === 'site_supervisor')) return { comp: 'SiteApp', props: {}, title: 'Site' };
       const simple = { dashboard: ['Dashboard', 'Dashboard'], replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };

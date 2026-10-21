@@ -78,7 +78,9 @@ export const REF = {
   },
   vendors: { table: 'vendors', order: 'name', select: 'id,code,name,currency,payment_term_id,vendor_type,status,trn,vat_registered', label: r => `${r.name} (${r.code})` },
   locations: { table: 'locations', order: 'code', select: 'id,code,name,loc_type,is_stock,is_active,parent_id', label: r => `${r.code} — ${r.name}` },
-  projects: { table: 'projects', order: 'code', select: 'id,code,name,project_type,status,customer', label: r => `${r.code} — ${r.name}` },
+  projects: { table: 'projects', order: 'code', select: 'id,code,name,project_type,status,customer,customer_id', label: r => `${r.code} — ${r.name}` },
+  customers: { table: 'customers', order: 'name', select: 'id,code,name,trn,address,emirate,payment_term_id,status', label: r => `${r.name} (${r.code})` },
+  gl_accounts: { table: 'gl_accounts', order: 'code', select: 'id,code,name,acc_type,is_group,system_key,is_bank,is_active,parent_id', label: r => `${r.code} — ${r.name}` },
   cost_centers: { table: 'cost_centers', order: 'code', select: 'id,code,name,is_active', label: r => `${r.code} — ${r.name}` },
   employees: { table: 'employees', order: 'name', select: 'id,emp_code,name,department,is_active', label: r => `${r.name} (${r.emp_code})` },
   uoms: { table: 'uoms', order: 'code', select: 'id,code,name,decimals', label: r => r.code },
@@ -202,7 +204,12 @@ export async function refreshPending() {
   if (hasRole('site_supervisor')) p.snag = await count('snags', q => q.eq('status', 'OPEN'));
   if (hasRole('hr_officer', 'factory_manager')) p.leave = await count('leave_requests', q => q.eq('status', 'PENDING'));
   if (hasRole('finance')) p.adv = await count('employee_advances', q => q.eq('status', 'DRAFT'));
-  if (hasRole('finance')) p.payroll = await count('payroll_runs', q => q.eq('status', 'SUBMITTED'));
+  if (hasRole('finance')) {
+    p.payroll = await count('payroll_runs', q => q.eq('status', 'SUBMITTED'));
+    // claims waiting for the client's payment certificate; cheques / PDCs due to bank
+    p.siCert = await count('sales_invoices', q => q.eq('status', 'SUBMITTED'));
+    p.pdc = await count('customer_receipts', q => q.eq('status', 'POSTED').in('mode', ['CHEQUE', 'PDC']).lte('cheque_date', today()));
+  }
   if (hasRole('hr_officer')) p.payroll = (p.payroll || 0) + await count('payroll_runs', q => q.eq('status', 'APPROVED'));
   if (hasRole('production_incharge', 'factory_manager')) p.snagVerify = await count('snags', q => q.eq('status', 'FIXED'));
   if (hasRole('site_supervisor') && !hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'POSTED'));

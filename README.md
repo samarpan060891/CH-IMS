@@ -1,7 +1,7 @@
 # CitiCore — Citi Homes operations platform
 
 Cloud system for **Citi Homes Kitchen and Wooden Furniture Manufacturing LLC** (UAE): purchasing, stores & inventory, production,
-projects & site (BOQ, installation, snags, variations), and — being added — HR / payroll and accounting.
+projects & site (BOQ, installation, snags, variations), HR / payroll and accounting (general ledger, customer billing, VAT).
 
 **Live app:** https://ch-ims-production.up.railway.app
 
@@ -30,7 +30,15 @@ projects & site (BOQ, installation, snags, variations), and — being added — 
 - **QR labels & scanning**: A4 sticker sheets (3×8) for lots, items/bins and tools; scan with phone camera or USB scanner from the top bar or while counting.
 - **Excel import**: templates for Items, Vendors and Opening stock (opening stock becomes a draft GRN for Stores to post); rows are validated before import.
 - **Notifications**: in-app bell; every approval step notifies the next approver's role and informs the requester of approvals/rejections.
-- **Finance**: vendor invoices (3-way match), payment vouchers (bank, cheque, PDC, cash, LC, advances), debit notes, net payables with aging.
+- **Finance — payables**: vendor invoices (3-way match), payment vouchers (bank, cheque, PDC, cash, LC, advances), debit notes, net payables with aging.
+- **Finance — receivables**: customers master; project billing terms (advance %, advance recovery %, retention %, payment terms); sales invoices: advance invoice, progress claims filled from
+  BOQ / unit progress (previous certified, cumulative, this claim) → submitted to the client → **payment certificate** (certified cumulative qty per line) → posted tax invoice with advance recovery,
+  retention and VAT on (certified − recovery); final account, retention release, general sales and credit notes; customer receipts (bank, cheque, PDC with clearing / returned cheques) allocated to invoices;
+  project billing summary (earned vs certified, unbilled work), receivables aging, customer statements; tax invoice / payment application / receipt PDFs.
+- **General ledger**: UAE chart of accounts (editable; system accounts drive automatic postings); every module posts journals automatically every 15 minutes or on demand — stock receipts / issues / adjustments /
+  production receipts / deliveries, production labour + machine + overhead absorbed into WIP, production scrap, service certificates, site installation & snag labour, supplier invoices, debit notes,
+  payments and returned cheques, scrap sales, salary advances, payroll accrual and payment, sales invoices and receipts; manual journals with reversal; month end (depreciation by asset class useful life,
+  gratuity & leave-salary provision true-up); period close / reopen; trial balance, P&L, balance sheet, ledgers with bank reconciliation ticks, FTA VAT 201 return.
 - **Reports**: stock in hand, by lot/location, stock-out, overstock & non-moving, TOC buffer status, aging, ABC, valuation by category, project consumption, expiry, payables, open invoices, GRN-not-invoiced, tools with workers, calibration, stock ledger.
 - **PDFs**: PO, GRN, material request, **issue slip**, return notes, transfer, count sheet, scrap note, disposal gate pass, debit note, payment voucher.
 
@@ -38,7 +46,8 @@ projects & site (BOQ, installation, snags, variations), and — being added — 
 Per item class: Raw materials **FIFO**; consumables, packing, spares, scrap **weighted average**; machines/tools/equipment **fixed assets at landed cost**. An item may override FIFO/WAVG until it has transactions.
 
 ## Roles
-Administrator, Purchase, Stores, Shop Floor, Production In-charge, Factory Manager, Finance Manager. Shop Floor and Production In-charge do not see costs.
+Administrator, Purchase, Stores, Shop Floor, Production In-charge, Site Supervisor, HR Officer, Factory Manager, Finance Manager. Shop Floor, Production In-charge, Site Supervisor and HR Officer do not see costs.
+Finance posts to the ledger; the Factory Manager can read the books and prepare claims.
 
 ## Desktop icon (any staff PC)
 ```
@@ -56,4 +65,4 @@ Open http://localhost:8080
 Railway builds the `Dockerfile` (Caddy serving `web/`). Connect the GitHub repo in Railway → *New Project → Deploy from GitHub repo*, then *Settings → Networking → Generate Domain*. Add that domain to Supabase → Authentication → URL Configuration (Site URL + Redirect URLs).
 
 ## Database migrations
-`supabase/migrations/001…007` — already applied to the Supabase project, kept here as the source of truth.
+`supabase/migrations/001…039` — already applied to the Supabase project, kept here as the source of truth.

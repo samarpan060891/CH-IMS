@@ -108,6 +108,13 @@ table.t tr.click { cursor: pointer; }
 table.t tr.click:hover td { background: var(--brand-soft); }
 table.t td.n, table.t th.n { text-align: right; font-variant-numeric: tabular-nums; }
 table.t tfoot td { font-weight: 600; background: #fafafa; }
+/* financial statements */
+table.t.fin { max-width: 760px; }
+table.t.fin tr.h td { font-weight: 700; color: var(--brand); padding-top: 14px; border-bottom: 1px solid var(--line); }
+table.t.fin tr.s td { font-weight: 600; border-top: 1px solid var(--line); }
+table.t.fin tr.g td { font-weight: 700; background: var(--brand-soft); font-size: 14px; }
+table.t.fin td:first-child { padding-left: 18px; }
+table.t.fin tr.h td:first-child, table.t.fin tr.g td:first-child { padding-left: 10px; }
 table.lines td { padding: 4px 6px; }
 table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .empty { text-align: center; color: var(--muted); padding: 24px; }
@@ -136,6 +143,7 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .b.URGENT, .b.DOWN, .b.PENDING_FM { background: #fee2e2; color: #991b1b; } .b.SKIPPED { background: #ede9fe; color: #5b21b6; }
 .b.INSTALLED { background: #dbeafe; color: #1e40af; } .b.SNAGGING { background: #fef3c7; color: #92400e; } .b.HANDED_OVER { background: #dcfce7; color: #166534; }
 .b.RUNNING { background: #dcfce7; color: #166534; } .b.OPEN { background: #fef3c7; color: #92400e; } .b.PLANNED { background: #dbeafe; color: #1e40af; }
+.b.CERTIFIED { background: #dbeafe; color: #1e40af; } .b.CLEARED { background: #dcfce7; color: #166534; } .b.BOUNCED { background: #fee2e2; color: #991b1b; } .b.REVERSED { background: #ede9fe; color: #5b21b6; }
 
 /* ---------- site app (phone first) ---------- */
 .site { max-width: 640px; margin: 0 auto; }
