@@ -27,6 +27,7 @@ export const DASHBOARDS = {
   hr:         { title: 'HR', roles: ['hr_officer'], sections: ['pending', 'hrKpis', 'docExpiry', 'onLeave'] },
   site:       { title: 'Site', roles: ['site_supervisor'], route: 'site' },
   floor:      { title: 'Floor app', roles: [], route: 'floorapp' },   // phone screen for the shop floor; given to users by the administrator
+  approvals:  { title: 'Approvals inbox', roles: [], route: 'approvals' },   // phone inbox of decisions waiting; can be a user's landing screen
 };
 export const dashboardFor = role => Object.keys(DASHBOARDS).find(k => DASHBOARDS[k].roles.includes(role)) || 'management';
 // dashboards a user may open: as set by the administrator, else all (administrator) or the role's own
@@ -160,8 +161,10 @@ export const Dashboard = {
       this.ed.kpis = this.ed.kpis.filter(c => 'kpi:' + c.id !== s); this.ed.list = this.ed.list.filter(x => x !== s);
     },
     async loadCard(c) {
-      try { this.kv = { ...this.kv, [c.id]: await computeKpi(c) }; }
-      catch (e) { this.kv = { ...this.kv, [c.id]: { err: e.message || String(e) } }; }
+      // await first, then merge: cards load in parallel and must not overwrite each other
+      let v;
+      try { v = await computeKpi(c); } catch (e) { v = { err: e.message || String(e) }; }
+      this.kv = { ...this.kv, [c.id]: v };
     },
     kpiText(c) { const r = this.kv[c.id], m = METRICS[c.metric]; if (!r || r.err) return '—'; return fmtVal(r.v, m?.fmt); },
     kpiSub(c) {

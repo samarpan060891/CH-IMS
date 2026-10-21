@@ -181,6 +181,15 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .site-crew input { width: 56px; }
 
 /* ---------- filter chips (stage board) ---------- */
+/* approvals inbox (phone) */
+.appr-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 6px; }
+.appr-chips .chip { cursor: pointer; flex: none; }
+.appr-h { margin: 12px 0 6px; font-size: 14px; }
+.appr-card { cursor: default; }
+.appr-card.urgent { border-left: 4px solid var(--bad); }
+.appr-title { font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+.appr-amt { font-weight: 700; white-space: nowrap; margin-left: 8px; font-variant-numeric: tabular-nums; }
+.appr-card .site-actions .btn { flex: 1; justify-content: center; }
 /* floor app (phone) */
 .floor-found { background: #fff; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; max-height: 280px; overflow: auto; }
 .floor-hit { padding: 11px 12px; border-bottom: 1px solid #f0f1f3; cursor: pointer; font-size: 14px; }

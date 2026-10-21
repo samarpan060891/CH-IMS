@@ -19,6 +19,7 @@ import { SiteApp } from './site.js';
 import { HR_DOCS, AttendanceSheet } from './hr.js';
 import { FIN_DOCS, Books } from './finance.js';
 import { FloorApp } from './floor.js';
+import { ApprovalsApp, myQueues } from './approve.js';
 
 Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS);
 
@@ -181,7 +182,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -204,6 +205,8 @@ const App = {
       return ks.length > 1 ? { g: 'Dashboards', icon: 'layout-dashboard', items: ks.map(k => ({ to: DASHBOARDS[k].route || 'dashboard/' + k, t: DASHBOARDS[k].title })) } : null;
     },
     fullMenu() { return this.dashMenu ? [this.dashMenu, ...this.menu] : this.menu; },
+    // approvers get a one-tap inbox of everything waiting for their decision
+    hasApprovals() { return !!state.profile && myQueues().length > 0; },
     activeGroup() { return this.fullMenu.find(g => g.items.some(i => !i.sep && this.active(i.to)))?.g || null; },
     view() {
       const [a, b, c] = route.parts;
@@ -222,6 +225,7 @@ const App = {
       // site supervisors land on the phone-friendly site app
       if (a === 'site' || (a === 'dashboard' && !b && homeDashboard() === 'site')) return { comp: 'SiteApp', props: {}, title: 'Site' };
       if (a === 'floorapp' || (a === 'dashboard' && !b && homeDashboard() === 'floor')) return { comp: 'FloorApp', props: {}, title: 'Floor' };
+      if (a === 'approvals' || (a === 'dashboard' && !b && homeDashboard() === 'approvals')) return { comp: 'ApprovalsApp', props: {}, title: 'Approvals' };
       if (a === 'dashboard') return { comp: 'Dashboard', props: { kind: b || null }, title: 'Dashboard' };
       const simple = { replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };
@@ -295,6 +299,7 @@ const App = {
     <nav class="side" :class="{open: sideOpen}">
       <div class="logo"><Logo :size="58" /><div>CitiCore<small>{{ company?.company_name }}</small></div></div>
       <a v-if="!dashMenu" class="home" href="#/dashboard" :class="{on: active('dashboard')}" @click="sideOpen=false"><Icon name="layout-dashboard" />Dashboard</a>
+      <a v-if="hasApprovals" class="home" href="#/approvals" :class="{on: active('approvals')}" @click="sideOpen=false"><Icon name="checkbox" />My approvals</a>
       <div v-for="g in fullMenu" :key="g.g" class="mgrp" :class="{open: openGroup === g.g}">
         <button class="mhead" @click="toggle(g.g)" :aria-expanded="openGroup === g.g">
           <Icon :name="g.icon" /><span>{{ g.g }}</span>

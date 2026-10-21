@@ -41,6 +41,10 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
 - **Physical stock count**: blind count on phone (scan or search), found items, variances → FM-approved stock adjustment.
 - **QR labels & scanning**: A4 sticker sheets (3×8) for lots, items/bins and tools; scan with phone camera or USB scanner from the top bar or while counting.
 - **Excel import**: templates for Items, Vendors and Opening stock (opening stock becomes a draft GRN for Stores to post); rows are validated before import.
+- **My approvals (phone inbox)**: one screen (sidebar → My approvals, or the "Approvals inbox" dashboard) listing everything waiting for the signed-in person's
+  decision, with filter chips and approve / reject on each card — FM: POs, over-budget issues, stock adjustments, scrap notes, QC rejects, offcuts, stock releases,
+  variation orders, snags to verify, scrap disposals, leave; Finance: POs, top-management references, stock releases, disposals, salary advances, payroll;
+  Production In-charge: material requests, offcut keep / scrap, snags; Purchase: top-management references; HR: leave. "Open" goes to the full document.
 - **Notifications**: in-app bell; every approval step notifies the next approver's role and informs the requester of approvals/rejections.
 - **Finance — payables**: vendor invoices (3-way match), payment vouchers (bank, cheque, PDC, cash, LC, advances), debit notes, net payables with aging.
 - **Finance — receivables**: customers master; project billing terms (advance %, advance recovery %, retention %, payment terms); sales invoices: advance invoice, progress claims filled from
