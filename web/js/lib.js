@@ -24,6 +24,7 @@ export const ROLES = {
   shop_floor: 'Shop Floor',
   production_incharge: 'Production In-charge',
   site_supervisor: 'Site Supervisor',
+  hr_officer: 'HR Officer',
   factory_manager: 'Factory Manager',
   finance: 'Finance Manager',
 };
@@ -33,8 +34,8 @@ export function hasRole(...roles) {
   const r = role();
   return !!r && (r === 'admin' || roles.includes(r));
 }
-// Shop floor, production and site see quantities only
-export const canSeeCost = () => !['shop_floor', 'production_incharge', 'site_supervisor'].includes(role());
+// Shop floor, production, site and HR see inventory / project quantities only (salaries are protected separately)
+export const canSeeCost = () => !['shop_floor', 'production_incharge', 'site_supervisor', 'hr_officer'].includes(role());
 
 // ---------- notifications ----------
 let toastId = 0;
@@ -199,6 +200,10 @@ export async function refreshPending() {
   if (hasRole('factory_manager')) p.qc = await count('wo_receipts', q => q.eq('qc_status', 'PENDING_FM'));
   if (hasRole('factory_manager')) p.vo = await count('variation_orders', q => q.eq('status', 'SUBMITTED'));
   if (hasRole('site_supervisor')) p.snag = await count('snags', q => q.eq('status', 'OPEN'));
+  if (hasRole('hr_officer', 'factory_manager')) p.leave = await count('leave_requests', q => q.eq('status', 'PENDING'));
+  if (hasRole('finance')) p.adv = await count('employee_advances', q => q.eq('status', 'DRAFT'));
+  if (hasRole('finance')) p.payroll = await count('payroll_runs', q => q.eq('status', 'SUBMITTED'));
+  if (hasRole('hr_officer')) p.payroll = (p.payroll || 0) + await count('payroll_runs', q => q.eq('status', 'APPROVED'));
   if (hasRole('production_incharge', 'factory_manager')) p.snagVerify = await count('snags', q => q.eq('status', 'FIXED'));
   if (hasRole('site_supervisor') && !hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'POSTED'));
   if (hasRole('factory_manager', 'production_incharge', 'shop_floor')) p.down = await count('wc_downtime', q => q.eq('status', 'OPEN'));

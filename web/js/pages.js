@@ -269,6 +269,21 @@ export const REPORTS = {
     { k: 'delivered_qty', label: 'Delivered', fmt: 'qty' }, { k: 'installed_qty', label: 'Installed', fmt: 'qty' }, { k: 'installed_pct', label: '% installed', n: true },
     { k: 'delivered_value', label: 'Delivered value', fmt: 'money', cost: true, sum: true }, { k: 'earned_value', label: 'Installed value (billable)', fmt: 'money', cost: true, sum: true },
     { k: 'est_cost', label: 'Est. cost', fmt: 'money', cost: true, sum: true }, { k: 'actual_cost', label: 'Actual cost', fmt: 'money', cost: true, sum: true }] },
+  leavebal: { title: 'Leave balances (annual leave, UAE accrual)', src: 'v_leave_balance', order: 'name', roles: ['hr_officer', 'finance', 'factory_manager'], columns: [
+    { k: 'emp_code', label: 'Code' }, { k: 'name', label: 'Employee' }, { k: 'department', label: 'Department' }, { k: 'joining_date', label: 'Joined', fmt: 'date' },
+    { k: 'accrued', label: 'Accrued days', fmt: 'qty' }, { k: 'taken', label: 'Taken', fmt: 'qty' }, { k: 'balance', label: 'Balance', fmt: 'qty' },
+    { k: 'sick_this_year', label: 'Sick days this year', fmt: 'qty' }, { k: 'emp_status', label: 'Status', fmt: 'badge' }] },
+  docexpiry: { title: 'Employee document expiry', src: 'v_document_expiry', order: 'expiry_date', roles: ['hr_officer', 'finance'], columns: [
+    { k: 'emp_code', label: 'Code' }, { k: 'name', label: 'Employee' }, { k: 'department', label: 'Department' }, { k: 'doc_type', label: 'Document', fmt: 'label' },
+    { k: 'doc_no', label: 'Number' }, { k: 'expiry_date', label: 'Expiry', fmt: 'date' }, { k: 'days_left', label: 'Days left', n: true }, { k: 'expiry_status', label: 'Status', fmt: 'badge' }] },
+  gratuity: { title: 'Gratuity & leave provision (end of service to date)', src: 'v_gratuity_provision', order: 'name', roles: ['hr_officer', 'finance'], columns: [
+    { k: 'emp_code', label: 'Code' }, { k: 'name', label: 'Employee' }, { k: 'department', label: 'Department' }, { k: 'joining_date', label: 'Joined', fmt: 'date' },
+    { k: 'basic', label: 'Basic', fmt: 'money' }, { k: 'service_years', label: 'Service (years)', n: true },
+    { k: 'gratuity_provision', label: 'Gratuity provision', fmt: 'money', sum: true }, { k: 'leave_provision', label: 'Leave provision', fmt: 'money', sum: true }] },
+  attmonth: { title: 'Attendance (by day)', src: 'attendance', select: '*, employees(emp_code,name,department), projects(code)', order: 'att_date', roles: ['hr_officer', 'finance', 'factory_manager', 'production_incharge'], columns: [
+    { k: 'att_date', label: 'Date', fmt: 'date' }, { k: r => r.employees?.emp_code, label: 'Code' }, { k: r => r.employees?.name, label: 'Employee' }, { k: r => r.employees?.department, label: 'Department' },
+    { k: 'status', label: 'Status', fmt: 'badge' }, { k: 'normal_hours', label: 'Hours', n: true, sum: true }, { k: 'ot_hours', label: 'OT 125%', n: true, sum: true },
+    { k: 'ot_hours_holiday', label: 'OT 150%', n: true, sum: true }, { k: r => r.projects?.code, label: 'Project' }, { k: 'remarks', label: 'Remarks' }] },
   snags: { title: 'Snag register', src: 'v_snags', order: 'snag_date', columns: [
     { k: 'snag_no', label: 'Snag' }, { k: 'snag_date', label: 'Raised', fmt: 'date' }, { k: 'project_code', label: 'Project' }, { k: 'unit_code', label: 'Unit' },
     { k: 'location_text', label: 'Location' }, { k: 'description', label: 'Description' }, { k: 'category', label: 'Category', fmt: 'label' }, { k: 'severity', label: 'Severity', fmt: 'badge' },
@@ -318,7 +333,7 @@ export const Reports = {
       if (this.rkey === 'ledger' || !this.rep) return;
       this.loading = true;
       await run(async () => {
-        let q = sb.from(this.rep.src).select('*');
+        let q = sb.from(this.rep.src).select(this.rep.select || '*');
         if (this.rep.filter) q = this.rep.filter(q);
         if (this.rep.order) q = q.order(this.rep.order);
         this.rows = must(await q.limit(20000));
@@ -956,6 +971,10 @@ export const Settings = {
         { k: 'dbm_min_red_days', label: 'DBM: min days in RED before raising', type: 'number' },
         { k: 'dbm_min_green_days', label: 'DBM: min days in GREEN before lowering', type: 'number' },
         { k: 'dbm_step_pct', label: 'DBM: adjustment step %', type: 'number' }, { k: 'abc_a_pct', label: 'ABC: A up to cumulative %', type: 'number' }, { k: 'abc_b_pct', label: 'ABC: B up to cumulative %', type: 'number' },
+        { k: 'mol_establishment_id', label: 'WPS: MOHRE establishment ID (13 digits)' }, { k: 'wps_bank_routing', label: 'WPS: employer bank routing code' },
+        { k: 'wps_employer_ref', label: 'WPS: employer reference' },
+        { k: 'ot_rate_normal_pct', label: 'Overtime % (normal)', type: 'number' }, { k: 'ot_rate_holiday_pct', label: 'Overtime % (night / rest day / holiday)', type: 'number' },
+        { k: 'ot_basis', label: 'Overtime based on', type: 'select', options: [{ v: 'BASIC', l: 'Basic salary' }, { v: 'GROSS', l: 'Gross salary' }] },
         { k: 'labour_rate_per_hour', label: 'Production: labour rate AED / man-hour', type: 'number' },
         { k: 'overhead_pct', label: 'Production: overhead % on labour + machine', type: 'number' },
         { k: 'board_waste_pct', label: 'Production: board waste % (cut list)', type: 'number' },

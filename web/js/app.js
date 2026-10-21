@@ -15,8 +15,9 @@ import { Scanner, describeCode } from './scan.js';
 import { PROD_DOCS, StageBoard, QcApprovals } from './production.js';
 import { PROJ_DOCS, Mrp } from './projects.js';
 import { SiteApp } from './site.js';
+import { HR_DOCS, AttendanceSheet } from './hr.js';
 
-Object.assign(DOCS, PROD_DOCS, PROJ_DOCS);
+Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS);
 
 const ALL = null;
 // short menu names for reports (full titles show on the report page)
@@ -24,6 +25,7 @@ const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', res
   expiry: 'Expiring stock', buffer: 'Buffer status', aging: 'Aging', abc: 'ABC analysis', valuation: 'Valuation', projects: 'Project consumption',
   invoices: 'Open invoices', grni: 'Received, not invoiced', tools: 'Tools with workers', calibration: 'Calibration due',
   boqprog: 'BOQ progress & billing', unitprog: 'Unit progress & billing', snags: 'Snag register',
+  leavebal: 'Leave balances', docexpiry: 'Document expiry', gratuity: 'Gratuity provision', attmonth: 'Monthly attendance',
   jobcost: 'Job costing & margin', wcload: 'Work centre load & availability', downtime: 'Downtime analysis', fg: 'Finished goods stock', projprod: 'Project cost & margin' };
 // Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
@@ -78,6 +80,15 @@ const MENU = [
     { to: 'd/dsp', t: 'Deliveries to site', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'site_supervisor'], badge: 'dsp' },
     { sep: 'Progress & billing' },
     ...['boqprog', 'unitprog', 'snags', 'projprod'].map(rep),
+  ] },
+  { g: 'HR', icon: 'users', items: [
+    { to: 'd/emp', t: 'Employees', roles: ['hr_officer', 'finance'] },
+    { to: 'attendance', t: 'Attendance & overtime', roles: ['hr_officer', 'site_supervisor', 'shop_floor', 'production_incharge', 'factory_manager'] },
+    { to: 'd/leave', t: 'Leave requests', roles: ['hr_officer', 'factory_manager', 'production_incharge', 'site_supervisor', 'shop_floor', 'stores', 'finance'], badge: 'leave' },
+    { to: 'd/adv', t: 'Salary advances', roles: ['hr_officer', 'finance'], badge: 'adv' },
+    { to: 'd/payroll', t: 'Payroll & WPS', roles: ['hr_officer', 'finance'], badge: 'payroll' },
+    { sep: 'HR reports' },
+    ...['leavebal', 'docexpiry', 'gratuity', 'attmonth'].map(rep),
   ] },
   { g: 'Finance', icon: 'report-money', items: [
     { to: 'd/inv', t: 'Vendor invoices', roles: ['finance', 'factory_manager'] },
@@ -149,7 +160,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -179,6 +190,7 @@ const App = {
       if (a === 'floor') return { comp: 'StageBoard', props: { woId: b || null }, title: 'Stage board' };
       if (a === 'qc') return { comp: 'QcApprovals', props: {}, title: 'QC approvals' };
       if (a === 'mrp') return { comp: 'Mrp', props: { projectId: b || null }, title: 'Material planning (MRP)' };
+      if (a === 'attendance') return { comp: 'AttendanceSheet', props: {}, title: 'Attendance & overtime' };
       // site supervisors land on the phone-friendly site app
       if (a === 'site' || (a === 'dashboard' && state.profile?.role === 'site_supervisor')) return { comp: 'SiteApp', props: {}, title: 'Site' };
       const simple = { dashboard: ['Dashboard', 'Dashboard'], replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
