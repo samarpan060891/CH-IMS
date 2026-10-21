@@ -6,7 +6,13 @@ import { ask } from './components.js';
 import { makePdf } from './pdf.js';
 
 // shared dynamic option lists for ref fields ({id,label})
-export const opts = reactive({ pos: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [], lots: {} });
+export const opts = reactive({ pos: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [], lots: {}, snags: [] });
+// open snags, so rework material can be issued against them
+async function loadOpenSnags(extraId) {
+  let q = sb.from('snags').select('id,snag_no,project_id,description,status');
+  q = extraId ? q.or(`status.in.(OPEN,FIXED),id.eq.${extraId}`) : q.in('status', ['OPEN', 'FIXED']);
+  opts.snags = must(await q.order('snag_no')).map(s => ({ id: s.id, project_id: s.project_id, label: `${s.snag_no} — ${s.description.slice(0, 50)}` }));
+}
 
 // batches (lots) that may be issued: available at the location, free or reserved for this project; oldest / earliest expiry first
 async function loadLotOpts(ctx) {
@@ -551,15 +557,18 @@ export const issue = {
     { k: r => r.material_requests?.mr_no, label: 'Request' }, { k: 'received_by_name', label: 'Received by' }, { k: 'total_value', label: 'Value', fmt: 'money', cost: true, sum: true },
     { k: 'ack_status', label: 'Receipt', fmt: 'badge' }] },
   defaults: () => ({ issue_date: today(), purpose: 'PROJECT', from_location_id: locId('MS') }),
-  async onNew(ctx, parts) { await loadApprovedMrs(); if (parts[0] === 'mr' && parts[1]) await loadMrIntoIssue(ctx, parts[1]); },
+  async onNew(ctx, parts) { await loadApprovedMrs(); await loadOpenSnags(); if (parts[0] === 'mr' && parts[1]) await loadMrIntoIssue(ctx, parts[1]); },
   async afterLoad(ctx) {
     await loadApprovedMrs(ctx.doc.mr_id);
+    await loadOpenSnags(ctx.doc.snag_id);
     if (ctx.doc.status === 'DRAFT') { await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); }
     ctx.extra.budget = ctx.doc.project_id ? must(await sb.rpc('issue_budget_check', { p_issue: ctx.doc.id })) : null;
   },
   header: [
     { k: 'mr_id', label: 'Against material request', type: 'ref', refOptions: () => opts.mrs, wide: true, onChange: (d, v, ctx) => v && loadMrIntoIssue(ctx, v) },
     ...mrTarget.map(f => ({ ...f, ro: d => !!d.mr_id })),
+    { k: 'snag_id', label: 'Rework for snag (optional)', type: 'ref', show: d => d.purpose === 'PROJECT',
+      refOptions: d => opts.snags.filter(s => s.project_id === d.project_id) },
     { k: 'issue_date', label: 'Issue date', type: 'date', required: true },
     { k: 'from_location_id', label: 'Issue from', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock && r.loc_type !== 'QUARANTINE',
       onChange: async (d, v, ctx) => { ctx.grids.lines.forEach(r => { r.lot_id = null; }); await fillAvail(ctx, 'lines', v); await loadLotOpts(ctx); } },

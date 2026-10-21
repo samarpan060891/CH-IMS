@@ -1,6 +1,7 @@
-# Citi Homes IMS — Raw Material Inventory & Shop-floor Issuance
+# CitiCore — Citi Homes operations platform
 
-Cloud inventory system for **Citi Homes Kitchen and Wooden Furniture Manufacturing LLC** (UAE).
+Cloud system for **Citi Homes Kitchen and Wooden Furniture Manufacturing LLC** (UAE): purchasing, stores & inventory, production,
+projects & site (BOQ, installation, snags, variations), and — being added — HR / payroll and accounting.
 
 **Live app:** https://ch-ims-production.up.railway.app
 
@@ -17,6 +18,7 @@ Cloud inventory system for **Citi Homes Kitchen and Wooden Furniture Manufacturi
 - **Shop floor**: material requests approved by the Production In-charge.
 - **Production**: work centres master (machine / labour rates, add any number); BOM templates for standard products (cut list, hardware, route per unit); production orders for projects or MTS with cut list (Excel/CSV import, template or manual), board yield & waste % → sheets and edge-band metres; release creates the material request; job card PDF with QR; stage board where supervisors log the crew by worker grade (grade × workers × normal + overtime hours, each grade has its own normal and overtime AED/hour rate); machine downtime log (breakdowns, planned maintenance, stoppages) feeding work-centre availability and load; QC rejects go to the Factory Manager for approval (accept / rework / scrap); job costing (material + labour + machine + overhead %); finished goods go to the FG store in batches or a final receipt that absorbs all remaining cost; QC rejects become a rework order (carrying their cost) or a scrap note (cost written off); dispatch notes (full or partial) charge the project; contract value on projects and selling value on orders give margin reports.
 - **Projects**: several projects run together, each with a BOQ of made in-house (→ production orders), bought-out (factory store or direct to site) and service lines (own installation team, subcontractors, hired transport); unit codes with lines attached by unit type or unit codes; billing basis per BOQ item or unit-wise (billable value exported to the accounting system); BOQ Excel import (BOQ + Units sheets); services as non-stock items through PO → work-done certificate → invoice; own-team installation logs (crew by grade incl. overtime, qty per BOQ line / unit); unit snagging / handover; BOQ and unit progress; project cost & margin; material planning (MRP) across all running projects with project-specific requisitions; BOQ baseline lock with numbered variation orders (add / change / omit, Factory Manager approval, contract value updated); Site Supervisor role (site-store receipts and handovers, delivery confirmation, installation logs, unit handover, site material requests); running-projects overview on the dashboard.
+- **Snags & site app**: snag list per unit with phone-camera photos (private storage), site supervisor fixes (rework crew costed), Production In-charge / FM verifies or reopens; no handover with open snags; snag register; phone-first **Site app** (units, log work, snags, deliveries to confirm) that site supervisors land on.
 - **Tool crib & assets**: machines, power/hand/measuring tools, office and labour-accommodation equipment get an asset tag per unit; issue/return to workers, overdue tracking, calibration.
 - **Scrap**: scrap generation and write-off (FM approval), scrap-yard stock, disposal / sale with gate pass (Factory Manager → Finance confirms rates & receipt).
 - **Project vs stock purchasing**: every requisition / PO / GRN line is either for general stock or for a named project. Project lines create stock **reserved** for that project (only its issues can use it; own stock is issued first). Leftovers go back to general stock through an FM-approved **Project stock release**. Buffers and re-order suggestions use free stock and stock POs only.
@@ -39,7 +41,7 @@ Administrator, Purchase, Stores, Shop Floor, Production In-charge, Factory Manag
 ```
 powershell -ExecutionPolicy Bypass -File tools/create-shortcut.ps1
 ```
-Creates a **Citi Homes IMS** icon on the desktop that opens the live app in its own window (Edge app mode, Chrome as fallback).
+Creates a **CitiCore** icon on the desktop that opens the live app in its own window (Edge app mode, Chrome as fallback).
 
 ## Run locally
 ```

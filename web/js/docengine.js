@@ -206,6 +206,8 @@ export const DocEditor = {
       <div v-if="cfg.headerNote" class="small muted" style="margin-top:10px" v-html="headerNote()"></div>
     </div>
 
+    <component v-if="cfg.panel && !isNew" :is="cfg.panel" :ctx="this" :key="'panel-' + doc.id" />
+
     <div class="card" v-for="g in (cfg.grids || [])" :key="g.key" v-show="!g.show || g.show(doc)">
       <div class="hd">
         <h3>{{ g.title }}</h3>

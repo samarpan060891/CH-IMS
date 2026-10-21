@@ -14,6 +14,7 @@ import { Labels } from './labels.js';
 import { Scanner, describeCode } from './scan.js';
 import { PROD_DOCS, StageBoard, QcApprovals } from './production.js';
 import { PROJ_DOCS, Mrp } from './projects.js';
+import { SiteApp } from './site.js';
 
 Object.assign(DOCS, PROD_DOCS, PROJ_DOCS);
 
@@ -22,7 +23,7 @@ const ALL = null;
 const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', reserved: 'Reserved for projects', stockout: 'Stock-outs', overstock: 'Overstock & non-moving',
   expiry: 'Expiring stock', buffer: 'Buffer status', aging: 'Aging', abc: 'ABC analysis', valuation: 'Valuation', projects: 'Project consumption',
   invoices: 'Open invoices', grni: 'Received, not invoiced', tools: 'Tools with workers', calibration: 'Calibration due',
-  boqprog: 'BOQ progress & billing', unitprog: 'Unit progress & billing',
+  boqprog: 'BOQ progress & billing', unitprog: 'Unit progress & billing', snags: 'Snag register',
   jobcost: 'Job costing & margin', wcload: 'Work centre load & availability', downtime: 'Downtime analysis', fg: 'Finished goods stock', projprod: 'Project cost & margin' };
 // Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
@@ -68,13 +69,15 @@ const MENU = [
     ...['jobcost', 'wcload', 'downtime', 'fg'].map(rep),
   ] },
   { g: 'Projects', icon: 'building-community', items: [
+    { to: 'site', t: '📱 Site app', roles: ['site_supervisor', 'production_incharge', 'factory_manager'], badge: 'snag' },
     { to: 'd/proj', t: 'Projects & BOQ', roles: ALL },
+    { to: 'd/snag', t: 'Snag list', roles: ['site_supervisor', 'production_incharge', 'factory_manager', 'finance'], badge: 'snagVerify' },
     { to: 'd/vo', t: 'Variation orders', roles: ['factory_manager', 'production_incharge', 'finance'], badge: 'vo' },
     { to: 'mrp', t: 'Material planning (MRP)', roles: ['purchase', 'stores', 'production_incharge', 'factory_manager'] },
     { to: 'd/ins', t: 'Installation logs', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'finance', 'site_supervisor'] },
     { to: 'd/dsp', t: 'Deliveries to site', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'site_supervisor'], badge: 'dsp' },
     { sep: 'Progress & billing' },
-    ...['boqprog', 'unitprog', 'projprod'].map(rep),
+    ...['boqprog', 'unitprog', 'snags', 'projprod'].map(rep),
   ] },
   { g: 'Finance', icon: 'report-money', items: [
     { to: 'd/inv', t: 'Vendor invoices', roles: ['finance', 'factory_manager'] },
@@ -133,7 +136,7 @@ const Login = {
   components: { Logo },
   template: `<div class="login"><form class="box" @submit.prevent="submit">
     <div style="text-align:center;margin-bottom:10px"><Logo :size="120" /></div>
-    <h1 style="text-align:center">Citi Homes — Inventory</h1>
+    <h1 style="text-align:center">CitiCore</h1>
     <p style="text-align:center">Kitchen & Wooden Furniture Manufacturing LLC</p>
     <div class="grid" style="grid-template-columns:1fr">
       <label class="f">Email<input v-model="email" type="email" required autocomplete="username"></label>
@@ -146,7 +149,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -176,6 +179,8 @@ const App = {
       if (a === 'floor') return { comp: 'StageBoard', props: { woId: b || null }, title: 'Stage board' };
       if (a === 'qc') return { comp: 'QcApprovals', props: {}, title: 'QC approvals' };
       if (a === 'mrp') return { comp: 'Mrp', props: { projectId: b || null }, title: 'Material planning (MRP)' };
+      // site supervisors land on the phone-friendly site app
+      if (a === 'site' || (a === 'dashboard' && state.profile?.role === 'site_supervisor')) return { comp: 'SiteApp', props: {}, title: 'Site' };
       const simple = { dashboard: ['Dashboard', 'Dashboard'], replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };
       return { comp: 'Dashboard', props: {}, title: 'Dashboard' };
@@ -246,7 +251,7 @@ const App = {
   </div></div>
   <div v-else class="shell">
     <nav class="side" :class="{open: sideOpen}">
-      <div class="logo"><Logo :size="58" /><div>Citi Homes IMS<small>{{ company?.company_name }}</small></div></div>
+      <div class="logo"><Logo :size="58" /><div>CitiCore<small>{{ company?.company_name }}</small></div></div>
       <a class="home" href="#/dashboard" :class="{on: active('dashboard')}" @click="sideOpen=false"><Icon name="layout-dashboard" />Dashboard</a>
       <div v-for="g in menu" :key="g.g" class="mgrp" :class="{open: openGroup === g.g}">
         <button class="mhead" @click="toggle(g.g)" :aria-expanded="openGroup === g.g">
@@ -262,7 +267,7 @@ const App = {
           </template>
         </div>
       </div>
-      <div class="foot">Citi Homes IMS · {{ ROLES[state.profile.role] }}</div>
+      <div class="foot">CitiCore · {{ ROLES[state.profile.role] }}</div>
     </nav>
     <div class="main">
       <div class="top">

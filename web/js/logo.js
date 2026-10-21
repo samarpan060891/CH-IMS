@@ -1,4 +1,4 @@
-// Citi Homes IMS logo (approved option B): black circle, CH monogram, "CITI HOMES", IMS badge.
+// CitiCore logo (approved option B): black circle, CH monogram, "CITI HOMES", brown CORE badge.
 // One geometry, three renderers: inline SVG (UI), canvas PNG (PDFs), and the static files in /img.
 
 // CH monogram in a 680 x 340 box: thin open C, H crossbar running from inside the C through both stems
@@ -9,6 +9,8 @@ export const CH = {
           'M 624 5 L 646 5 L 643 170 L 646 335 L 624 335 L 627 170 Z'],
 };
 const BLACK = '#111111', BROWN = '#8a5a2b';
+const BADGE = 'CORE';
+const BADGE_RECT = [60, 164, 80, 26];   // x, y, w, h (centred on x = 100)
 const SERIF = "'Cormorant Garamond', Georgia, 'Times New Roman', serif";
 const SERIF_BOLD = "'Playfair Display', Georgia, 'Times New Roman', serif";
 
@@ -23,15 +25,16 @@ function monogramSvg(x, y, w, color = '#ffffff') {
 // variant 'full' = option B; 'mark' = circle + CH only (tiny sizes, favicon)
 export function logoSvg(size = 64, variant = 'full') {
   if (variant === 'mark') {
-    return `<svg viewBox="0 0 200 200" width="${size}" height="${size}" role="img" aria-label="Citi Homes IMS">
+    return `<svg viewBox="0 0 200 200" width="${size}" height="${size}" role="img" aria-label="CitiCore">
       <circle cx="100" cy="100" r="96" fill="${BLACK}"/>${monogramSvg(26, 63, 148)}</svg>`;
   }
-  return `<svg viewBox="0 0 200 200" width="${size}" height="${size}" role="img" aria-label="Citi Homes IMS">
+  const [bx, by, bw, bh] = BADGE_RECT;
+  return `<svg viewBox="0 0 200 200" width="${size}" height="${size}" role="img" aria-label="CitiCore">
     <circle cx="100" cy="94" r="88" fill="${BLACK}"/>
     ${monogramSvg(44, 46, 112)}
     <text x="100" y="126" text-anchor="middle" font-family="${SERIF}" font-size="15" font-weight="600" letter-spacing="2.5" fill="#ffffff">CITI HOMES</text>
-    <rect x="66" y="164" width="68" height="26" rx="13" fill="${BROWN}" stroke="#ffffff" stroke-width="2"/>
-    <text x="100" y="182" text-anchor="middle" font-family="${SERIF_BOLD}" font-size="14" font-weight="600" letter-spacing="3" fill="#ffffff">IMS</text>
+    <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="13" fill="${BROWN}" stroke="#ffffff" stroke-width="2"/>
+    <text x="101.5" y="182" text-anchor="middle" font-family="${SERIF_BOLD}" font-size="14" font-weight="600" letter-spacing="3" fill="#ffffff">${BADGE}</text>
   </svg>`;
 }
 
@@ -63,11 +66,11 @@ export async function logoPng(px = 400) {
   g.textAlign = 'center'; g.fillStyle = '#ffffff';
   g.font = `600 15px ${SERIF}`; if ('letterSpacing' in g) g.letterSpacing = '2.5px';
   g.fillText('CITI HOMES', 101.25, 126);
-  // IMS badge
-  g.beginPath(); g.roundRect(66, 164, 68, 26, 13); g.fillStyle = BROWN; g.fill();
+  // CORE badge
+  g.beginPath(); g.roundRect(...BADGE_RECT, 13); g.fillStyle = BROWN; g.fill();
   g.lineWidth = 2; g.strokeStyle = '#ffffff'; g.stroke();
   g.fillStyle = '#ffffff'; g.font = `600 14px ${SERIF_BOLD}`; if ('letterSpacing' in g) g.letterSpacing = '3px';
-  g.fillText('IMS', 101.5, 182);
+  g.fillText(BADGE, 101.5, 182);
   pngCache = cv.toDataURL('image/png');
   return pngCache;
 }

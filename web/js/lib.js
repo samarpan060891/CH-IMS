@@ -51,7 +51,7 @@ export function errMsg(e) {
 export async function run(fn, okMsg) {
   try {
     const r = await fn();
-    if (okMsg) toast(okMsg, 'ok');
+    if (okMsg && r !== false) toast(okMsg, 'ok');   // false = the user cancelled a dialog
     return r ?? true;
   } catch (e) {
     console.error(e);
@@ -198,6 +198,8 @@ export async function refreshPending() {
   if (hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'DRAFT'));
   if (hasRole('factory_manager')) p.qc = await count('wo_receipts', q => q.eq('qc_status', 'PENDING_FM'));
   if (hasRole('factory_manager')) p.vo = await count('variation_orders', q => q.eq('status', 'SUBMITTED'));
+  if (hasRole('site_supervisor')) p.snag = await count('snags', q => q.eq('status', 'OPEN'));
+  if (hasRole('production_incharge', 'factory_manager')) p.snagVerify = await count('snags', q => q.eq('status', 'FIXED'));
   if (hasRole('site_supervisor') && !hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'POSTED'));
   if (hasRole('factory_manager', 'production_incharge', 'shop_floor')) p.down = await count('wc_downtime', q => q.eq('status', 'OPEN'));
   state.pending = p;

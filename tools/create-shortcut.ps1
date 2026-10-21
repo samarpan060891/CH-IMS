@@ -1,4 +1,4 @@
-﻿# Creates a "Citi Homes IMS" desktop icon that opens the live app in its own window (Edge app mode).
+﻿# Creates a "CitiCore" desktop icon that opens the live app in its own window (Edge app mode).
 # Run on any staff PC:  powershell -ExecutionPolicy Bypass -File create-shortcut.ps1
 # Developer use:  -WebIcons  writes the PNG app icons for the web manifest (web/img) and exits.
 param([string]$Url = 'https://ch-ims-production.up.railway.app', [switch]$WebIcons)
@@ -10,7 +10,7 @@ New-Item -ItemType Directory -Force $dir | Out-Null
 $oldIcons = @(Get-ChildItem $dir -Filter 'citihomes*.ico' -ErrorAction SilentlyContinue)
 $ico = Join-Path $dir ('citihomes-ims-' + (Get-Date -Format 'yyyyMMddHHmmss') + '.ico')
 
-# --- Citi Homes IMS logo (approved option B), drawn in a 200 x 200 design space ---
+# --- CitiCore logo (approved option B with the CORE badge), drawn in a 200 x 200 design space ---
 # CH monogram geometry is in a 680 x 340 box: thin open C + H whose crossbar starts inside the C.
 function Draw-Monogram($g, [single]$x, [single]$y, [single]$w, [single]$strokeBoost) {
   $s = $w / 680.0
@@ -49,14 +49,14 @@ function New-Logo([int]$size) {
     $g.FillEllipse($black, 4, 4, 192, 192)
     Draw-Monogram $g 24 62 152 ([single]($(if ($size -le 16) { 2.4 } else { 1.9 })))
   } elseif ($size -le 32) {
-    # small: circle + CH + IMS badge
+    # small: circle + CH + CORE badge
     $g.FillEllipse($black, 4, 0, 192, 192)
     Draw-Monogram $g 28 38 144 1.4
     $badge = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $badge.AddArc(52, 150, 44, 44, 90, 180); $badge.AddArc(104, 150, 44, 44, 270, 180); $badge.CloseFigure()
+    $badge.AddArc(40, 150, 44, 44, 90, 180); $badge.AddArc(116, 150, 44, 44, 270, 180); $badge.CloseFigure()
     $g.FillPath($brown, $badge); $g.DrawPath((New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 4), $badge)
-    $f = New-Object System.Drawing.Font $serif, 26, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
-    $g.DrawString('IMS', $f, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 52, 150, 96, 44), $fmt)
+    $f = New-Object System.Drawing.Font $serif, 24, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+    $g.DrawString('CORE', $f, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 40, 150, 120, 44), $fmt)
   } else {
     # full option B logo (desktop sizes 48 and up); strokes a little heavier at 48-64 px
     $boost = if ($size -le 64) { 1.35 } else { 1 }
@@ -65,10 +65,10 @@ function New-Logo([int]$size) {
     $f1 = New-Object System.Drawing.Font $serif, ([single]$(if ($size -le 64) { 16 } else { 14 })), ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
     $g.DrawString($(if ($size -le 64) { 'CITI HOMES' } else { 'C I T I   H O M E S' }), $f1, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 0, 110, 200, 22), $fmt)
     $badge = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $badge.AddArc(66, 164, 26, 26, 90, 180); $badge.AddArc(108, 164, 26, 26, 270, 180); $badge.CloseFigure()
+    $badge.AddArc(60, 164, 26, 26, 90, 180); $badge.AddArc(114, 164, 26, 26, 270, 180); $badge.CloseFigure()
     $g.FillPath($brown, $badge); $g.DrawPath((New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 2), $badge)
     $f2 = New-Object System.Drawing.Font $serif, 13, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
-    $g.DrawString('I M S', $f2, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 66, 164, 68, 26), $fmt)
+    $g.DrawString('C O R E', $f2, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 56, 164, 88, 26), $fmt)
   }
   $g.Dispose()
   return $bmp
@@ -122,13 +122,15 @@ $browser = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "
 if (-not $browser) { throw 'Neither Microsoft Edge nor Google Chrome was found.' }
 
 # --- shortcut on the desktop ---
-$lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Citi Homes IMS.lnk'
+$desk = [Environment]::GetFolderPath('Desktop')
+Remove-Item (Join-Path $desk 'Citi Homes IMS.lnk') -Force -ErrorAction SilentlyContinue   # old name before the CitiCore rename
+$lnk = Join-Path $desk 'CitiCore.lnk'
 $sh = New-Object -ComObject WScript.Shell
 $s = $sh.CreateShortcut($lnk)
 $s.TargetPath = $browser
 $s.Arguments = "--app=$Url"
 $s.IconLocation = "$ico,0"
-$s.Description = 'Citi Homes Inventory Management'
+$s.Description = 'CitiCore — Citi Homes operations'
 $s.WorkingDirectory = Split-Path $browser
 $s.Save()
 # old icon files are removed only after the shortcut points at the new one

@@ -112,7 +112,7 @@ export const Dashboard = {
       <h3>Running projects ({{ projects.length }})</h3>
       <div class="tbl-wrap"><table class="t">
         <thead><tr><th>Project</th><th>Due</th><th style="min-width:160px">Progress (installed value)</th><th class="n">Units handed over</th><th class="n">Snagging</th>
-          <th class="n">Overdue units</th><th class="n">Production orders</th><th class="n">Variations</th><th class="n" v-if="cost">Margin %</th></tr></thead>
+          <th class="n">Overdue units</th><th class="n">Open snags</th><th class="n">Production orders</th><th class="n">Variations</th><th class="n" v-if="cost">Margin %</th></tr></thead>
         <tbody><tr v-for="p in projects" :key="p.project_id" style="cursor:pointer" @click="openProject(p)">
           <td><b>{{ p.code }}</b> {{ p.name }}<div class="small muted">{{ p.customer }}{{ p.boq_locked ? ' · BOQ locked' : '' }}</div></td>
           <td :style="p.days_left < 0 ? 'color:#b91c1c;font-weight:600' : ''">{{ p.end_date ? new Date(p.end_date + 'T00:00:00').toLocaleDateString('en-GB', {day:'2-digit', month:'short', year:'numeric'}) : '—' }}
@@ -121,6 +121,7 @@ export const Dashboard = {
             <div class="small muted">{{ p.progress_pct }}%</div></td>
           <td class="n">{{ p.units_handed }} / {{ p.units_total }}</td><td class="n">{{ p.units_snagging || '' }}</td>
           <td class="n" :style="p.units_overdue ? 'color:#b91c1c;font-weight:600' : ''">{{ p.units_overdue || '' }}</td>
+          <td class="n">{{ p.open_snags || '' }}<span v-if="p.overdue_snags" style="color:#b91c1c"> ({{ p.overdue_snags }} late)</span></td>
           <td class="n">{{ p.wo_open }}<span v-if="p.wo_late" style="color:#b91c1c"> ({{ p.wo_late }} late)</span></td>
           <td class="n">{{ p.vo_pending ? p.vo_pending + ' pending' : '' }}<div class="small muted" v-if="cost && Number(p.vo_approved_value)">{{ money(p.vo_approved_value) }}</div></td>
           <td class="n" v-if="cost" :style="p.margin_pct !== null && Number(p.margin_pct) < 10 ?'color:#b91c1c;font-weight:600' : ''">{{ p.margin_pct ?? '' }}</td>
@@ -268,6 +269,13 @@ export const REPORTS = {
     { k: 'delivered_qty', label: 'Delivered', fmt: 'qty' }, { k: 'installed_qty', label: 'Installed', fmt: 'qty' }, { k: 'installed_pct', label: '% installed', n: true },
     { k: 'delivered_value', label: 'Delivered value', fmt: 'money', cost: true, sum: true }, { k: 'earned_value', label: 'Installed value (billable)', fmt: 'money', cost: true, sum: true },
     { k: 'est_cost', label: 'Est. cost', fmt: 'money', cost: true, sum: true }, { k: 'actual_cost', label: 'Actual cost', fmt: 'money', cost: true, sum: true }] },
+  snags: { title: 'Snag register', src: 'v_snags', order: 'snag_date', columns: [
+    { k: 'snag_no', label: 'Snag' }, { k: 'snag_date', label: 'Raised', fmt: 'date' }, { k: 'project_code', label: 'Project' }, { k: 'unit_code', label: 'Unit' },
+    { k: 'location_text', label: 'Location' }, { k: 'description', label: 'Description' }, { k: 'category', label: 'Category', fmt: 'label' }, { k: 'severity', label: 'Severity', fmt: 'badge' },
+    { k: 'raised_by_party', label: 'Raised by', fmt: 'label' }, { k: 'responsible', label: 'Fix by', fmt: 'label' }, { k: 'vendor_name', label: 'Subcontractor' },
+    { k: 'due_date', label: 'Due', fmt: 'date' }, { k: r => r.is_overdue ? 'OVERDUE' : '', label: '', fmt: 'badge' }, { k: 'status', label: 'Status', fmt: 'badge' },
+    { k: 'age_days', label: 'Age (days)', n: true }, { k: 'reopen_count', label: 'Reopened', n: true }, { k: 'photos', label: 'Photos', n: true },
+    { k: 'labour_cost', label: 'Rework labour', fmt: 'money', cost: true, sum: true }, { k: 'material_cost', label: 'Rework material', fmt: 'money', cost: true, sum: true }] },
   unitprog: { title: 'Unit progress & billing (unit-wise)', src: 'v_unit_progress', order: 'project_code', columns: [
     { k: 'project_code', label: 'Project' }, { k: r => r.billing_basis === 'UNIT' ? 'Unit-wise' : 'BOQ item', label: 'Billing' }, { k: 'unit_code', label: 'Unit' },
     { k: 'unit_type', label: 'Type' }, { k: 'building', label: 'Building' }, { k: 'floor', label: 'Floor' }, { k: 'status', label: 'Status', fmt: 'badge' },

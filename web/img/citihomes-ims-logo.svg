@@ -8,6 +8,6 @@
     <path d="M 624 5 L 646 5 L 643 170 L 646 335 L 624 335 L 627 170 Z" fill="#ffffff"/>
   </svg>
   <text x="100" y="126" text-anchor="middle" font-family="'Cormorant Garamond', Georgia, serif" font-size="15" font-weight="600" letter-spacing="2.5" fill="#ffffff">CITI HOMES</text>
-  <rect x="66" y="164" width="68" height="26" rx="13" fill="#8a5a2b" stroke="#ffffff" stroke-width="2"/>
-  <text x="100" y="182" text-anchor="middle" font-family="'Playfair Display', Georgia, serif" font-size="14" font-weight="600" letter-spacing="3" fill="#ffffff">IMS</text>
+  <rect x="60" y="164" width="80" height="26" rx="13" fill="#8a5a2b" stroke="#ffffff" stroke-width="2"/>
+  <text x="101.5" y="182" text-anchor="middle" font-family="'Playfair Display', Georgia, serif" font-size="14" font-weight="600" letter-spacing="3" fill="#ffffff">CORE</text>
 </svg>

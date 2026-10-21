@@ -3,5 +3,5 @@
 export const CONFIG = {
   supabaseUrl: 'https://vvkkvudwbolhuveuxorc.supabase.co',
   supabaseKey: 'sb_publishable_4-OW8KfQBSDmiHq2_-6FIA_6Rj_RPB5',
-  appName: 'Citi Homes IMS',
+  appName: 'CitiCore',
 };

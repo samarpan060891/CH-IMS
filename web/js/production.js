@@ -404,7 +404,7 @@ async function jobCard(c) {
     doc.setDrawColor(150); doc.line(x + 3, sigY, x + w - 6, sigY); doc.setFontSize(8.5); doc.setTextColor(60); doc.text(s, x + 3, sigY + 4.5); });
   const pages = doc.internal.getNumberOfPages();
   for (let p = 1; p <= pages; p++) { doc.setPage(p); doc.setFontSize(7.5); doc.setTextColor(140);
-    doc.text(`${d.wo_no} · Citi Homes IMS`, 14, H - 8); doc.text(`Page ${p} of ${pages}`, W - 14, H - 8, { align: 'right' }); }
+    doc.text(`${d.wo_no} · CitiCore`, 14, H - 8); doc.text(`Page ${p} of ${pages}`, W - 14, H - 8, { align: 'right' }); }
   doc.save(`Job-card-${d.wo_no.replace(/[\/\\]/g, '-')}.pdf`);
 }
 

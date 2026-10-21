@@ -129,9 +129,27 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .b.A { background: #fee2e2; color: #991b1b; } .b.B { background: #fef3c7; color: #92400e; } .b.C { background: #dcfce7; color: #166534; }
 .b.IN_PROGRESS { background: #dbeafe; color: #1e40af; } .b.COMPLETED, .b.DELIVERED, .b.DONE, .b.PROD_RECEIPT { background: #dcfce7; color: #166534; }
 .b.PENDING_FINANCE { background: #fef3c7; color: #92400e; }
+.b.FIXED { background: #dbeafe; color: #1e40af; } .b.MINOR { background: #eef0f3; } .b.MAJOR { background: #fef3c7; color: #92400e; } .b.CRITICAL { background: #fee2e2; color: #991b1b; }
 .b.URGENT, .b.DOWN, .b.PENDING_FM { background: #fee2e2; color: #991b1b; } .b.SKIPPED { background: #ede9fe; color: #5b21b6; }
 .b.INSTALLED { background: #dbeafe; color: #1e40af; } .b.SNAGGING { background: #fef3c7; color: #92400e; } .b.HANDED_OVER { background: #dcfce7; color: #166534; }
 .b.RUNNING { background: #dcfce7; color: #166534; } .b.OPEN { background: #fef3c7; color: #92400e; } .b.PLANNED { background: #dbeafe; color: #1e40af; }
+
+/* ---------- site app (phone first) ---------- */
+.site { max-width: 640px; margin: 0 auto; }
+.site-top { display: flex; gap: 8px; margin-bottom: 8px; }
+.site-proj { flex: 1; font-size: 15px; padding: 8px; }
+.site-tabs { display: flex; gap: 6px; margin-bottom: 10px; position: sticky; top: 0; z-index: 2; background: var(--bg, #f5f7fb); padding: 4px 0; }
+.site-tabs a { flex: 1; text-align: center; padding: 10px 4px; border-radius: 8px; background: #fff; border: 1px solid var(--line); cursor: pointer; font-weight: 600; font-size: 14px; color: inherit; text-decoration: none; }
+.site-tabs a.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.site-search { width: 100%; padding: 10px; font-size: 15px; margin-bottom: 8px; }
+.site-card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+.site-bar { height: 6px; background: #e5e7eb; border-radius: 3px; margin: 8px 0 4px; }
+.site-bar > div { height: 6px; background: #16a34a; border-radius: 3px; }
+.site-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.site-actions .btn { padding: 9px 12px; }
+.site-crew { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+.site-crew select { flex: 1; min-width: 0; }
+.site-crew input { width: 56px; }
 
 /* ---------- filter chips (stage board) ---------- */
 .chip { display: inline-block; padding: 5px 11px; border-radius: 16px; border: 1px solid var(--line); background: #fff; color: var(--ink, #1f2937); font-size: 12.5px; text-decoration: none; white-space: nowrap; }

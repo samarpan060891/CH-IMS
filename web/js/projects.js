@@ -472,4 +472,145 @@ export const vo = {
   },
 };
 
-export const PROJ_DOCS = { proj, ins, vo };
+// ======================================================================
+// SNAGS (site supervisor raises / fixes with photos, Production In-charge or FM verifies)
+// ======================================================================
+// photos: shrunk to max 1600 px JPEG on the phone, stored in the private "snags" bucket
+async function shrink(file, max = 1600) {
+  try {
+    const img = await createImageBitmap(file);
+    const k = Math.min(1, max / Math.max(img.width, img.height));
+    const cv = document.createElement('canvas'); cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    return await new Promise(res => cv.toBlob(b => res(b), 'image/jpeg', 0.82));
+  } catch { return file; }   // e.g. HEIC the browser cannot decode: upload as is
+}
+export async function addSnagPhotos(snag, kind, files) {
+  let n = 0;
+  for (const f of files) {
+    const blob = await shrink(f);
+    const ext = blob.type === 'image/jpeg' ? 'jpg' : (f.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${snag.project_id}/${snag.id}/${kind.toLowerCase()}-${Date.now()}-${n}.${ext}`;
+    must(await sb.storage.from('snags').upload(path, blob, { contentType: blob.type || f.type, upsert: false }));
+    must(await sb.from('snag_photos').insert({ snag_id: snag.id, kind, path }));
+    n++;
+  }
+  return n;
+}
+export function pickPhotos() {
+  return new Promise(res => {
+    const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.multiple = true; i.setAttribute('capture', 'environment');
+    i.onchange = () => res([...(i.files || [])]); i.click();
+  });
+}
+export const SnagPhotos = {
+  props: { ctx: Object, snag: Object, compact: Boolean },
+  data: () => ({ photos: [], busy: false, big: null }),
+  computed: {
+    s() { return this.snag || this.ctx?.doc; },
+    canAdd() { return ['OPEN', 'FIXED'].includes(this.s?.status) && hasRole('site_supervisor', 'production_incharge', 'factory_manager'); },
+  },
+  async mounted() { await this.load(); },
+  methods: {
+    async load() {
+      const rows = must(await sb.from('snag_photos').select('*').eq('snag_id', this.s.id).order('created_at'));
+      if (rows.length) {
+        const urls = must(await sb.storage.from('snags').createSignedUrls(rows.map(r => r.path), 3600));
+        rows.forEach((r, i) => { r.url = urls[i]?.signedUrl; });
+      }
+      this.photos = rows;
+    },
+    async add(kind) {
+      const files = await pickPhotos(); if (!files.length) return;
+      this.busy = true;
+      const n = await run(() => addSnagPhotos(this.s, kind, files));
+      this.busy = false;
+      if (n) { toast(`${n} photo(s) added`, 'ok'); await this.load(); }
+    },
+  },
+  template: `<div :class="compact ? '' : 'card'">
+    <div class="hd" v-if="!compact"><h3>Photos</h3><span class="spacer"></span>
+      <template v-if="canAdd"><button class="btn sm" :disabled="busy" @click="add('BEFORE')">📷 Snag photo</button>
+        <button class="btn sm" :disabled="busy" @click="add('AFTER')">📷 After fix</button></template></div>
+    <div v-if="!photos.length" class="small muted">No photos yet</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <figure v-for="p in photos" :key="p.id" style="margin:0;width:120px">
+        <img :src="p.url" @click="big = p.url" style="width:120px;height:90px;object-fit:cover;border-radius:6px;cursor:zoom-in;border:1px solid var(--line)">
+        <figcaption class="small muted">{{ p.kind === 'AFTER' ? 'After fix' : 'Snag' }}</figcaption>
+      </figure>
+    </div>
+    <div v-if="big" class="modal-bg" @click="big = null"><img :src="big" style="max-width:94vw;max-height:90vh;margin:auto;display:block;border-radius:8px"></div>
+  </div>`,
+};
+
+const SNAG_CATS = ['FINISH', 'DAMAGE', 'ALIGNMENT', 'MISSING', 'HARDWARE', 'GAP_SEALANT', 'OTHER'];
+export async function snagFixDialog(s) {
+  await loadRef('labour_grades');
+  const grades = (state.refs.labour_grades || []).filter(g => g.is_active);
+  const v = await ask({ title: 'Mark fixed — ' + s.snag_no, message: 'Describe the fix and log the rework crew (optional). Add an "after" photo so the In-charge can verify.',
+    fields: [{ k: 'n', label: 'What was done', type: 'textarea', required: true },
+      { k: 'g', label: 'Crew grade', type: 'select', options: grades.map(g => ({ v: g.id, l: g.name })) },
+      { k: 'w', label: 'Workers', type: 'number', default: 1 }, { k: 'h', label: 'Normal hours each', type: 'number' }, { k: 'o', label: 'Overtime hours each', type: 'number' }],
+    okText: 'Mark fixed' });
+  if (!v) return false;
+  const crew = v.g && (num(v.h) + num(v.o)) > 0 ? [{ grade_id: v.g, workers: num(v.w) || 1, hours: num(v.h), ot_hours: num(v.o) }] : [];
+  await rpc('snag_fix', { p_snag: s.id, p_notes: v.n, p_crew: crew });
+  return true;
+}
+export async function snagVerifyDialog(s, accept) {
+  const v = await ask({ title: (accept ? 'Accept fix — ' : 'Reopen — ') + s.snag_no, fields: [{ k: 'n', label: accept ? 'Remarks (optional)' : 'Why is the fix not accepted?', type: 'textarea', required: !accept }],
+    okText: accept ? 'Close snag' : 'Reopen', danger: !accept });
+  if (!v) return false;
+  await rpc('snag_verify', { p_snag: s.id, p_accept: accept, p_notes: v.n || null });
+  return true;
+}
+export const snag = {
+  key: 'snag', title: 'Snag List', single: 'Snag', table: 'snags', noField: 'snag_no', dateField: 'snag_date',
+  statuses: ['OPEN', 'FIXED', 'CLOSED', 'CANCELLED'], defaultTab: 'OPEN', createRoles: ['site_supervisor', 'production_incharge', 'factory_manager'],
+  editStatuses: ['DRAFT', 'OPEN'], refs: ['projects', 'vendors', 'profiles', 'labour_grades'], panel: SnagPhotos,
+  list: { select: '*, projects(code), project_units(unit_code)', columns: [{ k: r => r.projects?.code, label: 'Project' }, { k: r => r.project_units?.unit_code, label: 'Unit' },
+    { k: 'location_text', label: 'Location' }, { k: 'description', label: 'Snag' }, { k: 'severity', label: 'Severity', fmt: 'badge' }, { k: 'responsible', label: 'By', fmt: 'label' },
+    { k: 'due_date', label: 'Due', fmt: 'date' }, { k: 'reopen_count', label: 'Reopened', n: true }] },
+  defaults: () => ({ snag_date: today(), category: 'FINISH', severity: 'MINOR', raised_by_party: 'INTERNAL', responsible: 'OWN_TEAM' }),
+  async onNew(ctx, parts) {
+    if (parts[0] === 'proj' && parts[1]) ctx.doc.project_id = parts[1];
+    if (parts[2] === 'unit' && parts[3]) ctx.doc.unit_id = parts[3];
+    await loadProjectOpts(ctx.doc.project_id);
+  },
+  async afterLoad(ctx) { await loadProjectOpts(ctx.doc.project_id); },
+  header: [
+    { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT',
+      onChange: (d, v) => { d.unit_id = null; d.boq_line_id = null; return loadProjectOpts(v); } },
+    { k: 'unit_id', label: 'Unit', type: 'ref', refOptions: () => popts.units },
+    { k: 'location_text', label: 'Location in unit (kitchen, master wardrobe …)' },
+    { k: 'boq_line_id', label: 'BOQ line (optional)', type: 'ref', wide: true, refOptions: () => popts.boq },
+    { k: 'description', label: 'Snag description', type: 'textarea', required: true, full: true },
+    { k: 'category', label: 'Category', type: 'select', required: true, options: SNAG_CATS },
+    { k: 'severity', label: 'Severity', type: 'select', required: true, options: ['MINOR', 'MAJOR', 'CRITICAL'] },
+    { k: 'raised_by_party', label: 'Raised by', type: 'select', required: true, options: [{ v: 'INTERNAL', l: 'Our inspection' }, { v: 'CLIENT', l: 'Client' }, { v: 'CONSULTANT', l: 'Consultant' }] },
+    { k: 'responsible', label: 'To be fixed by', type: 'select', required: true, options: [{ v: 'OWN_TEAM', l: 'Own team' }, { v: 'SUBCONTRACTOR', l: 'Subcontractor' }, { v: 'FACTORY', l: 'Factory (replace part)' }] },
+    { k: 'vendor_id', label: 'Subcontractor', type: 'ref', ref: 'vendors', show: d => d.responsible === 'SUBCONTRACTOR' },
+    { k: 'due_date', label: 'Fix by', type: 'date' },
+    { k: 'fix_notes', label: 'Fix', type: 'ro', wide: true, fmt: (v, d) => v ? `${v} — ${refLabel('profiles', d.fixed_by)} · ${dt(d.fixed_at)}` : '', show: d => !!d.fix_notes },
+    { k: 'verify_notes', label: 'Verification', type: 'ro', wide: true, fmt: (v, d) => `${v || 'Accepted'} — ${refLabel('profiles', d.verified_by)} · ${dt(d.verified_at)}`, show: d => !!d.verified_by },
+    { k: 'reopen_count', label: 'Times reopened', type: 'ro', show: d => d.reopen_count > 0 },
+    { k: 'labour_cost', label: 'Rework labour AED', type: 'ro', fmt: v => money(v), cost: true, show: d => num(d.labour_cost) > 0 },
+  ],
+  headerNote: () => 'Save the snag, then add photos. The <b>site supervisor</b> marks it fixed (with an after-photo and the rework crew); the <b>Production In-charge / Factory Manager</b> verifies and closes it — or reopens it. ' +
+    'Material for the fix is issued against the snag. A unit cannot be handed over while it has open snags.',
+  actions: ctx => {
+    const s = ctx.doc.status;
+    return [
+      { label: '🔧 Mark fixed', cls: 'primary', show: s === 'OPEN' && hasRole('site_supervisor', 'production_incharge', 'factory_manager'), done: 'Marked fixed — sent for verification',
+        run: c => snagFixDialog(c.doc) },
+      { label: '✔ Accept & close', cls: 'ok', show: s === 'FIXED' && hasRole('production_incharge', 'factory_manager'), done: 'Snag closed', run: c => snagVerifyDialog(c.doc, true) },
+      { label: '↺ Reopen', cls: 'bad', show: s === 'FIXED' && hasRole('production_incharge', 'factory_manager'), done: 'Snag reopened', run: c => snagVerifyDialog(c.doc, false) },
+      { label: 'Cancel snag', show: ['OPEN', 'FIXED'].includes(s) && hasRole('production_incharge', 'factory_manager'),
+        run: async c => { const v = await ask({ title: 'Cancel snag', fields: [{ k: 'r', label: 'Reason (e.g. duplicate, not our scope)', type: 'textarea', required: true }], okText: 'Cancel snag', danger: true });
+          if (v) return rpc('snag_cancel', { p_snag: c.doc.id, p_reason: v.r }); } },
+      { label: 'Open project', reload: false, run: c => go('d/proj/' + c.doc.project_id) },
+    ];
+  },
+};
+
+export const PROJ_DOCS = { proj, ins, vo, snag };

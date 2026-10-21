@@ -31,7 +31,7 @@ export async function printLabels(labels, skip = 0, filename = 'labels.pdf', pre
     if (l.line1) doc.text(doc.splitTextToSize(l.line1, tw)[0], tx, y + 25);
     if (l.line2) doc.text(doc.splitTextToSize(l.line2, tw)[0], tx, y + 29);
     doc.setFontSize(6); doc.setTextColor(120);
-    doc.text('Citi Homes IMS', tx, y + 33.5);
+    doc.text('CitiCore', tx, y + 33.5);
     pos++;
   }
   if (preview) return doc.output('bloburl');

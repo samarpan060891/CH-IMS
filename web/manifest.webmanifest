@@ -1,7 +1,7 @@
 {
-  "name": "Citi Homes IMS",
-  "short_name": "Citi Homes IMS",
-  "description": "Inventory management for Citi Homes Kitchen and Wooden Furniture Manufacturing LLC",
+  "name": "CitiCore",
+  "short_name": "CitiCore",
+  "description": "CitiCore — operations for Citi Homes Kitchen and Wooden Furniture Manufacturing LLC: purchasing, inventory, production, projects, site, HR and accounting",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
