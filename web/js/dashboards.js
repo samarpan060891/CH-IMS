@@ -24,6 +24,7 @@ export const DASHBOARDS = {
   purchase:   { title: 'Purchase', roles: ['purchase'], sections: ['pending', 'purKpis', 'poLate', 'zoneChart', 'payables'] },
   stores:     { title: 'Stores', roles: ['stores'], sections: ['pending', 'stockKpis', 'expiring', 'stockCharts', 'valuation'] },
   production: { title: 'Production', roles: ['production_incharge', 'shop_floor'], sections: ['pending', 'prodKpis', 'woLate', 'wcLoad', 'projects'] },
+  sales:      { title: 'Sales', roles: ['sales'], sections: ['pending', 'salesKpis', 'soOpen'] },
   hr:         { title: 'HR', roles: ['hr_officer'], sections: ['pending', 'hrKpis', 'docExpiry', 'onLeave'] },
   site:       { title: 'Site', roles: ['site_supervisor'], route: 'site' },
   floor:      { title: 'Floor app', roles: [], route: 'floorapp' },   // phone screen for the shop floor; given to users by the administrator
@@ -51,6 +52,7 @@ export const SECTIONS = {
   purKpis: 'Purchasing figures', poLate: 'Open purchase orders', zoneChart: 'Buffer zones chart',
   stockKpis: 'Stock figures', expiring: 'Lots expiring within 60 days', stockCharts: 'Stock charts (value, aging, zones, status)', valuation: 'Valuation by category',
   prodKpis: 'Production figures', woLate: 'Open production orders', wcLoad: 'Work centre load',
+  salesKpis: 'Sales figures (quotations, orders, margin)', soOpen: 'Open sales orders',
   hrKpis: 'HR figures (headcount, attendance, leave, documents)', docExpiry: 'Employee documents expiring', onLeave: 'Current & upcoming leave',
 };
 // section sizes: width in columns of a 12-column grid (full width on phones); height cap with scrolling
@@ -251,6 +253,9 @@ export const Dashboard = {
           get('pos', sb.from('purchase_orders').select('id,po_no,po_date,delivery_date,status,total_aed,vendors(name),projects(code)').not('status', 'in', '(CLOSED,CANCELLED,RECEIVED,REJECTED)').order('delivery_date', { nullsFirst: false }));
         if (this.has('expiring')) get('expiring', sb.from('v_lot_values').select('item_code,item_name,location_code,lot_no,batch_no,expiry_date,qty_on_hand,uom').not('expiry_date', 'is', null)
           .lte('expiry_date', new Date(Date.now() + 60 * 864e5).toISOString().slice(0, 10)).gt('qty_on_hand', 0).order('expiry_date'));
+        if (this.any('salesKpis', 'soOpen')) get('sos', sb.from('v_sales_orders').select('id,so_no,so_type,title,customer_name,cost_center_code,delivery_date,status,subtotal,delivered_pct,invoiced_value,margin_pct,created_at')
+          .not('status', 'in', '(CLOSED,CANCELLED)').order('delivery_date', { nullsFirst: false }));
+        if (this.has('salesKpis') && hasRole('sales', 'finance', 'factory_manager')) get('qts', sb.from('quotations').select('id,status,subtotal,qt_date').gte('qt_date', today().slice(0, 4) + '-01-01'));
         if (this.any('hrKpis', 'docExpiry')) get('docs', sb.from('v_document_expiry').select('*').lte('days_left', 60).order('days_left'));
         if (this.has('hrKpis')) {
           get('emps', sb.from('employees').select('id,emp_status,is_active').eq('is_active', true));
@@ -470,6 +475,24 @@ export const Dashboard = {
       <DataTable :rows="d.pos || []" :loading="loading" clickable @row="r => go('d/po/' + r.id)" :columns="[{k:'po_no',label:'PO'},{k: r => r.vendors?.name, label:'Vendor'},{k: r => r.projects?.code || 'Stock', label:'For'},
         {k:'delivery_date',label:'Delivery',fmt:'date'},{k: r => r.delivery_date && r.delivery_date < today() && ['RELEASED','PARTIALLY_RECEIVED'].includes(r.status) ? 'OVERDUE' : '', label:'', fmt:'badge'},
         {k:'total_aed',label:'Value AED',fmt:'money',cost:true},{k:'status',label:'Status',fmt:'badge'}]" />
+    </div>
+
+    <!-- sales -->
+    <div class="kpis" data-sec="salesKpis" :draggable="!!ed" :style="o('salesKpis')" v-if="has('salesKpis')">
+      <div class="kpi"><div class="l">Quotations open</div><div class="v">{{ (d.qts || []).filter(q => ['DRAFT','SENT'].includes(q.status)).length }}</div>
+        <div class="s" v-if="cost">{{ aed((d.qts || []).filter(q => ['DRAFT','SENT'].includes(q.status)).reduce((s, q) => s + Number(q.subtotal), 0)) }}</div></div>
+      <div class="kpi ok"><div class="l">Quotes won this year</div><div class="v">{{ (d.qts || []).filter(q => q.status === 'ACCEPTED').length }} / {{ (d.qts || []).filter(q => ['ACCEPTED','LOST'].includes(q.status)).length }}</div><div class="s">won / decided</div></div>
+      <div class="kpi"><div class="l">Open customer orders</div><div class="v">{{ (d.sos || []).filter(s => s.so_type === 'CUSTOMER' && s.status === 'CONFIRMED').length }}</div>
+        <div class="s" v-if="cost">{{ aed((d.sos || []).filter(s => s.so_type === 'CUSTOMER' && s.status === 'CONFIRMED').reduce((a, s) => a + Number(s.subtotal), 0)) }}</div></div>
+      <div class="kpi" :class="{bad: (d.sos || []).some(s => s.status === 'CONFIRMED' && s.delivery_date && s.delivery_date < today() && s.delivered_pct < 100)}"><div class="l">Late orders</div>
+        <div class="v">{{ (d.sos || []).filter(s => s.status === 'CONFIRMED' && s.delivery_date && s.delivery_date < today() && s.delivered_pct < 100).length }}</div><div class="s">past delivery date</div></div>
+      <div class="kpi warn"><div class="l">Internal orders to approve</div><div class="v">{{ (d.sos || []).filter(s => s.status === 'PENDING_FM').length }}</div></div>
+    </div>
+    <div class="card" data-sec="soOpen" :draggable="!!ed" :style="o('soOpen')" v-if="has('soOpen')">
+      <h3>Open sales & internal orders</h3>
+      <DataTable :rows="d.sos || []" :loading="loading" clickable @row="r => go('d/so/' + r.id)" :columns="[{k:'so_no',label:'Order'},{k: r => r.so_type === 'INTERNAL' ? 'Internal · ' + (r.cost_center_code || '') : r.customer_name, label:'Customer'},
+        {k:'title',label:'Title'},{k:'delivery_date',label:'Delivery',fmt:'date'},{k:'delivered_pct',label:'% delivered',n:true},{k:'subtotal',label:'Value AED',fmt:'money',cost:true},
+        {k:'margin_pct',label:'Margin %',n:true,cost:true},{k:'status',label:'Status',fmt:'badge'}]" />
     </div>
 
     <!-- stores -->

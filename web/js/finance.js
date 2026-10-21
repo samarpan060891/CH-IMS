@@ -11,7 +11,8 @@ const isFin = () => hasRole('finance');
 const statusIs = (ctx, ...s) => s.includes(ctx.doc.status);
 const PROGRESS = ['PROGRESS', 'FINAL'];
 const INV_TYPES = [{ v: 'PROGRESS', l: 'Progress claim (interim payment application)' }, { v: 'ADVANCE', l: 'Advance payment invoice' },
-  { v: 'FINAL', l: 'Final account / final claim' }, { v: 'RETENTION_RELEASE', l: 'Retention release' }, { v: 'GENERAL', l: 'General / product sale' }, { v: 'CREDIT_NOTE', l: 'Credit note' }];
+  { v: 'FINAL', l: 'Final account / final claim' }, { v: 'RETENTION_RELEASE', l: 'Retention release' }, { v: 'GENERAL', l: 'General / product sale' }, { v: 'CREDIT_NOTE', l: 'Credit note' },
+  { v: 'SALES', l: 'Sales order invoice (made from the order — advance recovered)' }];
 const yearStart = () => today().slice(0, 4) + '-01-01';
 const custOf = id => refRow('customers', id);
 
@@ -49,7 +50,7 @@ export const si = {
   header: [
     { k: 'inv_type', label: 'Type', type: 'select', required: true, options: INV_TYPES, wide: true, ro: d => !!d.id,
       onChange: d => { if (d.inv_type === 'RETENTION_RELEASE') d.vat_rate = 0; else if (!num(d.vat_rate)) d.vat_rate = 5; } },
-    { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', wide: true, required: false, filter: (r, d) => PROGRESS.concat('ADVANCE', 'RETENTION_RELEASE').includes(d.inv_type) ? r.project_type === 'PROJECT' : true,
+    { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', wide: true, required: false, filter: (r, d) => d.inv_type === 'ADVANCE' ? ['PROJECT', 'SALES'].includes(r.project_type) : PROGRESS.concat('RETENTION_RELEASE').includes(d.inv_type) ? r.project_type === 'PROJECT' : d.inv_type === 'SALES' ? r.project_type === 'SALES' : true,
       onChange: (d, v) => { const p = refRow('projects', v); if (p?.customer_id) d.customer_id = p.customer_id; } },
     { k: 'customer_id', label: 'Customer', type: 'ref', ref: 'customers', required: true, wide: true, onChange: (d, v) => loadCustInvoices(v) },
     { k: 'invoice_date', label: 'Invoice date', type: 'date', required: true },
@@ -66,8 +67,9 @@ export const si = {
     ? 'Save, then <b>Fill from site progress</b>: each BOQ line (or unit, for unit-wise billing) shows the quantity certified on earlier claims and the cumulative quantity done to date. ' +
       'Adjust the cumulative quantities, <b>submit</b> the claim to the client, then record the client\'s <b>payment certificate</b> (the certified quantities may be lower) and post the tax invoice. ' +
       'Advance recovery and retention are deducted at the project\'s % — VAT is charged on the certified value less advance recovery.'
-    : ctx.doc.inv_type === 'ADVANCE' ? 'Save, then <b>Fill</b> to bill the project\'s advance % of the contract value (less advance already billed). The advance is recovered from each progress claim.'
+    : ctx.doc.inv_type === 'ADVANCE' ? 'Save, then <b>Fill</b> to bill the advance % of the project / sales order value (less advance already billed). The advance is recovered from each progress claim or order invoice.'
     : ctx.doc.inv_type === 'RETENTION_RELEASE' ? 'Save, then <b>Fill</b> with the retention still held on this project (VAT was charged on the original claims). Reduce the amount for a partial release.'
+    : ctx.doc.inv_type === 'SALES' ? 'Made from the sales order (Sales → order → Invoice delivered / done): goods delivered, services done and job-work hours not yet invoiced. The order\'s advance is recovered pro rata, and in full on the invoice that completes the order.'
     : 'Enter the lines; choose a revenue account per line or leave blank for the default sales account.',
   grids: [{ key: 'lines', title: 'Lines', table: 'sales_invoice_lines', fk: 'invoice_id', order: 'line_no',
     newRow: ctx => ({ contract_qty: PROGRESS.includes(ctx.doc.inv_type) ? null : 1, prev_qty: 0, cum_qty: 1, rate: 0 }),

@@ -127,7 +127,7 @@ export const MASTERS = {
     afterSave: () => loadRef('vendors', true),
   },
   customers: {
-    title: 'Customers', single: 'Customer', table: 'customers', order: 'name', editRoles: ['finance', 'factory_manager'], refs: ['payment_terms'],
+    title: 'Customers', single: 'Customer', table: 'customers', order: 'name', editRoles: ['sales', 'finance', 'factory_manager'], refs: ['payment_terms'],
     select: '*, payment_terms(name)',
     columns: [{ k: 'code', label: 'Code' }, { k: 'name', label: 'Name' }, { k: 'trn', label: 'TRN' }, { k: 'emirate', label: 'Emirate' }, { k: 'contact_person', label: 'Contact' },
               { k: 'phone', label: 'Phone' }, { k: r => r.payment_terms?.name, label: 'Payment terms' }, { k: 'credit_limit', label: 'Credit limit', fmt: 'money', cost: true }, { k: 'status', label: 'Status', fmt: 'badge' }],
@@ -205,7 +205,7 @@ export const MASTERS = {
   },
   projects: {
     title: 'Projects & MTS Orders', single: 'Project', table: 'projects', order: 'code', editRoles: ['factory_manager', 'production_incharge', 'finance'], refs: ['customers', 'payment_terms'],
-    select: '*, customers(name)',
+    select: '*, customers(name)', filter: q => q.in('project_type', ['PROJECT', 'MTS']),
     columns: [{ k: 'code', label: 'Code' }, { k: 'name', label: 'Name' }, { k: 'project_type', label: 'Type', fmt: 'label' }, { k: r => r.customers?.name || r.customer, label: 'Customer' },
               { k: 'start_date', label: 'Start', fmt: 'date' }, { k: 'end_date', label: 'End', fmt: 'date' }, { k: 'budget_material', label: 'Material budget', fmt: 'money', cost: true },
               { k: 'contract_value', label: 'Contract value', fmt: 'money', cost: true }, { k: 'status', label: 'Status', fmt: 'badge' }],
@@ -294,10 +294,13 @@ export const MASTERS = {
   },
   item_categories: {
     title: 'Item Categories', single: 'Category', table: 'item_categories', order: 'code', editRoles: ['stores', 'purchase'], refs: ['item_classes'],
-    select: '*, item_classes(code,name)',
-    columns: [{ k: r => r.item_classes?.code, label: 'Class' }, { k: 'code', label: 'Code' }, { k: 'name', label: 'Name' }, { k: 'is_active', label: 'Active', fmt: 'bool' }],
+    select: '*, item_classes(code,name), parent:parent_id(code,name)',
+    columns: [{ k: r => r.item_classes?.code, label: 'Class' }, { k: r => r.parent ? r.parent.name : '', label: 'Sub-category of' }, { k: 'code', label: 'Code' }, { k: 'name', label: 'Name' }, { k: 'is_active', label: 'Active', fmt: 'bool' }],
     defaults: () => ({ is_active: true }),
-    sections: [{ title: 'Category', fields: [{ k: 'class_id', label: 'Class', type: 'ref', ref: 'item_classes', required: true }, { k: 'code', label: 'Code', required: true },
+    sections: [{ title: 'Category', fields: [{ k: 'class_id', label: 'Class', type: 'ref', ref: 'item_classes', required: true, onChange: d => { d.parent_id = null; } },
+      // a sub-category narrows a category (e.g. Boards → MDF / Plywood / Chipboard); material requests drill class → category → sub-category → item
+      { k: 'parent_id', label: 'Sub-category of (blank = main category)', type: 'ref', ref: 'item_categories', request: false, filter: (r, d) => r.class_id === d.class_id && !r.parent_id && r.id !== d.id },
+      { k: 'code', label: 'Code', required: true },
       { k: 'name', label: 'Name', required: true, wide: true }, { k: 'is_active', label: 'Active', type: 'check' }] }],
     afterSave: () => loadRef('item_categories', true),
   },
@@ -352,7 +355,9 @@ export const MasterPage = {
       this.loading = true;
       await run(async () => {
         await loadRefs(this.cfg.refs || []);
-        this.rows = must(await sb.from(this.cfg.table).select(this.cfg.select || '*').order(this.cfg.order).limit(10000));
+        let q = sb.from(this.cfg.table).select(this.cfg.select || '*');
+        if (this.cfg.filter) q = this.cfg.filter(q);
+        this.rows = must(await q.order(this.cfg.order).limit(10000));
       });
       this.loading = false;
     },

@@ -108,7 +108,8 @@ export const proj = {
   canEdit: ctx => hasRole('factory_manager', 'production_incharge', 'finance') && ctx.doc.status !== 'CLOSED',
   headerEditable: () => planner(),
   refs: ['items', 'bom_templates', 'profiles', 'customers', 'uoms'], saveKeys: ['customer'],
-  list: { select: '*', columns: [{ k: 'name', label: 'Project' }, { k: 'project_type', label: 'Type', fmt: 'label' }, { k: 'customer', label: 'Customer' },
+  // sales / internal order jobs are opened from their sales order
+  list: { select: '*', filter: q => q.in('project_type', ['PROJECT', 'MTS']), columns: [{ k: 'name', label: 'Project' }, { k: 'project_type', label: 'Type', fmt: 'label' }, { k: 'customer', label: 'Customer' },
     { k: 'end_date', label: 'Due', fmt: 'date' }, { k: r => r.billing_basis === 'UNIT' ? 'Unit-wise' : 'BOQ item', label: 'Billing' },
     { k: 'contract_value', label: 'Contract', fmt: 'money', cost: true, sum: true }] },
   defaults: () => ({ status: 'OPEN', project_type: 'PROJECT', billing_basis: 'BOQ_ITEM' }),

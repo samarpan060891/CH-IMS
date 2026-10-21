@@ -9,10 +9,25 @@ import { qrMatrix, qrText } from './scan.js';
 import { loadXlsx } from './importer.js';
 
 const popts = reactive({ wos: [] });
-const dspProject = reactive({ id: null, units: [] });   // project of the open dispatch note (BOQ line / unit choices)
+const dspProject = reactive({ id: null, units: [], soLines: [] });   // project / sales order of the open dispatch note (BOQ line, unit or order line choices)
 async function setDspProject(id) {
   dspProject.id = id || null;
   dspProject.units = id ? must(await sb.from('project_units').select('id,unit_code').eq('project_id', id).order('unit_code')).map(u => ({ id: u.id, label: u.unit_code })) : [];
+  const so = id && refRow('projects', id)?.sales_order_id;
+  dspProject.soLines = so ? must(await sb.from('v_so_lines').select('id,line_no,description,qty,delivered_qty,item_id,production_order_id').eq('so_id', so).in('line_type', ['MADE', 'STOCK']).order('line_no'))
+    .map(l => ({ id: l.id, label: `${l.line_no}. ${l.description} (${qty(l.delivered_qty)} / ${qty(l.qty)} delivered)`, row: l })) : [];
+}
+// a delivery against a sales order: the order lines still to deliver (d/dsp/new/so/<order id>)
+async function loadSoIntoDispatch(ctx, soId) {
+  const o = must(await sb.from('sales_orders').select('id,so_no,project_id,delivery_address,status').eq('id', soId).single());
+  if (o.status !== 'CONFIRMED') throw new Error(`Sales order ${o.so_no} is ${o.status.toLowerCase()}`);
+  Object.assign(ctx.doc, { project_id: o.project_id, delivery_address: o.delivery_address || ctx.doc.delivery_address });
+  await setDspProject(o.project_id);
+  const todo = dspProject.soLines.map(x => x.row).filter(l => num(l.qty) > num(l.delivered_qty));
+  if (!todo.length) throw new Error('Everything on this order has been delivered');
+  if (!todo.some(l => l.production_order_id)) ctx.doc.from_location_id = locId('MS') || ctx.doc.from_location_id;
+  ctx.grids.lines = todo.map(l => ({ so_line_id: l.id, item_id: l.item_id, production_order_id: l.production_order_id, qty: num(l.qty) - num(l.delivered_qty) }));
+  await fgAvail(ctx);
 }
 
 // ---------- field helpers ----------
@@ -608,12 +623,13 @@ export const dsp = {
       if (p?.project_type === 'PROJECT') ctx.doc.project_id = w.project_id;
       await loadFgForProject(ctx, parts[1]);
     }
+    if (parts[0] === 'so' && parts[1]) return loadSoIntoDispatch(ctx, parts[1]);
     await setDspProject(ctx.doc.project_id);
   },
   async afterLoad(ctx) { await loadWos(); await setDspProject(ctx.doc.project_id); if (ctx.doc.status === 'DRAFT') await fgAvail(ctx); },
   header: [
-    { k: 'project_id', label: 'Project / site', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT',
-      onChange: (d, v) => setDspProject(v) },
+    { k: 'project_id', label: 'Project / sales order', type: 'ref', ref: 'projects', required: true, wide: true, request: false,
+      filter: r => r.status === 'OPEN' && ['PROJECT', 'SALES', 'INTERNAL'].includes(r.project_type), onChange: (d, v) => setDspProject(v) },
     { k: 'from_location_id', label: 'From (FG store, factory store or site store)', type: 'ref', ref: 'locations', required: true,
       filter: r => r.is_active && r.is_stock && !['QUARANTINE', 'SCRAP_YARD'].includes(r.loc_type) && (hasRole('stores', 'factory_manager') || r.loc_type === 'SITE'),
       onChange: (d, v, ctx) => fgAvail(ctx) },
@@ -632,8 +648,11 @@ export const dsp = {
   headerNote: () => 'Posting takes the goods out of the chosen store (oldest first) and <b>charges their full cost to the project</b>. Stock reserved for this project is used first, then free / MTS stock. ' +
     'Use it for finished goods from the FG store, bought-out items from the factory store, and to <b>hand over items delivered direct to the site store</b>.',
   grids: [{ key: 'lines', title: 'Goods dispatched / handed over', table: 'dispatch_lines', fk: 'dispatch_id', order: 'line_no',
-    importers: [{ label: '⬇ Load project stock at this location', run: c => loadFgForProject(c) }],
+    importers: [{ label: '⬇ Load project stock at this location', run: c => loadFgForProject(c) },
+      { label: '⬇ Load sales order lines', show: c => !!dspProject.soLines.length, run: c => loadSoIntoDispatch(c, refRow('projects', c.doc.project_id)?.sales_order_id) }],
     fields: [
+      { k: 'so_line_id', label: 'Sales order line', type: 'ref', width: '220px', refOptions: () => dspProject.soLines, show: () => !!dspProject.soLines.length,
+        onChange: (r, v, ctx) => { const l = dspProject.soLines.find(x => x.id === v)?.row; if (l) { r.item_id = l.item_id; r.production_order_id = l.production_order_id; } return fgAvail(ctx); } },
       { k: 'item_id', label: 'Item / product', type: 'ref', ref: 'items', required: true, width: '240px',
         filter: r => r.is_active && r.item_classes?.tracking === 'LOT' && !['SRV'].includes(r.item_classes?.code) && !r.item_classes?.is_scrap, onChange: (r, v, ctx) => fgAvail(ctx) }, uomF(),
       { k: '_avail', label: 'Available', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.status === 'DRAFT' },

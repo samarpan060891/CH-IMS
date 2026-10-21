@@ -113,6 +113,13 @@ export const REPORTS = {
     { k: 'install_labour', label: 'Own installation', fmt: 'money', sum: true },
     { k: 'scrap_written_off', label: 'Scrap written off', fmt: 'money', sum: true }, { k: 'site_material', label: 'Other material issued', fmt: 'money', sum: true },
     { k: 'total_cost', label: 'Total cost', fmt: 'money', sum: true }, { k: 'margin', label: 'Margin', fmt: 'money', sum: true }, { k: 'margin_pct', label: 'Margin %', n: true }] },
+  somargin: { title: 'Sales orders — delivery, billing & margin', src: 'v_sales_orders', filter: q => q.not('status', 'in', '(DRAFT,CANCELLED)'), order: 'so_no', cost: true,
+    roles: ['sales', 'finance', 'factory_manager'], columns: [
+    { k: 'so_no', label: 'Order' }, { k: r => r.so_type === 'INTERNAL' ? 'Internal · ' + (r.cost_center_code || '') : r.customer_name, label: 'Customer / cost centre' }, { k: 'title', label: 'Title' },
+    { k: 'status', label: 'Status', fmt: 'badge' }, { k: 'delivery_date', label: 'Due', fmt: 'date' }, { k: 'subtotal', label: 'Order value', fmt: 'money', sum: true },
+    { k: 'delivered_pct', label: '% delivered', n: true }, { k: 'advance_invoiced', label: 'Advance billed', fmt: 'money', sum: true }, { k: 'invoiced_value', label: 'Invoiced', fmt: 'money', sum: true },
+    { k: 'est_cost', label: 'Est. cost', fmt: 'money', sum: true }, { k: 'actual_cost', label: 'Actual cost', fmt: 'money', sum: true },
+    { k: 'margin', label: 'Margin', fmt: 'money', sum: true }, { k: 'margin_pct', label: 'Margin %', n: true }] },
   boqprog: { title: 'BOQ progress & billing (per BOQ item)', src: 'v_boq_progress', order: 'project_code', columns: [
     { k: 'project_code', label: 'Project' }, { k: r => r.billing_basis === 'UNIT' ? 'Unit-wise' : 'BOQ item', label: 'Billing' }, { k: 'boq_ref', label: 'Ref' },
     { k: 'description', label: 'Description' }, { k: 'category', label: 'Category', fmt: 'label' }, { k: 'uom', label: 'UoM' }, { k: 'qty', label: 'BOQ qty', fmt: 'qty' },

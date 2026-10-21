@@ -27,6 +27,7 @@ export const ROLES = {
   hr_officer: 'HR Officer',
   factory_manager: 'Factory Manager',
   finance: 'Finance Manager',
+  sales: 'Sales',
 };
 
 export const role = () => state.profile?.role;
@@ -78,20 +79,22 @@ export const REF = {
   },
   vendors: { table: 'vendors', order: 'name', select: 'id,code,name,currency,payment_term_id,vendor_type,status,trn,vat_registered', label: r => `${r.name} (${r.code})` },
   locations: { table: 'locations', order: 'code', select: 'id,code,name,loc_type,is_stock,is_active,parent_id', label: r => `${r.code} — ${r.name}` },
-  projects: { table: 'projects', order: 'code', select: 'id,code,name,project_type,status,customer,customer_id', label: r => `${r.code} — ${r.name}` },
+  projects: { table: 'projects', order: 'code', select: 'id,code,name,project_type,status,customer,customer_id,cost_center_id,sales_order_id', label: r => `${r.code} — ${r.name}` },
   customers: { table: 'customers', order: 'name', select: 'id,code,name,trn,address,emirate,payment_term_id,status', label: r => `${r.name} (${r.code})` },
   gl_accounts: { table: 'gl_accounts', order: 'code', select: 'id,code,name,acc_type,is_group,system_key,is_bank,is_active,parent_id', label: r => `${r.code} — ${r.name}` },
   cost_centers: { table: 'cost_centers', order: 'code', select: 'id,code,name,is_active', label: r => `${r.code} — ${r.name}` },
   employees: { table: 'employees', order: 'name', select: 'id,emp_code,name,department,is_active', label: r => `${r.name} (${r.emp_code})` },
   uoms: { table: 'uoms', order: 'code', select: 'id,code,name,decimals', label: r => r.code },
   item_classes: { table: 'item_classes', order: 'sort_order', select: '*', label: r => `${r.code} — ${r.name}` },
-  item_categories: { table: 'item_categories', order: 'code', select: 'id,code,name,class_id,is_active', label: r => `${r.code} — ${r.name}` },
+  item_categories: { table: 'item_categories', order: 'code', select: 'id,code,name,class_id,parent_id,is_active',
+    label: r => { const p = r.parent_id && refRow('item_categories', r.parent_id); return p ? `${p.name} › ${r.name}` : `${r.code} — ${r.name}`; } },
   payment_terms: { table: 'payment_terms', order: 'code', select: 'id,code,name,credit_days,basis,advance_pct', label: r => r.name },
   profiles: { table: 'profiles', order: 'full_name', select: 'id,full_name,email,role', label: r => r.full_name || r.email },
   work_centers: { table: 'work_centers', order: 'sort_order', select: 'id,code,name,kind,machine_rate_per_hour,labour_rate_per_hour,default_grade_id,sort_order,is_active', label: r => `${r.code} — ${r.name}` },
   boq_lines: { table: 'boq_lines', order: 'line_no', select: 'id,project_id,line_no,boq_ref,description,category,item_id,qty,uom', label: r => `${r.boq_ref || r.line_no} — ${r.description}` },
   labour_grades: { table: 'labour_grades', order: 'sort_order', select: 'id,code,name,rate_per_hour,ot_rate_per_hour,is_active', label: r => r.name },
   bom_templates: { table: 'bom_templates', order: 'name', select: 'id,item_id,name,version,is_active', label: r => `${r.name} (v${r.version})` },
+  sales_orders: { table: 'sales_orders', order: 'so_no', select: 'id,so_no,so_type,title,customer_id,cost_center_id,project_id,status,delivery_date', label: r => `${r.so_no} — ${r.title}` },
   lookups: { table: 'lookup_values', order: 'sort_order', select: 'id,list_key,value,sort_order,is_active', label: r => r.value },
 };
 
@@ -99,7 +102,7 @@ export const REF = {
 // (same roles as master_owner_roles in the database). `to` is where an owner adds it.
 export const MASTER_REQ = {
   vendors: { kind: 'VENDOR', noun: 'supplier', owners: ['purchase', 'finance'], to: 'm/vendors' },
-  customers: { kind: 'CUSTOMER', noun: 'customer', owners: ['finance', 'factory_manager'], to: 'm/customers' },
+  customers: { kind: 'CUSTOMER', noun: 'customer', owners: ['sales', 'finance', 'factory_manager'], to: 'm/customers' },
   gl_accounts: { kind: 'GL_ACCOUNT', noun: 'account / cost head', owners: ['finance'], to: 'm/gl_accounts' },
   cost_centers: { kind: 'COST_CENTER', noun: 'cost centre', owners: ['finance', 'factory_manager'], to: 'm/cost_centers' },
   items: { kind: 'ITEM', noun: 'item', owners: ['stores', 'purchase'], to: 'm/items' },
@@ -122,6 +125,21 @@ export const REQ_KIND = Object.fromEntries([...Object.entries(MASTER_REQ).map(([
 export const reqOwners = (kind, list) => kind === 'LOOKUP' ? LOOKUP_LISTS[list]?.owners || [] : REQ_KIND[kind]?.owners || [];
 export const reqRoute = kind => { const t = REQ_KIND[kind]?.to; return typeof t === 'function' ? t() : t; };
 export const reqNoun =(kind, list) => kind === 'LOOKUP' ? LOOKUP_LISTS[list]?.noun || 'list value' : REQ_KIND[kind]?.noun || kind;
+
+// Usable stock by item for a material request: free stock, stock reserved for this project / order, and stock reserved for
+// other projects (shown, not usable). Offcuts, quarantine and scrap-yard stock are left out.
+export async function stockSplit(itemIds, projectId = null) {
+  const out = {};
+  if (!itemIds.length) return out;
+  const rows = must(await sb.from('v_lot_values').select('item_id,qty_on_hand,lot_status,loc_type,project_id,is_offcut').in('item_id', itemIds).gt('qty_on_hand', 0));
+  rows.forEach(r => {
+    if (r.lot_status !== 'AVAILABLE' || ['QUARANTINE', 'SCRAP_YARD'].includes(r.loc_type) || r.is_offcut) return;
+    const o = out[r.item_id] ||= { free: 0, mine: 0, reserved: 0 };
+    const q = Number(r.qty_on_hand);
+    if (!r.project_id) o.free += q; else if (r.project_id === projectId) o.mine += q; else o.reserved += q;
+  });
+  return out;
+}
 
 export async function loadRef(name, force = false) {
   if (state.refs[name] && !force) return state.refs[name];
@@ -249,6 +267,8 @@ export async function refreshPending() {
   if (hasRole('production_incharge', 'factory_manager')) p.snagVerify = await count('snags', q => q.eq('status', 'FIXED'));
   if (hasRole('site_supervisor') && !hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'POSTED'));
   if (hasRole('factory_manager', 'production_incharge', 'shop_floor')) p.down = await count('wc_downtime', q => q.eq('status', 'OPEN'));
+  // internal orders waiting for the Factory Manager
+  if (hasRole('factory_manager')) p.so = await count('sales_orders', q => q.eq('status', 'PENDING_FM'));
   // requests for new suppliers, accounts, list values… that this user's role keeps (they only see those, plus their own)
   if (r !== 'shop_floor' && r !== 'site_supervisor') p.mdr = await count('master_requests', q => q.eq('status', 'PENDING').neq('requested_by', state.profile.id));
   state.pending = p;

@@ -1,7 +1,7 @@
 // Document configurations: requisitions, POs, GRNs, requests, issues, returns, transfers,
 // adjustments, scrap, disposals, purchase returns, vendor invoices, debit notes, payments.
 import { reactive } from 'vue';
-import { sb, state, must, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, toast } from './lib.js';
+import { sb, state, must, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, toast, stockSplit } from './lib.js';
 import { ask, namePick, CURRENCIES } from './components.js';
 import { makePdf } from './pdf.js';
 
@@ -447,13 +447,49 @@ export const grn = {
 // ======================================================================
 // MATERIAL REQUEST (floor -> store)
 // ======================================================================
+// what the material is for: a customer project, a sales order, an internal order (mock-up / internal use, charged to its cost centre)
+// or a make-to-stock order. Plain cost-centre requests remain only on older documents.
+const PURPOSES = [{ v: 'PROJECT', l: 'Customer project' }, { v: 'SALES', l: 'Sales order' }, { v: 'INTERNAL', l: 'Internal order (mock-up / internal use)' }, { v: 'MTS', l: 'Make to stock' }];
+const JOB_TYPE = { PROJECT: 'PROJECT', SALES: 'SALES', INTERNAL: 'INTERNAL', MTS: 'MTS' };
+export const purposeOf = p => ({ MTS: 'MTS', SALES: 'SALES', INTERNAL: 'INTERNAL' }[p?.project_type] || 'PROJECT');
 const mrTarget = [
-  { k: 'purpose', label: 'Purpose', type: 'select', required: true, options: [{ v: 'PROJECT', l: 'Project' }, { v: 'MTS', l: 'Make to stock' }, { v: 'COST_CENTER', l: 'Cost centre (maintenance, camp …)' }],
+  { k: 'purpose', label: 'Material for', type: 'select', required: true, options: d => d.purpose === 'COST_CENTER' ? [...PURPOSES, { v: 'COST_CENTER', l: 'Cost centre (older requests)' }] : PURPOSES,
     onChange: d => { d.project_id = null; d.cost_center_id = null; } },
-  { k: 'project_id', label: 'Project / MTS order', type: 'ref', ref: 'projects', required: true, show: d => d.purpose !== 'COST_CENTER',
-    filter: (r, d) => r.status === 'OPEN' && r.project_type === (d.purpose === 'MTS' ? 'MTS' : 'PROJECT') },
-  { k: 'cost_center_id', label: 'Cost centre', type: 'ref', ref: 'cost_centers', required: true, show: d => d.purpose === 'COST_CENTER' },
+  { k: 'project_id', label: 'Project / order', type: 'ref', ref: 'projects', required: true, wide: true, request: false, show: d => d.purpose !== 'COST_CENTER',
+    filter: (r, d) => r.status === 'OPEN' && r.project_type === JOB_TYPE[d.purpose],
+    onChange: async (d, v, ctx) => { d.cost_center_id = d.purpose === 'INTERNAL' ? refRow('projects', v)?.cost_center_id || null : null; if (ctx?.grids?.lines) await fillSplit(ctx); } },
+  { k: 'cost_center_id', label: 'Cost centre (charged)', type: 'ref', ref: 'cost_centers', required: true, show: d => ['COST_CENTER', 'INTERNAL'].includes(d.purpose), ro: d => d.purpose === 'INTERNAL' },
 ];
+// item browsing on a request: class → category → sub-category narrows the item drop-down
+export const mrBrowse = reactive({ cls: null, cat: null, sub: null });
+const catOk = (it, b) => {
+  if (b.sub) return it.category_id === b.sub;
+  if (b.cat) return it.category_id === b.cat || refRow('item_categories', it.category_id)?.parent_id === b.cat;
+  return true;
+};
+const browseOk = r => (!mrBrowse.cls || r.class_id === mrBrowse.cls) && catOk(r, mrBrowse);
+const browseFields = [
+  { k: '_cls', label: '🔎 Browse — class', type: 'ref', ref: 'item_classes', virtual: true, request: false, show: d => ['DRAFT', 'REJECTED'].includes(d.status || 'DRAFT'),
+    filter: r => r.is_active !== false && !r.is_scrap && r.code !== 'SRV' && r.tracking === 'LOT', onChange: (d, v) => { d._cat = null; d._sub = null; Object.assign(mrBrowse, { cls: v, cat: null, sub: null }); } },
+  { k: '_cat', label: 'Category', type: 'ref', ref: 'item_categories', virtual: true, request: false, show: d => ['DRAFT', 'REJECTED'].includes(d.status || 'DRAFT'),
+    filter: (r, d) => r.is_active && !r.parent_id && (!d._cls || r.class_id === d._cls),
+    onChange: (d, v) => { d._sub = null; const c = refRow('item_categories', v); if (c) { d._cls = c.class_id; mrBrowse.cls = c.class_id; } Object.assign(mrBrowse, { cat: v, sub: null }); } },
+  { k: '_sub', label: 'Sub-category', type: 'ref', ref: 'item_categories', virtual: true, request: false,
+    show: d => !!d._cat && (state.refs.item_categories || []).some(c => c.parent_id === d._cat), filter: (r, d) => r.is_active && r.parent_id === d._cat,
+    onChange: (d, v) => { mrBrowse.sub = v; } },
+];
+// stock on a request line: free, already reserved for this project / order, and reserved for others (not usable)
+async function fillSplit(ctx) {
+  const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
+  const m = await stockSplit(ids, ctx.doc.project_id || null);
+  const own = ['SALES', 'INTERNAL'].includes(ctx.doc.purpose) ? 'for this order' : 'for this project';
+  ctx.grids.lines.forEach(r => {
+    const s = m[r.item_id] || { free: 0, mine: 0, reserved: 0 };
+    r._split = r.item_id ? [`${qty(s.free)} free`, s.mine ? `${qty(s.mine)} ${own}` : '', s.reserved ? `${qty(s.reserved)} reserved for projects` : ''].filter(Boolean).join(' · ') : '';
+    r._avail = s.free + s.mine;
+  });
+}
+const splitF = { k: '_split', label: 'In store (usable · reserved)', type: 'ro', virtual: true, width: '220px' };
 // specific boards / offcut pieces that can be named on a request: available, not in quarantine / scrap, free or reserved for this project
 async function loadMrLots(ctx) {
   const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
@@ -497,7 +533,7 @@ async function pickOffcuts(ctx) {
   if (!v) return;
   const lots = must(await sb.from('stock_lots').select('id,item_id,qty_on_hand').in('id', cands.filter((c, i) => v['c' + i]).map(c => c.lot_id)));
   lots.forEach(l => ctx.grids.lines.push({ item_id: l.item_id, lot_id: l.id, requested_qty: num(l.qty_on_hand), remarks: 'Offcut' }));
-  await loadMrLots(ctx); await fillAvail(ctx, 'lines');
+  await loadMrLots(ctx); await fillSplit(ctx);
   ctx.dirty = true;
 }
 export const mr = {
@@ -507,13 +543,20 @@ export const mr = {
   canEdit: ctx => (['DRAFT', 'REJECTED'].includes(ctx.doc.status) && hasRole('shop_floor', 'production_incharge', 'stores', 'site_supervisor')) ||
                   (ctx.doc.status === 'PENDING_APPROVAL' && hasRole('production_incharge')),
   headerEditable: ctx => ['DRAFT', 'REJECTED'].includes(ctx.doc.status),
-  refs: ['items', 'projects', 'cost_centers', 'profiles'],
+  refs: ['items', 'projects', 'cost_centers', 'profiles', 'item_classes', 'item_categories'],
   list: { select: '*, projects(code,name), cost_centers(code), profiles:requested_by(full_name)', columns: [
     { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : r.cost_centers?.code, label: 'Project / Cost centre' },
     { k: 'priority', label: 'Priority', fmt: 'badge' }, { k: 'required_date', label: 'Required', fmt: 'date' }, { k: r => r.profiles?.full_name, label: 'Requested by' }] },
   defaults: () => ({ mr_date: today(), purpose: 'PROJECT', priority: 'NORMAL' }),
+  // from a sales / internal order or a project: d/mr/new/so/<job id>
+  onNew(ctx, parts) {
+    Object.assign(mrBrowse, { cls: null, cat: null, sub: null });
+    const p = parts[0] === 'so' && refRow('projects', parts[1]);
+    if (p) Object.assign(ctx.doc, { purpose: purposeOf(p), project_id: p.id, cost_center_id: p.project_type === 'INTERNAL' ? p.cost_center_id : null });
+  },
   async afterLoad(ctx) {
-    await fillAvail(ctx, 'lines');
+    Object.assign(mrBrowse, { cls: null, cat: null, sub: null });
+    await fillSplit(ctx);
     await loadMrLots(ctx);
     if (['APPROVED', 'PARTIALLY_ISSUED'].includes(ctx.doc.status)) {
       const sh = must(await sb.rpc('mr_shortage', { p_mr: ctx.doc.id }));
@@ -530,6 +573,7 @@ export const mr = {
   header: [
     ...mrTarget,
     { k: 'mr_date', label: 'Request date', type: 'date', required: true },
+    ...browseFields,
     { k: 'required_date', label: 'Required by', type: 'date' },
     { k: 'priority', label: 'Priority', type: 'select', required: true, options: ['NORMAL', 'URGENT'] },
     { k: 'requested_by', label: 'Requested by', type: 'ro', fmt: v => refLabel('profiles', v), show: d => !!d.id },
@@ -543,7 +587,7 @@ export const mr = {
     key: 'lines', title: 'Materials requested', table: 'mr_lines', fk: 'mr_id', order: 'line_no',
     importers: [{ label: '✂ Request offcuts', run: ctx => pickOffcuts(ctx) }],
     fields: [
-      itemF({ filter: isLotItem, lockSaved: false, onChange: async (r, v, ctx) => { r.lot_id = null; await fillAvail(ctx, 'lines'); await loadMrLots(ctx); } }), uomF, availF,
+      itemF({ filter: r => isLotItem(r) && browseOk(r), lockSaved: false, onChange: async (r, v, ctx) => { r.lot_id = null; await fillSplit(ctx); await loadMrLots(ctx); } }), uomF, splitF,
       { k: 'lot_id', label: 'Board / offcut (optional)', type: 'ref', width: '270px', refOptions: r => opts.mrLots?.[r.item_id] || [],
         onChange: (r, v) => { const l = (opts.mrLots?.[r.item_id] || []).find(x => x.id === v); if (l?.offcut) { r.requested_qty = l.qty; if (r.approved_qty != null) r.approved_qty = l.qty; } } },
       { k: 'requested_qty', label: 'Requested', type: 'number', required: true, ro: r => !!(opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.offcut },
@@ -628,7 +672,7 @@ export const issue = {
   },
   header: [
     { k: 'mr_id', label: 'Against material request', type: 'ref', refOptions: () => opts.mrs, wide: true, onChange: (d, v, ctx) => v && loadMrIntoIssue(ctx, v) },
-    ...mrTarget.map(f => ({ ...f, ro: d => !!d.mr_id })),
+    ...mrTarget.map(f => ({ ...f, ro: d => !!d.mr_id || !!f.ro?.(d) })),
     { k: 'snag_id', label: 'Rework for snag (optional)', type: 'ref', show: d => d.purpose === 'PROJECT',
       refOptions: d => opts.snags.filter(s => s.project_id === d.project_id) },
     { k: 'issue_date', label: 'Issue date', type: 'date', required: true },

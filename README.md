@@ -80,6 +80,13 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   production receipts / deliveries, production labour + machine + overhead absorbed into WIP, production scrap, service certificates, site installation & snag labour, supplier invoices, debit notes,
   payments and returned cheques, scrap sales, salary advances, payroll accrual and payment, sales invoices and receipts; manual journals with reversal; month end (depreciation by asset class useful life,
   gratuity & leave-salary provision true-up); period close / reopen; trial balance, P&L, balance sheet, ledgers with bank reconciliation ticks, FTA VAT 201 return.
+- **Sales**: quotations (revisions, PDF, won / lost with reason) → sales order on acceptance. Order lines are made-in-house products (a draft production order
+  is created on confirmation), stock / trading items, services, or job work (machine hours sold on a work centre, logged and costed at its rates + overhead).
+  Customer orders: advance invoice, delivery notes against the order lines, tax invoices for what is delivered / done (advance recovered pro rata, the rest on the last
+  invoice), order delivery, billing & margin report, Sales dashboard and a Sales role. **Internal orders** (mock-ups, internal use) are approved by the Factory Manager
+  and charged to a cost centre. Each confirmed order collects its cost on a job with the order number.
+- **Material requests** are raised for a customer project, a sales order, an internal order, a production order or make-to-stock. Items are found by class →
+  category → sub-category (or search / scan), each showing stock free, already reserved for this project / order, and reserved for other projects (not usable).
 - **Master data — no typed-in parameters**: suppliers, customers, accounts / cost heads, cost centres, items, units of measure, projects, employees and work centres are always
   picked from their masters; departments, designations, nationalities, accommodation, banks, brands, unit types and rooms / areas from **Drop-down lists** (Masters), kept by
   HR, Finance, Stores / Purchase or the Factory Manager. Expense payees are suppliers, scrap buyers are customers, drivers / team leaders / "returned by" are employees (or a
@@ -110,7 +117,7 @@ the previous period), an optional project and a goal (card turns green / red). C
 Per item class: Raw materials **FIFO**; consumables, packing, spares, scrap **weighted average**; machines/tools/equipment **fixed assets at landed cost**. An item may override FIFO/WAVG until it has transactions.
 
 ## Roles
-Administrator, Purchase, Stores, Shop Floor, Production In-charge, Site Supervisor, HR Officer, Factory Manager, Finance Manager. Shop Floor, Production In-charge, Site Supervisor and HR Officer do not see costs.
+Administrator, Purchase, Stores, Shop Floor, Production In-charge, Site Supervisor, HR Officer, Factory Manager, Finance Manager, Sales. Shop Floor, Production In-charge, Site Supervisor and HR Officer do not see costs.
 Finance posts to the ledger; the Factory Manager can read the books and prepare claims.
 
 ## Desktop icon (any staff PC)

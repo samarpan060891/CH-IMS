@@ -1,6 +1,6 @@
 // Floor app: phone-first screen for the shop floor — raise a material request (search or scan items, name boards /
 // offcuts), follow my requests, approve them (Production In-charge) and confirm material received. Same server rules as the full screens.
-import { sb, state, must, run, rpc, hasRole, today, num, qty, dt, label, loadRefs, refRow, toast, go } from './lib.js';
+import { sb, state, must, run, rpc, hasRole, today, num, qty, dt, label, loadRefs, refRow, toast, go, stockSplit } from './lib.js';
 import { ask, confirmBox, Badge, RefSelect, namePick } from './components.js';
 const BY_PICK = namePick('employees');
 // the signed-in user's employee name when it is in the employee master
@@ -11,6 +11,10 @@ const KEY = 'cc.floor.for';
 const OPEN_MR = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PARTIALLY_ISSUED', 'REJECTED'];
 const isLotItem = r => r.is_active && r.item_classes?.tracking === 'LOT' && !r.item_classes?.is_scrap && r.item_classes?.code !== 'SRV';
 const blank = () => ({ target: '', required_date: '', urgent: false, remarks: '', lines: [] });
+// what a request can be for (customer projects, sales orders, internal orders, production orders, make-to-stock)
+const KINDS = [{ k: 'PROJECT', t: '🏗 Project' }, { k: 'SALES', t: '🧾 Sales order' }, { k: 'INTERNAL', t: '🔧 Internal order' }, { k: 'WO', t: '🛠 Production order' }, { k: 'MTS', t: '📦 Make to stock' }];
+const PURPOSE = { MTS: 'MTS', SALES: 'SALES', INTERNAL: 'INTERNAL' };
+const splitText = (s, own) => s ? [`${qty(s.free)} free`, s.mine ? `${qty(s.mine)} ${own}` : '', s.reserved ? `${qty(s.reserved)} reserved for projects` : ''].filter(Boolean).join(' · ') : '';
 // offcut share of a full sheet (L × W) or length (L); the server recomputes on save
 function offcutQty(item, l, w, pcs) {
   if (!item || !num(item.length_mm) || !num(l)) return 0;
@@ -21,7 +25,8 @@ const sizeText = r => `${qty(r.offcut_length_mm)}${r.offcut_width_mm ? ' × ' + 
 
 export const FloorApp = {
   components: { Badge, Scanner, RefSelect },
-  data: () => ({ tab: 'new', loading: false, busy: false, wos: [], projects: [], ccs: [], f: blank(), q: '', avail: {}, scanning: false,
+  data: () => ({ tab: 'new', loading: false, busy: false, wos: [], projects: [], kind: 'PROJECT', f: blank(), q: '', split: {}, scanning: false,
+                 bCls: null, bCat: null, bSub: null,
                  mine: [], pending: [], receive: [], openId: null, fits: [],
                  issues: [], iq: '', rt: null, myReturns: [], ocPI: [], ocFM: [] }),
   computed: {
@@ -35,33 +40,49 @@ export const FloorApp = {
       return this.issues.filter(i => !q || `${i.issue_no} ${i.projects?.code || ''} ${i.cost_centers?.code || ''} ${i.material_requests?.mr_no || ''}`.toLowerCase().includes(q));
     },
     items() { return (state.refs.items || []).filter(isLotItem); },
+    // browse: class → category → sub-category, then the items (search narrows further)
+    classes() { return (state.refs.item_classes || []).filter(c => c.tracking === 'LOT' && !c.is_scrap && c.code !== 'SRV' && c.is_active !== false); },
+    cats() { return (state.refs.item_categories || []).filter(c => c.is_active && !c.parent_id && c.class_id === this.bCls); },
+    subs() { return (state.refs.item_categories || []).filter(c => c.is_active && c.parent_id && c.parent_id === this.bCat); },
     found() {
-      const q = this.q.trim().toLowerCase(); if (q.length < 2) return [];
-      return this.items.filter(i => `${i.code} ${i.name}`.toLowerCase().includes(q)).slice(0, 25);
+      const q = this.q.trim().toLowerCase();
+      if (q.length < 2 && !this.bCls) return [];
+      const catOf = id => refRow('item_categories', id);
+      return this.items.filter(i => (!this.bCls || i.class_id === this.bCls)
+          && (!this.bSub ? (!this.bCat || i.category_id === this.bCat || catOf(i.category_id)?.parent_id === this.bCat) : i.category_id === this.bSub)
+          && (q.length < 2 || `${i.code} ${i.name}`.toLowerCase().includes(q))).slice(0, 40);
     },
-    // where the material goes: a production order (its project), a project, an MTS order or a cost centre
+    KINDS() { return KINDS.filter(k => k.k !== 'MTS' || this.projects.some(p => p.project_type === 'MTS')); },
+    // the orders of the chosen kind
     targets() {
-      return [...this.wos.map(w => ({ v: 'wo:' + w.id, l: `🛠 ${w.wo_no} — ${w.description || ''}${w.projects ? ' · ' + w.projects.code : ''}` })),
-              ...this.projects.map(p => ({ v: 'pr:' + p.id, l: `${p.project_type === 'MTS' ? '📦' : '🏗'} ${p.code} — ${p.name}` })),
-              ...this.ccs.map(c => ({ v: 'cc:' + c.id, l: `🔧 ${c.code} — ${c.name}` }))];
+      if (this.kind === 'WO') return this.wos.map(w => ({ v: 'wo:' + w.id, l: `${w.wo_no} — ${w.description || ''}${w.projects ? ' · ' + w.projects.code : ''}` }));
+      return this.projects.filter(p => p.project_type === this.kind).map(p => ({ v: 'pr:' + p.id, l: `${p.code} — ${p.name}` }));
     },
     wo() { return this.f.target.startsWith('wo:') ? this.wos.find(w => w.id === this.f.target.slice(3)) : null; },
+    // the project / order the stock split is for, and how to word "reserved for it"
+    job() { return this.wo ? this.projects.find(p => p.id === this.wo.project_id) || null : this.f.target.startsWith('pr:') ? this.projects.find(p => p.id === this.f.target.slice(3)) : null; },
+    ownWord() { return ['SALES', 'INTERNAL'].includes(this.job?.project_type) ? 'for this order' : 'for this project'; },
     toReceive() { return this.receive.length; },
   },
   watch: {
-    'f.target'(v) { try { localStorage.setItem(KEY, v); } catch { /* storage unavailable */ } this.loadFits(); },
+    'f.target'(v) { try { localStorage.setItem(KEY, v); } catch { /* storage unavailable */ } this.loadFits(); this.split = {}; this.loadSplit(); },
+    kind() { if (!this.targets.some(t => t.v === this.f.target)) this.f.target = ''; },
+    found() { this.loadSplit(); },
+    bCls() { this.bCat = null; this.bSub = null; },
+    bCat() { this.bSub = null; },
     tab(v) { if (v === 'ret' && !this.issues.length) run(() => this.loadIssues()); },
   },
   async mounted() {
     await run(async () => {
-      await loadRefs(['items', 'locations', 'employees']);
-      const [w, p, c] = await Promise.all([
+      await loadRefs(['items', 'locations', 'employees', 'item_classes', 'item_categories']);
+      const [w, p] = await Promise.all([
         sb.from('production_orders').select('id,wo_no,description,project_id,status,projects(code,project_type)').in('status', ['RELEASED', 'IN_PROGRESS']).order('wo_no'),
-        sb.from('projects').select('id,code,name,project_type').eq('status', 'OPEN').order('code'),
-        sb.from('cost_centers').select('id,code,name').eq('is_active', true).order('code')]);
-      this.wos = must(w); this.projects = must(p); this.ccs = must(c);
+        sb.from('projects').select('id,code,name,project_type,cost_center_id').eq('status', 'OPEN').order('code')]);
+      this.wos = must(w); this.projects = must(p);
       let saved = ''; try { saved = localStorage.getItem(KEY) || ''; } catch { /* storage unavailable */ }
-      if (this.targets.some(t => t.v === saved)) this.f.target = saved;
+      const sp = saved.startsWith('pr:') && this.projects.find(x => x.id === saved.slice(3));
+      const kind = saved.startsWith('wo:') && this.wos.some(x => x.id === saved.slice(3)) ? 'WO' : sp ? sp.project_type : null;
+      if (kind) { this.kind = kind; await this.$nextTick(); this.f.target = saved; }
     });
     await this.load();
   },
@@ -104,11 +125,17 @@ export const FloorApp = {
         if (ex) ex.qty = num(ex.qty) + 1; else this.f.lines.push({ item_id: i.id, qty: 1 });
       }
       this.q = '';
-      if (this.avail[i.id] === undefined) {
-        const s = must(await sb.from('v_item_stock').select('available').eq('item_id', i.id));
-        this.avail = { ...this.avail, [i.id]: num(s[0]?.available) };
-      }
+      await this.loadSplit();
     },
+    // free / for this order / reserved stock of the items shown and on the request
+    async loadSplit() {
+      const ids = [...new Set([...this.found.map(i => i.id), ...this.f.lines.map(l => l.item_id)])].filter(id => !this.split[id]);
+      if (!ids.length) return;
+      const m = await stockSplit(ids, this.job?.id || null);
+      const add = Object.fromEntries(ids.map(id => [id, m[id] || { free: 0, mine: 0, reserved: 0 }]));
+      this.split = { ...this.split, ...add };
+    },
+    stockOf(id) { return splitText(this.split[id], this.ownWord); },
     step(l, d) { if (l.offcut) return; l.qty = Math.max(0, Math.round((num(l.qty) + d) * 1000) / 1000); },
     async onScan(code) {
       this.scanning = false;
@@ -144,11 +171,12 @@ export const FloorApp = {
       const f = this.f, lines = f.lines.filter(l => num(l.qty) > 0);
       if (!f.target) return toast('Choose what the material is for', 'error');
       if (!lines.length) return toast('Add at least one item', 'error');
-      const [k, id] = f.target.split(':');
       const hdr = { mr_date: today(), required_date: f.required_date || null, priority: f.urgent ? 'URGENT' : 'NORMAL', remarks: f.remarks || null };
-      if (k === 'wo') { const w = this.wo; Object.assign(hdr, { production_order_id: w.id, project_id: w.project_id, purpose: w.projects?.project_type === 'MTS' ? 'MTS' : 'PROJECT' }); }
-      else if (k === 'pr') { const p = this.projects.find(x => x.id === id); Object.assign(hdr, { project_id: id, purpose: p?.project_type === 'MTS' ? 'MTS' : 'PROJECT' }); }
-      else Object.assign(hdr, { cost_center_id: id, purpose: 'COST_CENTER' });
+      const p = this.job;
+      if (!p) return toast('That order is no longer open', 'error');
+      // internal orders are charged to their cost centre
+      Object.assign(hdr, { project_id: p.id, purpose: PURPOSE[p.project_type] || 'PROJECT', cost_center_id: p.project_type === 'INTERNAL' ? p.cost_center_id : null,
+                           production_order_id: this.wo?.id || null });
       this.busy = true;
       const ok = await run(async () => {
         const m = must(await sb.from('material_requests').insert(hdr).select('id,mr_no').single());
@@ -295,17 +323,37 @@ export const FloorApp = {
 
     <!-- ===== new request ===== -->
     <template v-if="tab==='new'">
-      <select v-model="f.target" class="site-proj" style="width:100%;margin-bottom:8px">
-        <option value="">— Material for… —</option>
+      <div class="small muted" style="margin-bottom:4px">Material for</div>
+      <div class="floor-kinds">
+        <a v-for="k in KINDS" :key="k.k" class="chip" :class="{on: kind===k.k}" @click="kind = k.k">{{ k.t }}</a>
+      </div>
+      <select v-model="f.target" class="site-proj" style="width:100%;margin:6px 0 4px">
+        <option value="">— choose the {{ KINDS.find(k => k.k === kind)?.t.slice(2).toLowerCase() }} —</option>
         <option v-for="t in targets" :key="t.v" :value="t.v">{{ t.l }}</option>
       </select>
+      <div class="small muted" style="margin-bottom:8px" v-if="kind==='INTERNAL'">Mock-ups and internal use need an internal order approved by the Factory Manager.
+        <a href="javascript:void 0" @click="go('d/so/new/internal')">＋ New internal order</a></div>
+      <div class="small muted" style="margin-bottom:8px" v-else-if="!targets.length">Nothing open of this kind.</div>
+
+      <div class="small muted" style="margin:4px 0">Find the material</div>
+      <div class="floor-kinds">
+        <a v-for="c in classes" :key="c.id" class="chip" :class="{on: bCls===c.id}" @click="bCls = bCls === c.id ? null : c.id">{{ c.name }}</a>
+      </div>
+      <div class="row" style="gap:6px;margin:6px 0" v-if="bCls && cats.length">
+        <select v-model="bCat" style="flex:1;padding:8px"><option :value="null">All categories</option><option v-for="c in cats" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+        <select v-if="subs.length" v-model="bSub" style="flex:1;padding:8px"><option :value="null">All sub-categories</option><option v-for="c in subs" :key="c.id" :value="c.id">{{ c.name }}</option></select>
+      </div>
       <div class="row" style="gap:6px;margin-bottom:8px">
         <input v-model="q" placeholder="Search item code or name…" class="site-search" style="margin:0;flex:1">
         <button class="btn primary" @click="scanning = true" title="Scan item, board or offcut label">📷</button>
       </div>
       <div v-if="found.length" class="floor-found">
-        <div v-for="i in found" :key="i.id" class="floor-hit" @click="addItem(i)"><b>{{ i.code }}</b> {{ i.name }} <span class="muted small">{{ i.uoms?.code }}</span></div>
+        <div v-for="i in found" :key="i.id" class="floor-hit" @click="addItem(i)">
+          <div><b>{{ i.code }}</b> {{ i.name }} <span class="muted small">{{ i.uoms?.code }}</span></div>
+          <div class="small" :class="split[i.id] && !split[i.id].free && !split[i.id].mine ? 'bad-t' : 'muted'">{{ stockOf(i.id) || '…' }}</div>
+        </div>
       </div>
+      <div v-else-if="bCls && q.trim().length < 2" class="small muted" style="margin-bottom:8px">No items in this group.</div>
       <div v-if="fits.length" class="site-card" style="cursor:default;background:#fffbeb;border-color:#fde68a">
         <b>✂ Offcuts that fit {{ wo.wo_no }}</b> <span class="small muted">— use these before cutting new sheets</span>
         <div v-for="x in fits" :key="x.lot_id" class="row" style="margin-top:6px;gap:6px">
@@ -317,7 +365,7 @@ export const FloorApp = {
       <div v-for="(l, i) in f.lines" :key="i" class="site-card floor-line">
         <div class="row"><div style="flex:1"><b>{{ itemName(l.item_id) }}</b>
           <div class="small" v-if="l.lot" style="color:#1e40af">{{ l.lot }}{{ l.offcut ? ' — whole piece' : '' }}</div>
-          <div class="small muted" v-else-if="avail[l.item_id] !== undefined">{{ qty(avail[l.item_id]) }} {{ uom(l.item_id) }} free in store</div></div>
+          <div class="small muted" v-else-if="split[l.item_id]">In store: {{ stockOf(l.item_id) }} {{ uom(l.item_id) }}</div></div>
           <button class="btn sm bad" @click="f.lines.splice(i, 1)">✕</button></div>
         <div class="row floor-qty">
           <button class="btn" @click="step(l, -1)" :disabled="l.offcut">−</button>

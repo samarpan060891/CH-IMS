@@ -209,6 +209,10 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .floor-found { background: #fff; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; max-height: 280px; overflow: auto; }
 .floor-hit { padding: 11px 12px; border-bottom: 1px solid #f0f1f3; cursor: pointer; font-size: 14px; }
 .floor-hit:active, .floor-hit:hover { background: var(--brand-soft); }
+.floor-kinds { display: flex; gap: 6px; flex-wrap: wrap; }
+.floor-kinds .chip { cursor: pointer; font-size: 13.5px; padding: 7px 12px; }
+.floor-found { max-height: 360px; }
+.bad-t { color: #b91c1c; }
 .floor-line { cursor: default; }
 .floor-tabs a { padding: 7px 2px; font-size: 12.5px; line-height: 1.3; }
 .floor-oc { margin-top: 6px; padding: 6px 8px; background: #eff6ff; border-radius: 6px; gap: 6px; }

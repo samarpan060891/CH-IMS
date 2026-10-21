@@ -24,9 +24,10 @@ import { ReceiveApp } from './receive.js';
 import { EXP_DOCS, PettyCash } from './expenses.js';
 import { PROV_DOCS, Provisions } from './provisions.js';
 import { MDR_DOCS } from './masterreq.js';
+import { SALES_DOCS } from './sales.js';
 import { MachineRates } from './machinerates.js';
 
-Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS, MDR_DOCS);
+Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS, MDR_DOCS, SALES_DOCS);
 
 const ALL = null;
 // short menu names for reports (full titles show on the report page)
@@ -39,6 +40,12 @@ const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', res
 // Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
 const MENU = [
+  { g: 'Sales', icon: 'tag', items: [
+    { to: 'd/qt', t: 'Quotations', roles: ['sales', 'finance', 'factory_manager'] },
+    { to: 'd/so', t: 'Sales & internal orders', roles: ALL, badge: 'so' },
+    { to: 'm/customers', t: 'Customers', roles: ['sales', 'finance', 'factory_manager'] },
+    { to: 'r/somargin', t: 'Order delivery, billing & margin', roles: ['sales', 'finance', 'factory_manager'], cost: true },
+  ] },
   { g: 'Purchase', icon: 'shopping-cart', items: [
     { to: 'replenish', t: 'Replenishment', roles: ['purchase', 'stores', 'factory_manager'] },
     { to: 'buffers', t: 'Buffer review', roles: ['purchase', 'factory_manager', 'stores'], badge: 'dbm' },

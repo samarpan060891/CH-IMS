@@ -51,6 +51,13 @@ const QUEUES = [
       .map(x => ({ id: x.id, no: x.receipt_no, title: `${x.production_orders?.wo_no} — ${x.production_orders?.description || ''}`, sub: `proposed ${qty(x.rework_qty)} rework, ${qty(x.scrap_qty)} scrap${x.remarks ? ' · ' + x.remarks : ''}`,
                    amount: num(x.rework_value) + num(x.scrap_value), at: x.created_at, link: 'd/wo/' + x.wo_id, raw: x })),
     actions: [{ label: '⚖ Decide', cls: 'ok', run: r => qcDecide(r.raw, r.raw.production_orders?.wo_no) }] },
+  { k: 'so', t: 'Internal orders (mock-ups, internal use)', roles: ['factory_manager'],
+    load: async () => must(await sb.from('sales_orders').select('id,so_no,title,created_at,delivery_date,cost_centers(code,name),profiles:created_by(full_name),sales_order_lines(description,qty,uom)').eq('status', 'PENDING_FM').order('created_at'))
+      .map(o => ({ id: o.id, no: o.so_no, title: o.title, sub: `${o.cost_centers?.code} ${o.cost_centers?.name || ''} · ${o.profiles?.full_name || ''}${o.delivery_date ? ' · needed ' + dt(o.delivery_date) : ''}`, at: o.created_at, link: 'd/so/' + o.id,
+                   lines: o.sales_order_lines.map(l => `${l.description} × ${qty(l.qty)} ${l.uom || ''}`) })),
+    actions: [
+      { label: '✔ Approve', cls: 'ok', run: async r => { const v = await comment('Approve ' + r.no); if (!v) return false; return rpc('so_action', { p_so: r.id, p_action: 'APPROVE', p_comments: v.c || null }); } },
+      { label: '✖ Reject', cls: 'bad', run: async r => { const x = await reason('Reject ' + r.no); if (!x) return false; return rpc('so_action', { p_so: r.id, p_action: 'REJECT', p_comments: x }); } }] },
   // missing suppliers, accounts, list values… requested by users (only those this role keeps are visible)
   { k: 'mdr', t: 'Requests for new entries', roles: ['purchase', 'finance', 'stores', 'factory_manager', 'hr_officer', 'production_incharge'],
     load: async () => must(await sb.from('master_requests').select('*, profiles:requested_by(full_name)').eq('status', 'PENDING').neq('requested_by', state.profile?.id).order('created_at'))
