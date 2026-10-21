@@ -44,6 +44,7 @@ const availF = { k: '_avail', label: 'Available', type: 'ro', virtual: true, fmt
 const lineProjectF = (extra = {}) => ({ k: 'project_id', label: 'For project (blank = stock)', type: 'ref', ref: 'projects', width: '190px',
   filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT', ...extra });
 const locId = code => (state.refs.locations || []).find(l => l.code === code)?.id || null;
+const siteOnly = () => hasRole('site_supervisor') && !hasRole('stores');
 // BOQ line of the line's project (links purchases and services to the project scope)
 const boqF = (extra = {}) => ({ k: 'boq_line_id', label: 'BOQ line', type: 'ref', ref: 'boq_lines', width: '180px',
   filter: (r, row) => !!row.project_id && r.project_id === row.project_id, ro: row => !row.project_id, ...extra });
@@ -279,11 +280,12 @@ function grnSplit(r) {
 }
 export const grn = {
   key: 'grn', title: 'Goods Receipts (GRN)', single: 'GRN', table: 'grns', noField: 'grn_no', dateField: 'grn_date',
-  statuses: ['DRAFT', 'POSTED', 'CANCELLED'], createRoles: ['stores'],
+  statuses: ['DRAFT', 'POSTED', 'CANCELLED'], createRoles: ['stores', 'site_supervisor'],
   refs: ['items', 'vendors', 'locations', 'projects'],
   list: { select: '*, vendors(name), purchase_orders(po_no)', columns: [{ k: 'receipt_type', label: 'Type', fmt: 'label' }, { k: r => r.purchase_orders?.po_no, label: 'PO' },
           { k: r => r.vendors?.name, label: 'Vendor' }, { k: 'vendor_dn_no', label: 'DN no.' }, { k: 'vendor_invoice_no', label: 'Invoice no.' }] },
-  defaults: () => ({ grn_date: today(), receipt_type: 'PO', currency: 'AED', exchange_rate: 1, location_id: locId('MS') }),
+  // the site supervisor receives only direct-to-site deliveries into a site store
+  defaults: () => ({ grn_date: today(), receipt_type: 'PO', currency: 'AED', exchange_rate: 1, location_id: siteOnly() ? null : locId('MS') }),
   async onNew(ctx, parts) { await loadOpenPos(); if (parts[0] === 'po' && parts[1]) { ctx.doc.po_id = parts[1]; await loadPoIntoGrn(ctx, parts[1]); } },
   async afterLoad(ctx) {
     await loadOpenPos(ctx.doc.po_id);
@@ -300,7 +302,7 @@ export const grn = {
     { k: 'vendor_id', label: 'Vendor', type: 'ref', ref: 'vendors', ro: d => d.receipt_type === 'PO', show: d => d.receipt_type !== 'OPENING' },
     { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', required: false, show: d => d.receipt_type !== 'OPENING' },
     { k: 'grn_date', label: 'GRN date', type: 'date', required: true },
-    { k: 'location_id', label: 'Receiving location', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock && r.is_active },
+    { k: 'location_id', label: 'Receiving location', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock && r.is_active && (!siteOnly() || r.loc_type === 'SITE') },
     { k: 'vendor_dn_no', label: 'Vendor delivery note no.', show: d => !['OPENING'].includes(d.receipt_type) },
     { k: 'vendor_dn_date', label: 'DN date', type: 'date', show: d => !['OPENING'].includes(d.receipt_type) },
     { k: 'vendor_invoice_no', label: 'Vendor invoice no.', show: d => ['PO', 'NON_PO'].includes(d.receipt_type) },
@@ -377,7 +379,7 @@ export const grn = {
     return out;
   },
   actions: ctx => [
-    { label: '✔ Post GRN', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), done: 'GRN posted — stock updated',
+    { label: '✔ Post GRN', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores', 'site_supervisor'), done: 'GRN posted — stock updated',
       confirm: 'Post this GRN? Stock lots will be created and the PO updated. This cannot be undone.', run: c => rpc('post_grn', { p_grn: c.doc.id }) },
     { label: '🏷 Print lot labels', show: statusIs(ctx, 'POSTED') && hasRole('stores'), reload: false, run: c => go(`labels/lots/${c.doc.id}`) },
     { label: 'Return to vendor', show: statusIs(ctx, 'POSTED') && hasRole('stores', 'purchase') && !!ctx.doc.vendor_id, reload: false, run: c => go(`d/prt/new/grn/${c.doc.id}`) },
@@ -412,8 +414,8 @@ const mrTarget = [
 export const mr = {
   key: 'mr', title: 'Material Requests', single: 'Material Request', table: 'material_requests', noField: 'mr_no', dateField: 'mr_date',
   statuses: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PARTIALLY_ISSUED', 'ISSUED', 'REJECTED', 'CANCELLED', 'CLOSED'],
-  createRoles: ['shop_floor', 'production_incharge', 'stores'],
-  canEdit: ctx => (['DRAFT', 'REJECTED'].includes(ctx.doc.status) && hasRole('shop_floor', 'production_incharge', 'stores')) ||
+  createRoles: ['shop_floor', 'production_incharge', 'stores', 'site_supervisor'],
+  canEdit: ctx => (['DRAFT', 'REJECTED'].includes(ctx.doc.status) && hasRole('shop_floor', 'production_incharge', 'stores', 'site_supervisor')) ||
                   (ctx.doc.status === 'PENDING_APPROVAL' && hasRole('production_incharge')),
   headerEditable: ctx => ['DRAFT', 'REJECTED'].includes(ctx.doc.status),
   refs: ['items', 'projects', 'cost_centers', 'profiles'],
@@ -461,7 +463,7 @@ export const mr = {
   actions: ctx => {
     const s = ctx.doc.status;
     return [
-      { label: 'Submit for approval', cls: 'primary', show: ['DRAFT', 'REJECTED'].includes(s) && hasRole('shop_floor', 'production_incharge', 'stores'), done: 'Sent to Production In-charge',
+      { label: 'Submit for approval', cls: 'primary', show: ['DRAFT', 'REJECTED'].includes(s) && hasRole('shop_floor', 'production_incharge', 'stores', 'site_supervisor'), done: 'Sent to Production In-charge',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'SUBMIT' }) },
       { label: '✔ Approve', cls: 'ok', show: s === 'PENDING_APPROVAL' && hasRole('production_incharge'), done: 'Approved — Stores can issue',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'APPROVE' }) },
@@ -578,12 +580,12 @@ export const issue = {
       run: c => rpc('issue_budget_request', { p_issue: c.doc.id }) },
     { label: '✔ Approve over budget', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('factory_manager') && isOverBudget(ctx) && !ctx.extra.budget.approved, done: 'Approved — Stores can post',
       run: async c => { const r = await reason('Why may this project exceed its material budget?'); if (r) return rpc('issue_budget_approve', { p_issue: c.doc.id, p_note: r }); } },
-    { label: '✔ Acknowledge receipt', cls: 'ok', show: statusIs(ctx, 'POSTED') && ctx.doc.ack_status === 'PENDING' && hasRole('shop_floor', 'production_incharge'),
+    { label: '✔ Acknowledge receipt', cls: 'ok', show: statusIs(ctx, 'POSTED') && ctx.doc.ack_status === 'PENDING' && hasRole('shop_floor', 'production_incharge', 'site_supervisor'),
       run: c => acknowledge(c) },
     { label: 'Resolve discrepancy', show: ctx.doc.ack_status === 'DISCREPANCY' && hasRole('stores', 'factory_manager'), done: 'Discrepancy resolved',
       run: async c => { const r = await reason('How was the discrepancy resolved? (re-issued, returned, adjusted …)'); if (r) return rpc('issue_resolve_discrepancy', { p_issue: c.doc.id, p_note: r }); } },
     { label: '🖨 Issue slip PDF', cls: 'primary', show: statusIs(ctx, 'POSTED'), reload: false, run: c => pdfIssue(c) },
-    { label: '↩ Return to store', show: statusIs(ctx, 'POSTED') && hasRole('stores', 'shop_floor', 'production_incharge'), reload: false, run: c => go(`d/ret/new/issue/${c.doc.id}`) },
+    { label: '↩ Return to store', show: statusIs(ctx, 'POSTED') && hasRole('stores', 'shop_floor', 'production_incharge', 'site_supervisor'), reload: false, run: c => go(`d/ret/new/issue/${c.doc.id}`) },
   ],
 };
 
@@ -650,9 +652,9 @@ async function loadIssueIntoReturn(ctx, issueId) {
 }
 export const ret = {
   key: 'ret', title: 'Returns to Store', single: 'Material Return', table: 'material_returns', noField: 'return_no', dateField: 'return_date',
-  statuses: ['DRAFT', 'SUBMITTED', 'POSTED', 'CANCELLED'], createRoles: ['stores', 'shop_floor', 'production_incharge'],
+  statuses: ['DRAFT', 'SUBMITTED', 'POSTED', 'CANCELLED'], createRoles: ['stores', 'shop_floor', 'production_incharge', 'site_supervisor'],
   // floor drafts and submits; Stores verifies (can change qty / condition) and posts
-  canEdit: ctx => (ctx.doc.status === 'DRAFT' && hasRole('stores', 'shop_floor', 'production_incharge')) || (ctx.doc.status === 'SUBMITTED' && hasRole('stores')),
+  canEdit: ctx => (ctx.doc.status === 'DRAFT' && hasRole('stores', 'shop_floor', 'production_incharge', 'site_supervisor')) || (ctx.doc.status === 'SUBMITTED' && hasRole('stores')),
   refs: ['items', 'locations'],
   list: { select: '*, material_issues(issue_no, projects(code), cost_centers(code))', columns: [{ k: r => r.material_issues?.issue_no, label: 'Issue' },
     { k: r => r.material_issues?.projects?.code || r.material_issues?.cost_centers?.code, label: 'Project / CC' }, { k: 'returned_by_name', label: 'Returned by' }, { k: 'total_value', label: 'Value', fmt: 'money', cost: true, sum: true }] },
@@ -684,7 +686,7 @@ export const ret = {
     for (const r of ctx.grids.lines) if (r._bal !== undefined && num(r.qty) > num(r._bal)) throw new Error(`${itemName(r.item_id)}: max returnable ${qty(r._bal)}`);
   },
   actions: ctx => [
-    { label: 'Submit to Stores', cls: 'primary', show: statusIs(ctx, 'DRAFT') && hasRole('shop_floor', 'production_incharge') && !hasRole('stores'), done: 'Sent to Stores for verification',
+    { label: 'Submit to Stores', cls: 'primary', show: statusIs(ctx, 'DRAFT') && hasRole('shop_floor', 'production_incharge', 'site_supervisor') && !hasRole('stores'), done: 'Sent to Stores for verification',
       run: c => rpc('return_action', { p_ret: c.doc.id, p_action: 'SUBMIT' }) },
     { label: '✔ Receive & post', cls: 'ok', show: statusIs(ctx, 'DRAFT', 'SUBMITTED') && hasRole('stores'), confirm: 'Material checked? Stock will be added back and the project credited.', done: 'Return posted',
       run: c => rpc('post_return', { p_ret: c.doc.id }) },

@@ -4,6 +4,7 @@ import { reactive } from 'vue';
 import { sb, state, must, run, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, loadRefs, toast } from './lib.js';
 import { ask, confirmBox, Badge } from './components.js';
 import { loadXlsx } from './importer.js';
+import { makePdf } from './pdf.js';
 
 const popts = reactive({ boq: [], units: [] });
 const CATS = [{ v: 'MANUFACTURED', l: 'Made in-house' }, { v: 'BOUGHT_OUT', l: 'Bought-out' }, { v: 'SERVICE', l: 'Service' }];
@@ -123,7 +124,9 @@ export const proj = {
     { k: 'budget_material', label: 'Material budget AED', type: 'number', cost: true },
     { k: 'status', label: 'Status', type: 'select', required: true, options: ['OPEN', 'ON_HOLD', 'CLOSED'] },
   ],
-  headerNote: () => 'BOQ lines are <b>Made in-house</b> (FG product → production orders), <b>Bought-out</b> (bought for the project, into the factory store or direct to site) or <b>Service</b> ' +
+  headerNote: ctx => (ctx.doc.boq_locked ? `<div style="margin-bottom:6px;padding:6px 10px;border-radius:6px;background:#eff6ff;border:1px solid #bfdbfe">🔒 <b>BOQ baseline locked</b>
+    ${dt(ctx.doc.boq_locked_at)} — scope changes go through <b>Variation orders</b> (Factory Manager approval). New units can still be added; they are attached when a variation re-allocates the line.</div>` : '') +
+    'BOQ lines are <b>Made in-house</b> (FG product → production orders), <b>Bought-out</b> (bought for the project, into the factory store or direct to site) or <b>Service</b> ' +
     '(installation, delivery: own team, subcontract or hired). To attach a line to units, enter a <b>Unit type</b> (all units of that type) or <b>Unit codes</b> (comma separated) with ' +
     '<b>Qty per unit</b> — the total qty is calculated on Save. Lines without units are billed as flat BOQ items.',
   grids: [
@@ -136,6 +139,7 @@ export const proj = {
         { k: 'handed_over_to', label: 'Handed over to', type: 'ro', fmt: (v, r) => v ? `${v} · ${dt(r.handed_over_at)}` : '' },
         { k: 'description', label: 'Description', width: '160px' }] },
     { key: 'boq', title: 'BOQ', table: 'boq_lines', fk: 'project_id', order: 'line_no',
+      readonly: ctx => !!ctx.doc.boq_locked,
       newRow: () => ({ category: 'MANUFACTURED', qty: 0, sell_rate: 0, est_unit_cost: 0 }),
       importers: [{ label: '⬆ Import BOQ (Excel)', run: c => importBoq(c) }, { label: 'Template', run: () => boqTemplate() }],
       fields: [
@@ -176,6 +180,7 @@ export const proj = {
   async afterLoad(ctx) {
     await loadRef('bom_templates', true);
     const id = ctx.doc.id;
+    ctx.extra.vos = must(await sb.from('variation_orders').select('id,vo_no,vo_date,title,client_ref,status,value_change').eq('project_id', id).order('created_at'));
     const [p, u, m, w, ins] = await Promise.all([
       sb.from('v_boq_progress').select('*').eq('project_id', id).order('line_no'),
       sb.from('v_unit_progress').select('*').eq('project_id', id).order('unit_code'),
@@ -205,6 +210,8 @@ export const proj = {
       { k: r => `${r.lines_done}/${r.boq_lines}`, label: 'BOQ lines done' }, { k: 'progress_pct', label: 'Progress %', n: true },
       { k: 'sale_value', label: 'Unit price', fmt: 'money', cost: true, sum: true }, { k: 'earned_value', label: 'Earned', fmt: 'money', cost: true, sum: true },
       { k: r => r.handed_over_to ? `${r.handed_over_to} · ${dt(r.handed_over_at)}` : '', label: 'Handover' }] });
+    if (x.vos?.length) out.push({ title: 'Variation orders', rows: x.vos, columns: [{ k: 'vo_no', label: 'VO' }, { k: 'vo_date', label: 'Date', fmt: 'date' },
+      { k: 'title', label: 'Title' }, { k: 'client_ref', label: 'Client ref' }, { k: 'value_change', label: 'Value change', fmt: 'money', cost: true, sum: true }, { k: 'status', label: 'Status', fmt: 'badge' }] });
     if (x.wos?.length) out.push({ title: 'Production orders', rows: x.wos, columns: [{ k: 'wo_no', label: 'Order' }, { k: r => (r.is_rework ? '↻ ' : '') + (r.description || ''), label: 'Description' },
       { k: 'qty', label: 'Qty', fmt: 'qty' }, { k: 'qty_completed', label: 'To FG', fmt: 'qty' }, { k: 'due_date', label: 'Due', fmt: 'date' }, { k: 'status', label: 'Status', fmt: 'badge' }] });
     if (x.ins?.length) out.push({ title: 'Installation logs', rows: x.ins, columns: [{ k: 'log_no', label: 'Log' }, { k: 'log_date', label: 'Date', fmt: 'date' },
@@ -216,8 +223,15 @@ export const proj = {
     const open = ctx.doc.status === 'OPEN';
     return [
       { label: '🏭 Production orders from BOQ', show: open && planner(), run: c => boqToWos(c) },
-      { label: '🔧 Installation log', show: open && hasRole('shop_floor', 'production_incharge', 'factory_manager'), reload: false, run: c => go('d/ins/new/proj/' + c.doc.id) },
-      { label: '🏠 Unit status / handover', show: open && planner() && ctx.grids.units.length > 0, run: c => unitStatus(c) },
+      { label: '🔧 Installation log', show: open && hasRole('shop_floor', 'production_incharge', 'factory_manager', 'site_supervisor'), reload: false, run: c => go('d/ins/new/proj/' + c.doc.id) },
+      { label: '🏠 Unit status / handover', show: open && hasRole('production_incharge', 'factory_manager', 'site_supervisor') && ctx.grids.units.length > 0, run: c => unitStatus(c) },
+      { label: '🔒 Lock BOQ baseline', show: open && !ctx.doc.boq_locked && hasRole('factory_manager') && ctx.grids.boq.length > 0,
+        confirm: 'Lock the BOQ as the agreed baseline? After this, scope changes are made only through approved variation orders.', done: 'BOQ baseline locked',
+        run: c => rpc('project_lock_boq', { p_project: c.doc.id, p_lock: true }) },
+      { label: '🔓 Unlock BOQ', show: !!ctx.doc.boq_locked && hasRole('factory_manager'), danger: true,
+        confirm: 'Unlock the BOQ for direct editing? Changes will no longer be tracked as variations (the unlock is recorded in the audit log).', done: 'BOQ unlocked',
+        run: c => rpc('project_lock_boq', { p_project: c.doc.id, p_lock: false }) },
+      { label: '📝 New variation order', show: open && hasRole('factory_manager', 'production_incharge', 'finance'), reload: false, run: c => go('d/vo/new/proj/' + c.doc.id) },
       { label: '🧮 Material planning', show: open, reload: false, run: c => go('mrp/' + c.doc.id) },
     ];
   },
@@ -256,7 +270,7 @@ async function loadProjectOpts(projectId) {
 }
 export const ins = {
   key: 'ins', title: 'Installation Logs', single: 'Installation Log', table: 'install_logs', noField: 'log_no', dateField: 'log_date',
-  statuses: ['DRAFT', 'POSTED'], createRoles: ['shop_floor', 'production_incharge', 'factory_manager'],
+  statuses: ['DRAFT', 'POSTED'], createRoles: ['shop_floor', 'production_incharge', 'factory_manager', 'site_supervisor'],
   refs: ['projects', 'labour_grades', 'profiles'],
   list: { select: '*, projects(code,name)', columns: [{ k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : '', label: 'Project' },
     { k: 'team_leader', label: 'Team leader' }, { k: 'notes', label: 'Notes' }, { k: 'total_cost', label: 'Labour cost', fmt: 'money', cost: true, sum: true }] },
@@ -285,7 +299,7 @@ export const ins = {
         return money(num(r.workers) * (num(r.hours) * num(g?.rate_per_hour) + num(r.ot_hours) * num(g?.ot_rate_per_hour))); } }] },
   ],
   actions: ctx => [
-    { label: '✔ Post log', cls: 'ok', show: ctx.doc.status === 'DRAFT' && hasRole('shop_floor', 'production_incharge', 'factory_manager'), done: 'Posted — progress and cost updated',
+    { label: '✔ Post log', cls: 'ok', show: ctx.doc.status === 'DRAFT' && hasRole('shop_floor', 'production_incharge', 'factory_manager', 'site_supervisor'), done: 'Posted — progress and cost updated',
       confirm: 'Post this installation log? Installed quantities update the BOQ / unit progress and the crew cost is charged to the project.', run: c => rpc('post_install_log', { p_log: c.doc.id }) },
     { label: 'Open project', reload: false, run: c => go('d/proj/' + c.doc.project_id) },
   ],
@@ -364,4 +378,98 @@ export const Mrp = {
   </div>`,
 };
 
-export const PROJ_DOCS = { proj, ins };
+// ======================================================================
+// VARIATION ORDER (scope change after the BOQ baseline; Factory Manager approves)
+// ======================================================================
+const voOpts = reactive({ boq: [] });
+async function loadVoBoq(projectId) {
+  voOpts.boq = projectId ? must(await sb.from('boq_lines').select('id,line_no,boq_ref,description,qty,sell_rate').eq('project_id', projectId).order('line_no'))
+    .map(r => ({ id: r.id, label: `${r.boq_ref || r.line_no} — ${r.description} (qty ${qty(r.qty)})` })) : [];
+}
+const voEditable = ctx => ['DRAFT', 'REJECTED'].includes(ctx.doc.status) && hasRole('factory_manager', 'production_incharge', 'finance');
+export const vo = {
+  key: 'vo', title: 'Variation Orders', single: 'Variation Order', table: 'variation_orders', noField: 'vo_no', dateField: 'vo_date',
+  statuses: ['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED'], createRoles: ['factory_manager', 'production_incharge', 'finance'],
+  canEdit: voEditable, refs: ['projects', 'items', 'profiles'],
+  list: { select: '*, projects(code,name)', columns: [{ k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : '', label: 'Project' },
+    { k: 'title', label: 'Title' }, { k: 'client_ref', label: 'Client ref' }, { k: 'value_change', label: 'Value change', fmt: 'money', cost: true, sum: true }] },
+  defaults: () => ({ vo_date: today() }),
+  async onNew(ctx, parts) { if (parts[0] === 'proj' && parts[1]) ctx.doc.project_id = parts[1]; await loadVoBoq(ctx.doc.project_id); },
+  async afterLoad(ctx) {
+    await loadVoBoq(ctx.doc.project_id);
+    ctx.extra.preview = must(await sb.from('v_vo_lines').select('*').eq('vo_id', ctx.doc.id).order('line_no'));
+  },
+  header: [
+    { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT',
+      onChange: (d, v) => loadVoBoq(v) },
+    { k: 'vo_date', label: 'Date', type: 'date', required: true },
+    { k: 'title', label: 'Title', required: true, wide: true },
+    { k: 'client_ref', label: 'Client / site instruction ref' },
+    { k: 'value_change', label: 'Value change AED', type: 'ro', fmt: v => money(v), cost: true, show: d => d.status !== 'DRAFT' },
+    { k: 'submitted_by', label: 'Submitted by', type: 'ro', fmt: (v, d) => v ? `${refLabel('profiles', v)} · ${dt(d.submitted_at)}` : '', show: d => !!d.submitted_by },
+    { k: 'approved_by', label: 'Approved / rejected by', type: 'ro', fmt: (v, d) => v ? `${refLabel('profiles', v)} · ${dt(d.approved_at)}` : '', show: d => !!d.approved_by },
+    { k: 'approval_comments', label: 'Approval comments', type: 'ro', wide: true, show: d => !!d.approval_comments },
+    { k: 'reason', label: 'Reason / description of the change', type: 'textarea', full: true },
+  ],
+  headerNote: () => '<b>ADD</b> a new BOQ line (fill description, category, item, qty or unit type + qty per unit, rates). <b>CHANGE</b> an existing line — fill only the fields that change ' +
+    '(e.g. new qty, new rate, or a unit type to re-attach units). <b>OMIT</b> removes a line that has nothing ordered, produced, delivered or installed. ' +
+    'Save to see the before / after preview; on approval the BOQ is updated and the change is added to the contract value.',
+  grids: [{ key: 'lines', title: 'Changes', table: 'vo_lines', fk: 'vo_id', order: 'line_no',
+    newRow: () => ({ change_type: 'ADD' }),
+    fields: [
+      { k: 'change_type', label: 'Change', type: 'select', required: true, options: ['ADD', 'CHANGE', 'OMIT'], width: '95px' },
+      { k: 'boq_line_id', label: 'BOQ line (change / omit)', type: 'ref', width: '230px', refOptions: () => voOpts.boq, ro: r => r.change_type === 'ADD' },
+      { k: 'boq_ref', label: 'Ref', width: '70px', ro: r => r.change_type === 'OMIT' },
+      { k: 'description', label: 'Description', width: '180px', ro: r => r.change_type === 'OMIT' },
+      { k: 'category', label: 'Category', type: 'select', options: CATS, width: '125px', ro: r => r.change_type !== 'ADD' },
+      { k: 'item_id', label: 'Item / product / service', type: 'ref', ref: 'items', width: '180px', filter: (r, row) => !row.category || itemOk(r, row), ro: r => r.change_type === 'OMIT' },
+      { k: 'uom', label: 'UoM', width: '55px', ro: r => r.change_type === 'OMIT' },
+      { k: 'unit_type', label: 'Unit type', width: '80px', ro: r => r.change_type === 'OMIT' },
+      { k: 'unit_codes', label: 'Unit codes', width: '110px', ro: r => r.change_type === 'OMIT' },
+      { k: 'qty_per_unit', label: 'Qty / unit', type: 'number', ro: r => r.change_type === 'OMIT' },
+      { k: 'qty', label: 'New qty', type: 'number', ro: r => r.change_type === 'OMIT' },
+      { k: 'sell_rate', label: 'New sell rate', type: 'number', cost: true, ro: r => r.change_type === 'OMIT' },
+      { k: 'est_unit_cost', label: 'New est. cost', type: 'number', cost: true, ro: r => r.change_type === 'OMIT' },
+      { k: 'remarks', label: 'Remarks', width: '120px' }] }],
+  validate(ctx) {
+    ctx.grids.lines.forEach((r, i) => {
+      if (r.change_type !== 'ADD' && !r.boq_line_id) throw new Error(`Line ${i + 1}: choose the BOQ line to ${r.change_type.toLowerCase()}`);
+      if (r.change_type === 'ADD' && (!r.description || !r.category)) throw new Error(`Line ${i + 1}: description and category are required for a new line`);
+    });
+  },
+  async loadInfo(ctx) {
+    const p = ctx.extra.preview || [];
+    return p.length ? [{ title: ctx.doc.status === 'APPROVED' ? 'Applied to the BOQ' : 'Preview — before / after', rows: p, columns: [
+      { k: 'change_type', label: 'Change', fmt: 'badge' }, { k: 'boq_ref', label: 'Ref' }, { k: 'description', label: 'Description' },
+      { k: 'before_qty', label: 'Qty before', fmt: 'qty' }, { k: 'after_qty', label: 'Qty after', fmt: 'qty' },
+      { k: 'before_rate', label: 'Rate before', fmt: 'money', cost: true }, { k: 'after_rate', label: 'Rate after', fmt: 'money', cost: true },
+      { k: 'value_change', label: 'Value change', fmt: 'money', cost: true, sum: true }, { k: 'cost_change', label: 'Est. cost change', fmt: 'money', cost: true, sum: true }] }] : [];
+  },
+  actions: ctx => {
+    const s = ctx.doc.status, fm = hasRole('factory_manager');
+    return [
+      { label: 'Submit for approval', cls: 'primary', show: ['DRAFT', 'REJECTED'].includes(s) && voEditable(ctx), done: 'Sent to the Factory Manager',
+        run: c => rpc('vo_action', { p_vo: c.doc.id, p_action: 'SUBMIT' }) },
+      { label: '✔ Approve & apply to BOQ', cls: 'ok', show: s === 'SUBMITTED' && fm, done: 'Approved — BOQ and contract value updated',
+        confirm: 'Approve this variation? The BOQ is updated and the value change is added to the contract value.',
+        run: c => rpc('vo_action', { p_vo: c.doc.id, p_action: 'APPROVE' }) },
+      { label: '✖ Reject', cls: 'bad', show: s === 'SUBMITTED' && fm,
+        run: async c => { const v = await ask({ title: 'Reject variation', fields: [{ k: 'r', label: 'Reason', type: 'textarea', required: true }], okText: 'Reject' });
+          if (v) return rpc('vo_action', { p_vo: c.doc.id, p_action: 'REJECT', p_comments: v.r }); } },
+      { label: 'Cancel', show: ['DRAFT', 'SUBMITTED', 'REJECTED'].includes(s) && hasRole('factory_manager', 'production_incharge', 'finance'), confirm: 'Cancel this variation?',
+        run: c => rpc('vo_action', { p_vo: c.doc.id, p_action: 'CANCEL' }) },
+      { label: 'Open project', reload: false, run: c => go('d/proj/' + c.doc.project_id) },
+      { label: '🖨 PDF', reload: false, run: c => makePdf({
+          title: 'Variation Order', no: c.doc.vo_no, date: c.doc.vo_date, subtitle: label(c.doc.status),
+          meta: [['Project', refLabel('projects', c.doc.project_id)], ['Title', c.doc.title], ['Client ref', c.doc.client_ref || '-'],
+                 ['Value change', canSeeCost() ? 'AED ' + money(c.doc.value_change) : '-'], ['Approved by', c.doc.approved_by ? refLabel('profiles', c.doc.approved_by) : '-']],
+          columns: [{ h: 'Change', k: 'change_type' }, { h: 'Ref', k: 'boq_ref' }, { h: 'Description', k: 'description' },
+                    { h: 'Qty before', k: r => qty(r.before_qty), align: 'right' }, { h: 'Qty after', k: r => qty(r.after_qty), align: 'right' },
+                    ...(canSeeCost() ? [{ h: 'Rate', k: r => money(r.after_rate), align: 'right' }, { h: 'Value change', k: r => money(r.value_change), align: 'right' }] : [])],
+          rows: c.extra.preview || [], totals: canSeeCost() ? [['Total value change AED', money((c.extra.preview || []).reduce((t, r) => t + num(r.value_change), 0))]] : [],
+          notes: c.doc.reason || '', signatures: [['Prepared by', 'Citi Homes'], ['Approved by', 'Factory Manager'], ['Accepted by', 'Client']] }) },
+    ];
+  },
+};
+
+export const PROJ_DOCS = { proj, ins, vo };

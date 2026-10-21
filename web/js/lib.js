@@ -23,6 +23,7 @@ export const ROLES = {
   stores: 'Stores',
   shop_floor: 'Shop Floor',
   production_incharge: 'Production In-charge',
+  site_supervisor: 'Site Supervisor',
   factory_manager: 'Factory Manager',
   finance: 'Finance Manager',
 };
@@ -32,8 +33,8 @@ export function hasRole(...roles) {
   const r = role();
   return !!r && (r === 'admin' || roles.includes(r));
 }
-// Shop floor & production see quantities only
-export const canSeeCost = () => !['shop_floor', 'production_incharge'].includes(role());
+// Shop floor, production and site see quantities only
+export const canSeeCost = () => !['shop_floor', 'production_incharge', 'site_supervisor'].includes(role());
 
 // ---------- notifications ----------
 let toastId = 0;
@@ -189,12 +190,14 @@ export async function refreshPending() {
   if (hasRole('stores')) p.issue = await count('material_requests', q => q.in('status', ['APPROVED', 'PARTIALLY_ISSUED']));
   if (hasRole('stores', 'purchase')) p.holds = await count('stock_lots', q => q.eq('status', 'HOLD').gt('qty_on_hand', 0).not('hold_reason', 'is', null));
   if (hasRole('stores')) p.ret = await count('material_returns', q => q.eq('status', 'SUBMITTED'));
-  if (hasRole('shop_floor', 'production_incharge')) p.ack =await count('material_issues', q => q.eq('status', 'POSTED').eq('ack_status', 'PENDING'));
+  if (hasRole('shop_floor', 'production_incharge', 'site_supervisor')) p.ack = await count('material_issues', q => q.eq('status', 'POSTED').eq('ack_status', 'PENDING'));
   if (hasRole('stores', 'factory_manager')) p.ack = (p.ack || 0) + await count('material_issues', q => q.eq('ack_status', 'DISCREPANCY'));
   if (hasRole('production_incharge', 'factory_manager')) p.wo = await count('production_orders', q => q.eq('status', 'DRAFT'));
   if (hasRole('shop_floor', 'production_incharge')) p.stages = await count('wo_operations', q => q.eq('status', 'IN_PROGRESS'));
   if (hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'DRAFT'));
   if (hasRole('factory_manager')) p.qc = await count('wo_receipts', q => q.eq('qc_status', 'PENDING_FM'));
+  if (hasRole('factory_manager')) p.vo = await count('variation_orders', q => q.eq('status', 'SUBMITTED'));
+  if (hasRole('site_supervisor') && !hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'POSTED'));
   if (hasRole('factory_manager', 'production_incharge', 'shop_floor')) p.down = await count('wc_downtime', q => q.eq('status', 'OPEN'));
   state.pending = p;
   try { await loadNotifications(); } catch (e) { console.warn('notifications', e); }

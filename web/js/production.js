@@ -585,12 +585,12 @@ async function loadFgForProject(ctx, woId = null) {
 }
 export const dsp = {
   key: 'dsp', title: 'Deliveries to Site', single: 'Delivery Note', table: 'dispatch_notes', noField: 'dispatch_no', dateField: 'dispatch_date',
-  statuses: ['DRAFT', 'POSTED', 'DELIVERED', 'CANCELLED'], createRoles: ['stores', 'factory_manager'],
+  statuses: ['DRAFT', 'POSTED', 'DELIVERED', 'CANCELLED'], createRoles: ['stores', 'factory_manager', 'site_supervisor'],
   refs: ['items', 'projects', 'locations', 'profiles', 'boq_lines'],
   list: { select: '*, projects(code,name)', columns: [{ k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : '', label: 'Project / site' },
     { k: 'vehicle_no', label: 'Vehicle' }, { k: 'driver_name', label: 'Driver' }, { k: 'received_by_name', label: 'Received at site' },
     { k: 'total_value', label: 'Value AED', fmt: 'money', cost: true, sum: true }] },
-  defaults: () => ({ dispatch_date: today(), from_location_id: locId('FGS') }),
+  defaults: () => ({ dispatch_date: today(), from_location_id: hasRole('stores', 'factory_manager') ? locId('FGS') : null }),
   async onNew(ctx, parts) {
     await loadWos();
     if (parts[0] === 'wo' && parts[1]) {
@@ -606,7 +606,8 @@ export const dsp = {
     { k: 'project_id', label: 'Project / site', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT',
       onChange: (d, v) => setDspProject(v) },
     { k: 'from_location_id', label: 'From (FG store, factory store or site store)', type: 'ref', ref: 'locations', required: true,
-      filter: r => r.is_active && r.is_stock && !['QUARANTINE', 'SCRAP_YARD'].includes(r.loc_type), onChange: (d, v, ctx) => fgAvail(ctx) },
+      filter: r => r.is_active && r.is_stock && !['QUARANTINE', 'SCRAP_YARD'].includes(r.loc_type) && (hasRole('stores', 'factory_manager') || r.loc_type === 'SITE'),
+      onChange: (d, v, ctx) => fgAvail(ctx) },
     { k: 'dispatch_date', label: 'Dispatch date', type: 'date', required: true },
     { k: 'delivery_address', label: 'Delivery address / unit', wide: true },
     { k: 'vehicle_no', label: 'Vehicle no.' }, { k: 'driver_name', label: 'Driver' }, { k: 'driver_phone', label: 'Driver phone' },
@@ -632,9 +633,9 @@ export const dsp = {
   actions: ctx => {
     const s = ctx.doc.status;
     return [
-      { label: '✔ Post dispatch', cls: 'ok', show: s === 'DRAFT' && hasRole('stores', 'factory_manager'), done: 'Dispatched — cost charged to the project',
+      { label: '✔ Post', cls: 'ok', show: s === 'DRAFT' && hasRole('stores', 'factory_manager', 'site_supervisor'), done: 'Posted — cost charged to the project',
         confirm: 'Post this dispatch? Finished goods leave the FG store and their cost is charged to the project.', run: c => rpc('post_dispatch', { p_id: c.doc.id }) },
-      { label: '✔ Mark delivered', cls: 'ok', show: s === 'POSTED' && hasRole('stores', 'factory_manager', 'production_incharge'),
+      { label: '✔ Confirm received at site', cls: 'ok', show: s === 'POSTED' && hasRole('stores', 'factory_manager', 'production_incharge', 'site_supervisor'),
         run: async c => { const v = await ask({ title: 'Delivered at site', fields: [{ k: 'n', label: 'Received by (name / site engineer)', required: true }], okText: 'Confirm' });
           if (v) return rpc('dispatch_delivered', { p_id: c.doc.id, p_received_by: v.n }); } },
       { label: '🖨 Delivery note', cls: 'primary', show: s !== 'CANCELLED', reload: false, run: c => makePdf({

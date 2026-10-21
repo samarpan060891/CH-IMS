@@ -16,7 +16,7 @@ function chart(el, cfg) {
 // ======================================================================
 export const Dashboard = {
   components: { DataTable, Badge },
-  data: () => ({ loading: true, val: [], aging: [], stock: [], pay: [], assets: [], myPending: [], charts: [], budgets: [] }),
+  data: () => ({ loading: true, val: [], aging: [], stock: [], pay: [], assets: [], myPending: [], charts: [], budgets: [], projects: [] }),
   computed: {
     cost() { return canSeeCost(); },
     stockValue() { return this.val.filter(v => v.kind === 'STOCK').reduce((s, v) => s + num(v.value), 0); },
@@ -44,6 +44,7 @@ export const Dashboard = {
         ];
         const [v, a, s, as] = await Promise.all(q);
         this.val = must(v); this.aging = must(a); this.stock = must(s); this.assets = must(as);
+        this.projects = must(await sb.from('v_project_overview').select('*').order('end_date', { nullsFirst: false }));
         if (hasRole('finance', 'factory_manager', 'purchase')) this.pay = must(await sb.from('v_vendor_payables').select('*'));
         if (canSeeCost()) {
           const warn = num(state.company?.budget_warn_pct || 80);
@@ -76,6 +77,8 @@ export const Dashboard = {
         add(must(await sb.from('material_issues').select('id,issue_no,ack_status,created_at').eq('status', 'POSTED').eq('ack_status', 'PENDING')).map(r => ({ ...r, status: 'PENDING' })), 'Material issued — acknowledge receipt', 'ack', 'issue_no');
       if (hasRole('stores', 'factory_manager'))
         add(must(await sb.from('material_issues').select('id,issue_no,ack_status,created_at').eq('ack_status', 'DISCREPANCY')).map(r => ({ ...r, status: 'DISCREPANCY' })), 'Receipt discrepancy to resolve', 'issue', 'issue_no');
+      if (hasRole('factory_manager')) add(must(await sb.from('variation_orders').select('id,vo_no,status,created_at').eq('status', 'SUBMITTED')), 'Variation order', 'vo', 'vo_no');
+      if (hasRole('site_supervisor')) add(must(await sb.from('dispatch_notes').select('id,dispatch_no,status,created_at').eq('status', 'POSTED')), 'Delivery on the way — confirm receipt', 'dsp', 'dispatch_no');
       this.myPending = out;
     },
     draw() {
@@ -99,8 +102,29 @@ export const Dashboard = {
         options: { plugins: { legend: { display: false } } } }));
     },
     open(r) { go(r.link); },
+    openProject(p) { go('d/proj/' + p.project_id); },
+    barColor(p) { return p.units_overdue || (p.days_left < 0 && p.progress_pct < 100) ? '#dc2626' : p.days_left !== null && p.days_left < 14 && p.progress_pct < 80 ? '#d97706' : '#16a34a'; },
   },
   template: `<div>
+    <div class="card" v-if="projects.length">
+      <h3>Running projects ({{ projects.length }})</h3>
+      <div class="tbl-wrap"><table class="t">
+        <thead><tr><th>Project</th><th>Due</th><th style="min-width:160px">Progress (installed value)</th><th class="n">Units handed over</th><th class="n">Snagging</th>
+          <th class="n">Overdue units</th><th class="n">Production orders</th><th class="n">Variations</th><th class="n" v-if="cost">Margin %</th></tr></thead>
+        <tbody><tr v-for="p in projects" :key="p.project_id" style="cursor:pointer" @click="openProject(p)">
+          <td><b>{{ p.code }}</b> {{ p.name }}<div class="small muted">{{ p.customer }}{{ p.boq_locked ? ' · BOQ locked' : '' }}</div></td>
+          <td :style="p.days_left < 0 ? 'color:#b91c1c;font-weight:600' : ''">{{ p.end_date ? new Date(p.end_date + 'T00:00:00').toLocaleDateString('en-GB', {day:'2-digit', month:'short', year:'numeric'}) : '—' }}
+            <div class="small muted" v-if="p.days_left !== null">{{ p.days_left < 0 ? -p.days_left + ' days late' : p.days_left + ' days left' }}</div></td>
+          <td><div style="height:8px;background:#e5e7eb;border-radius:4px"><div :style="{height:'8px',borderRadius:'4px',width:Math.min(p.progress_pct,100)+'%',background:barColor(p)}"></div></div>
+            <div class="small muted">{{ p.progress_pct }}%</div></td>
+          <td class="n">{{ p.units_handed }} / {{ p.units_total }}</td><td class="n">{{ p.units_snagging || '' }}</td>
+          <td class="n" :style="p.units_overdue ? 'color:#b91c1c;font-weight:600' : ''">{{ p.units_overdue || '' }}</td>
+          <td class="n">{{ p.wo_open }}<span v-if="p.wo_late" style="color:#b91c1c"> ({{ p.wo_late }} late)</span></td>
+          <td class="n">{{ p.vo_pending ? p.vo_pending + ' pending' : '' }}<div class="small muted" v-if="cost && Number(p.vo_approved_value)">{{ money(p.vo_approved_value) }}</div></td>
+          <td class="n" v-if="cost" :style="p.margin_pct !== null && Number(p.margin_pct) < 10 ?'color:#b91c1c;font-weight:600' : ''">{{ p.margin_pct ?? '' }}</td>
+        </tr></tbody>
+      </table></div>
+    </div>
     <div class="kpis">
       <div class="kpi" v-if="cost"><div class="l">Inventory value (stock)</div><div class="v">{{ aed(stockValue) }}</div><div class="s">FIFO / weighted average</div></div>
       <div class="kpi" v-if="cost"><div class="l">Assets & tools (at cost)</div><div class="v">{{ aed(assetValue) }}</div><div class="s">machines, tools, office, camp</div></div>

@@ -37,7 +37,7 @@ const MENU = [
     { to: 'm/item_vendors', t: 'Vendor price list', roles: ['purchase', 'finance', 'factory_manager'] },
   ] },
   { g: 'Inventory', icon: 'building-warehouse', items: [
-    { to: 'd/grn', t: 'Goods receipts (GRN)', roles: ['stores', 'purchase', 'finance', 'factory_manager'] },
+    { to: 'd/grn', t: 'Goods receipts (GRN)', roles: ['stores', 'purchase', 'finance', 'factory_manager', 'site_supervisor'] },
     { to: 'd/issue', t: 'Material issues', roles: ['stores', 'factory_manager', 'production_incharge'], badge: 'issue' },
     { to: 'd/trf', t: 'Stock transfers', roles: ['stores', 'factory_manager'] },
     { to: 'd/rel', t: 'Project stock releases', roles: ['stores', 'factory_manager', 'production_incharge'], badge: 'rel' },
@@ -52,8 +52,8 @@ const MENU = [
   ] },
   { g: 'Shop floor', icon: 'hammer', items: [
     { to: 'd/mr', t: 'Material requests', roles: ALL, badge: 'mr' },
-    { to: 'd/ack', t: 'Receive material', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager'], badge: 'ack' },
-    { to: 'd/ret', t: 'Return to store', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager'], badge: 'ret' },
+    { to: 'd/ack', t: 'Receive material', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager', 'site_supervisor'], badge: 'ack' },
+    { to: 'd/ret', t: 'Return to store', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager', 'site_supervisor'], badge: 'ret' },
     { to: 'd/scrap', t: 'Scrap notes', roles: ['stores', 'production_incharge', 'factory_manager', 'shop_floor'], badge: 'scrap' },
   ] },
   { g: 'Production', icon: 'building-factory', items: [
@@ -69,9 +69,10 @@ const MENU = [
   ] },
   { g: 'Projects', icon: 'building-community', items: [
     { to: 'd/proj', t: 'Projects & BOQ', roles: ALL },
+    { to: 'd/vo', t: 'Variation orders', roles: ['factory_manager', 'production_incharge', 'finance'], badge: 'vo' },
     { to: 'mrp', t: 'Material planning (MRP)', roles: ['purchase', 'stores', 'production_incharge', 'factory_manager'] },
-    { to: 'd/ins', t: 'Installation logs', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'finance'] },
-    { to: 'd/dsp', t: 'Deliveries to site', roles: ['stores', 'factory_manager', 'production_incharge', 'finance'], badge: 'dsp' },
+    { to: 'd/ins', t: 'Installation logs', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'finance', 'site_supervisor'] },
+    { to: 'd/dsp', t: 'Deliveries to site', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'site_supervisor'], badge: 'dsp' },
     { sep: 'Progress & billing' },
     ...['boqprog', 'unitprog', 'projprod'].map(rep),
   ] },
