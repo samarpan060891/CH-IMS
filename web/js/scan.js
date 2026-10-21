@@ -19,11 +19,11 @@ export function loadLib(key) {
   return loading[key];
 }
 
-export const qrText = { lot: id => `CH:L:${id}`, item: code => `CH:I:${code}`, asset: tag => `CH:A:${tag}` };
+export const qrText = { lot: id => `CH:L:${id}`, item: code => `CH:I:${code}`, asset: tag => `CH:A:${tag}`, wo: no => `CH:W:${no}` };
 export function parseCode(raw) {
   const t = String(raw || '').trim();
-  const m = t.match(/^CH:([LIA]):(.+)$/i);
-  if (m) return { kind: { L: 'lot', I: 'item', A: 'asset' }[m[1].toUpperCase()], value: m[2] };
+  const m = t.match(/^CH:([LIAW]):(.+)$/i);
+  if (m) return { kind: { L: 'lot', I: 'item', A: 'asset', W: 'wo' }[m[1].toUpperCase()], value: m[2] };
   // plain text from a USB scanner or typed: treat as item code or asset tag
   return { kind: 'text', value: t };
 }
@@ -70,6 +70,12 @@ export const Scanner = {
 // ---------- resolve a scanned code into something useful ----------
 export async function describeCode(raw) {
   const c = parseCode(raw);
+  if (c.kind === 'wo') {
+    const w = must(await sb.from('production_orders').select('id,wo_no,status,qty,description,items(code,name)').eq('wo_no', c.value).maybeSingle());
+    if (!w) throw new Error('Unknown job card');
+    return { kind: 'wo', wo_id: w.id, title: `${w.wo_no} — ${w.items.code} ${w.items.name}`,
+      lines: [w.description || '', `Qty ${qty(w.qty)} · ${w.status.replace(/_/g, ' ').toLowerCase()}`].filter(Boolean) };
+  }
   if (c.kind === 'lot') {
     const l = must(await sb.from('v_lot_values').select('*').eq('lot_id', c.value).maybeSingle());
     if (!l) {

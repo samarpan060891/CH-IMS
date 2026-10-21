@@ -5,7 +5,7 @@ import { DataTable } from './components.js';
 
 const XLSX_URL = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
 let xlsxLoading = null;
-function loadXlsx() {
+export function loadXlsx() {
   if (window.XLSX) return Promise.resolve(window.XLSX);
   xlsxLoading ||= new Promise((res, rej) => {
     const s = document.createElement('script');

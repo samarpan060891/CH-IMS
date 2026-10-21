@@ -198,6 +198,26 @@ export const REPORTS = {
     { k: 'due_back', label: 'Due back', fmt: 'date' }, { k: r => r.is_overdue ? 'OVERDUE' : 'OK', label: 'Status', fmt: 'badge' }] },
   calibration: { title: 'Calibration due', src: 'v_asset_register', filter: q => q.not('calibration_due_date', 'is', null), order: 'calibration_due_date', columns: [
     { k: 'asset_tag', label: 'Tag' }, { k: 'item_name', label: 'Instrument' }, { k: 'serial_no', label: 'Serial' }, { k: 'last_calibration_date', label: 'Last', fmt: 'date' }, { k: 'calibration_due_date', label: 'Due', fmt: 'date' }, { k: 'calibration_status', label: 'Status', fmt: 'badge' }] },
+  jobcost: { title: 'Job costing — planned vs actual', src: 'v_wo_cost', filter: q => q.neq('status', 'CANCELLED'), order: 'wo_no', cost: true,
+    roles: ['production_incharge', 'factory_manager', 'finance'], columns: [
+    { k: 'wo_no', label: 'Order' }, { k: r => refRow('projects', r.project_id)?.code, label: 'Project' }, { k: r => refRow('items', r.item_id)?.code, label: 'Product' },
+    { k: 'qty', label: 'Qty', fmt: 'qty' }, { k: 'status', label: 'Status', fmt: 'badge' }, { k: r => `${r.stages_done}/${r.stages}`, label: 'Stages' },
+    { k: 'plan_total', label: 'Planned AED', fmt: 'money', sum: true }, { k: 'act_material', label: 'Material', fmt: 'money', sum: true }, { k: 'act_labour', label: 'Labour', fmt: 'money', sum: true },
+    { k: 'act_machine', label: 'Machine', fmt: 'money', sum: true }, { k: 'act_overhead', label: 'Overhead', fmt: 'money', sum: true }, { k: 'act_total', label: 'Actual AED', fmt: 'money', sum: true },
+    { k: r => num(r.plan_total) ? Math.round((num(r.act_total) / num(r.plan_total) - 1) * 1000) / 10 : null, label: 'Variance %', n: true },
+    { k: r => num(r.qty_completed) ? num(r.act_total) / num(r.qty_completed) : null, label: 'Unit cost', fmt: 'money' },
+    { k: 'plan_labour_hours', label: 'Plan man-h', n: true }, { k: 'act_labour_hours', label: 'Actual man-h', n: true }] },
+  wcload: { title: 'Work centre load', src: 'v_work_center_load', order: 'sort_order', columns: [
+    { k: 'code', label: 'Code' }, { k: 'name', label: 'Work centre' }, { k: 'kind', label: 'Type', fmt: 'label' }, { k: 'open_stages', label: 'Open stages', n: true },
+    { k: 'running', label: 'Running', n: true }, { k: 'remaining_hours', label: 'Remaining hours', n: true }, { k: 'hours_per_day', label: 'Hours/day', n: true }, { k: 'load_days', label: 'Load (days)', n: true }] },
+  fg: { title: 'Finished goods in store', src: 'v_lot_values', filter: q => q.eq('class_code', 'FG'), order: 'received_date', columns: [
+    { k: 'item_code', label: 'Product' }, { k: 'item_name', label: 'Description' }, { k: 'lot_no', label: 'Order / lot' }, { k: 'location_code', label: 'Location' },
+    { k: r => r.project_id ? (refRow('projects', r.project_id)?.code || 'Project') : 'MTS stock', label: 'For' },
+    { k: 'received_date', label: 'Completed', fmt: 'date' }, { k: 'age_days', label: 'Age days', n: true }, { k: 'qty_on_hand', label: 'Qty', fmt: 'qty' },
+    { k: 'value_rate', label: 'Unit cost', fmt: 'money', cost: true }, { k: 'value', label: 'Value AED', fmt: 'money', cost: true, sum: true }] },
+  projprod: { title: 'Project production & dispatch', src: 'v_project_production', filter: q => q.gt('orders', 0), order: 'code', cost: true, columns: [
+    { k: 'code', label: 'Code' }, { k: 'name', label: 'Project' }, { k: 'project_type', label: 'Type', fmt: 'label' }, { k: 'orders', label: 'Orders', n: true }, { k: 'wip_orders', label: 'In WIP', n: true },
+    { k: 'wip_value', label: 'WIP value', fmt: 'money', sum: true }, { k: 'fg_in_store', label: 'FG in store', fmt: 'money', sum: true }, { k: 'dispatched_value', label: 'Dispatched (charged)', fmt: 'money', sum: true }] },
 };
 
 export const Reports = {
@@ -872,6 +892,10 @@ export const Settings = {
         { k: 'dbm_min_red_days', label: 'DBM: min days in RED before raising', type: 'number' },
         { k: 'dbm_min_green_days', label: 'DBM: min days in GREEN before lowering', type: 'number' },
         { k: 'dbm_step_pct', label: 'DBM: adjustment step %', type: 'number' }, { k: 'abc_a_pct', label: 'ABC: A up to cumulative %', type: 'number' }, { k: 'abc_b_pct', label: 'ABC: B up to cumulative %', type: 'number' },
+        { k: 'labour_rate_per_hour', label: 'Production: labour rate AED / man-hour', type: 'number' },
+        { k: 'overhead_pct', label: 'Production: overhead % on labour + machine', type: 'number' },
+        { k: 'board_waste_pct', label: 'Production: board waste % (cut list)', type: 'number' },
+        { k: 'edge_waste_pct', label: 'Production: edge band waste %', type: 'number' },
         { k: 'po_terms_conditions', label: 'Default PO terms & conditions', type: 'textarea', full: true },
       ];
     },
