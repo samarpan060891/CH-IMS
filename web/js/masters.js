@@ -11,17 +11,33 @@ async function nextCode(table, prefix, width = 4) {
   return prefix + String(max + 1).padStart(width, '0');
 }
 
+// batch / expiry apply to stocked lot items (not serialised assets or non-stock services)
+const YES_NO = [{ v: true, l: 'Yes' }, { v: false, l: 'No' }];
+const isStockItem = d => { const c = refRow('item_classes', d.class_id); return !!c && c.tracking === 'LOT' && c.valuation_method !== 'EXPENSE'; };
+const itemUsed = d => !!d.id && (d.stock_ledger?.[0]?.count || 0) > 0;
+
 export const MASTERS = {
   items: {
     title: 'Item Master', single: 'Item', table: 'items', order: 'code', editRoles: ['stores', 'purchase'],
     refs: ['item_classes', 'item_categories', 'uoms', 'locations'],
-    select: '*, item_classes(code,name), item_categories(name), uoms(code)',
+    // stock_ledger(count) tells whether the item has been used (batch / expiry answers are then frozen)
+    select: '*, item_classes(code,name), item_categories(name), uoms(code), stock_ledger(count)',
     columns: [
       { k: 'code', label: 'Code' }, { k: 'name', label: 'Name' }, { k: r => r.item_classes?.code, label: 'Class' }, { k: r => r.item_categories?.name, label: 'Category' },
-      { k: r => r.uoms?.code, label: 'UoM' }, { k: 'brand', label: 'Brand' }, { k: 'buffer_target', label: 'Buffer', fmt: 'qty' }, { k: 'moq', label: 'MOQ', fmt: 'qty' },
+      { k: r => r.uoms?.code, label: 'UoM' }, { k: 'brand', label: 'Brand' },
+      { k: r => r.batch_controlled ? 'Yes' : '', label: 'Batch' }, { k: r => r.has_expiry ? (r.shelf_life_days ? `${r.shelf_life_days} d` : 'Yes') : '', label: 'Expiry' },
+      { k: 'buffer_target', label: 'Buffer', fmt: 'qty' }, { k: 'moq', label: 'MOQ', fmt: 'qty' },
       { k: 'lead_time_days', label: 'Lead days', n: true }, { k: 'last_purchase_rate', label: 'Last rate', fmt: 'money', cost: true }, { k: 'is_active', label: 'Active', fmt: 'bool' },
     ],
-    defaults: () => ({ is_active: true, batch_controlled: true, has_expiry: false, vat_rate: 5, safety_stock: 0, reorder_level: 0, reorder_qty: 0, max_stock: 0, moq: 0, order_multiple: 0, lead_time_days: 0, buffer_target: 0, standard_cost: 0, dbm_enabled: false }),
+    defaults: () => ({ is_active: true, vat_rate: 5, safety_stock: 0, reorder_level: 0, reorder_qty: 0, max_stock: 0, moq: 0, order_multiple: 0, lead_time_days: 0, buffer_target: 0, standard_cost: 0, dbm_enabled: false }),
+    validate(d) {
+      const toBool = v => v === true || v === 'true';
+      if (!isStockItem(d)) { d.batch_controlled = false; d.has_expiry = false; d.shelf_life_days = null; return; }
+      if (d.batch_controlled === undefined || d.batch_controlled === null || d.batch_controlled === '') throw new Error('Answer "Batch control required?" (Yes / No)');
+      if (d.has_expiry === undefined || d.has_expiry === null || d.has_expiry === '') throw new Error('Answer "Has expiry date?" (Yes / No)');
+      d.batch_controlled = toBool(d.batch_controlled); d.has_expiry = toBool(d.has_expiry);
+      if (!d.has_expiry) d.shelf_life_days = null;
+    },
     sections: [
       { title: 'Identification', fields: [
         { k: 'class_id', label: 'Item class', type: 'ref', ref: 'item_classes', required: true,
@@ -40,9 +56,14 @@ export const MASTERS = {
         { k: 'valuation_override', label: 'Valuation (blank = class default)', type: 'select', options: [{ v: 'FIFO', l: 'FIFO' }, { v: 'WAVG', l: 'Weighted average' }],
           show: d => refRow('item_classes', d.class_id)?.valuation_method !== 'ASSET' },
         { k: '_classval', label: 'Class default', type: 'ro', virtual: true, fmt: (v, d) => label(refRow('item_classes', d.class_id)?.valuation_method || '') },
-        { k: 'batch_controlled', label: 'Batch / lot numbers', type: 'check' },
-        { k: 'has_expiry', label: 'Has expiry (FEFO)', type: 'check' },
-        { k: 'shelf_life_days', label: 'Shelf life (days)', type: 'number', show: d => d.has_expiry },
+        { k: 'batch_controlled', label: 'Batch control required? * (supplier batch no. mandatory at GRN)', type: 'select', wide: true, options: YES_NO,
+          show: isStockItem, ro: itemUsed },
+        { k: 'has_expiry', label: 'Has expiry date? * (expiry mandatory at GRN, issued earliest-expiry first)', type: 'select', wide: true, options: YES_NO,
+          show: isStockItem, ro: itemUsed },
+        { k: 'shelf_life_days', label: 'Shelf life (days) — fills the expiry at GRN from mfg / receipt date', type: 'number', wide: true,
+          show: d => isStockItem(d) && (d.has_expiry === true || d.has_expiry === 'true') },
+        { k: '_frozen', label: 'Batch / expiry setting', type: 'ro', virtual: true, wide: true, show: d => isStockItem(d) && itemUsed(d),
+          fmt: () => '🔒 Fixed — this item already has receipts or stock' },
         { k: 'vat_rate', label: 'VAT %', type: 'number' },
         { k: 'default_location_id', label: 'Default store location', type: 'ref', ref: 'locations', filter: r => r.is_stock },
         { k: 'calibration_interval_days', label: 'Calibration interval (days)', type: 'number', show: d => refRow('item_classes', d.class_id)?.needs_calibration },

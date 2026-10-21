@@ -6,7 +6,21 @@ import { ask } from './components.js';
 import { makePdf } from './pdf.js';
 
 // shared dynamic option lists for ref fields ({id,label})
-export const opts = reactive({ pos: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [] });
+export const opts = reactive({ pos: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [], lots: {} });
+
+// batches (lots) that may be issued: available at the location, free or reserved for this project; oldest / earliest expiry first
+async function loadLotOpts(ctx) {
+  const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
+  opts.lots = {};
+  if (!ids.length || !ctx.doc.from_location_id) return;
+  const rows = must(await sb.from('stock_lots').select('id,item_id,lot_no,batch_no,expiry_date,received_date,qty_on_hand,project_id,status')
+    .in('item_id', ids).eq('location_id', ctx.doc.from_location_id).eq('status', 'AVAILABLE').gt('qty_on_hand', 0)
+    .order('expiry_date', { nullsFirst: false }).order('received_date'));
+  rows.filter(l => !l.project_id || l.project_id === ctx.doc.project_id).forEach(l => {
+    (opts.lots[l.item_id] ||= []).push({ id: l.id, qty: num(l.qty_on_hand),
+      label: `${l.batch_no || l.lot_no}${l.expiry_date ? ' · exp ' + dt(l.expiry_date) : ''} · rcvd ${dt(l.received_date)} · ${qty(l.qty_on_hand)}${l.project_id ? ' (reserved)' : ''}` });
+  });
+}
 
 // ---------- common field builders ----------
 const isLotItem = r => r.is_active && r.item_classes?.tracking === 'LOT' && !r.item_classes?.is_scrap && r.item_classes?.code !== 'SRV';
@@ -45,6 +59,17 @@ const lineProjectF = (extra = {}) => ({ k: 'project_id', label: 'For project (bl
   filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT', ...extra });
 const locId = code => (state.refs.locations || []).find(l => l.code === code)?.id || null;
 const siteOnly = () => hasRole('site_supervisor') && !hasRole('stores');
+// batch / expiry control comes from the item master (fixed at item creation)
+const stockLot = it => !!it && it.item_classes?.tracking === 'LOT' && it.item_classes?.code !== 'SRV';
+const needsBatch = r => { const it = refRow('items', r.item_id); return stockLot(it) && !!it.batch_controlled; };
+const needsExpiry = r => !!refRow('items', r.item_id)?.has_expiry;
+function fillExpiry(r, doc) {
+  const it = refRow('items', r.item_id);
+  if (r.expiry_date || !it?.has_expiry || !num(it.shelf_life_days)) return;
+  const base = r.mfg_date || r.original_receipt_date || doc.grn_date || today();
+  const d = new Date(base + 'T00:00:00'); d.setDate(d.getDate() + num(it.shelf_life_days));
+  r.expiry_date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 // BOQ line of the line's project (links purchases and services to the project scope)
 const boqF = (extra = {}) => ({ k: 'boq_line_id', label: 'BOQ line', type: 'ref', ref: 'boq_lines', width: '180px',
   filter: (r, row) => !!row.project_id && r.project_id === row.project_id, ro: row => !row.project_id, ...extra });
@@ -312,14 +337,15 @@ export const grn = {
     { k: 'vehicle_no', label: 'Vehicle no.' },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: ctx => ctx.doc.receipt_type === 'OPENING' ? 'Opening stock: enter the <b>Original receipt date</b> on each line so the aging report shows the true age.' :
+  headerNote: ctx => '<b>Control</b> column: <b>Batch</b> = supplier batch no. mandatory; <b>Expiry</b> = expiry date mandatory (filled from the mfg date + shelf life when set in the item master; expired goods are refused). ' +
+    (ctx.doc.receipt_type === 'OPENING' ? 'Opening stock: enter the <b>Original receipt date</b> on each line so the aging report shows the true age.' :
     'Enter the <b>DN qty</b> (per supplier delivery note), the qty physically <b>received</b> and how many are <b>damaged</b>. On posting: good qty up to the PO balance is accepted into stock; ' +
-    '<b>damaged</b> and <b>excess</b> go to Quarantine on hold (damaged → draft purchase return; excess → Purchase accepts or returns); <b>short</b> vs DN is recorded and the PO stays open.',
+    '<b>damaged</b> and <b>excess</b> go to Quarantine on hold (damaged → draft purchase return; excess → Purchase accepts or returns); <b>short</b> vs DN is recorded and the PO stays open.'),
   grids: [
     { key: 'lines', title: 'Items received', table: 'grn_lines', fk: 'grn_id', order: 'line_no', saveKeys: ['po_line_id'],
       newRow: () => ({ vat_rate: 5, received_qty: null, damaged_qty: 0 }),
       fields: [
-        itemF({ ro: r => !!r.po_line_id, filter: r => r.is_active, onChange: r => { const it = refRow('items', r.item_id); if (it) { r.vat_rate = it.vat_rate; if (!r.rate) r.rate = it.last_purchase_rate || it.standard_cost || 0; } } }), uomF,
+        itemF({ ro: r => !!r.po_line_id, filter: r => r.is_active, onChange: (r, v, ctx) => { const it = refRow('items', r.item_id); if (it) { r.vat_rate = it.vat_rate; if (!r.rate) r.rate = it.last_purchase_rate || it.standard_cost || 0; fillExpiry(r, ctx.doc); } } }), uomF,
         { k: '_bal', label: 'PO balance', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.receipt_type === 'PO' && d.status === 'DRAFT' },
         lineProjectF({ label: 'Reserve for project', ro: r => !!r.po_line_id, show: d => ['PO', 'NON_PO'].includes(d.receipt_type) }),
         { k: 'dn_qty', label: 'DN qty', type: 'number', show: d => !['OPENING'].includes(d.receipt_type) },
@@ -336,8 +362,9 @@ export const grn = {
         { k: 'vat_rate', label: 'VAT %', type: 'number', cost: true },
         { k: 'unit_cost_aed', label: 'Landed cost AED', type: 'ro', fmt: v => money(v), cost: true, show: d => d.status === 'POSTED' },
         { k: 'lot_no', label: 'Lot no.', placeholder: 'auto' },
+        { k: '_ctl', label: 'Control', type: 'ro', virtual: true, fmt: (v, r) => [needsBatch(r) ? 'Batch' : '', needsExpiry(r) ? 'Expiry' : ''].filter(Boolean).join(' + ') || '—' },
         { k: 'batch_no', label: 'Batch no.' },
-        { k: 'mfg_date', label: 'Mfg date', type: 'date' },
+        { k: 'mfg_date', label: 'Mfg date', type: 'date', onChange: (r, v, ctx) => fillExpiry(r, ctx.doc) },
         { k: 'expiry_date', label: 'Expiry', type: 'date' },
         { k: 'original_receipt_date', label: 'Original receipt date', type: 'date', show: d => d.receipt_type === 'OPENING' },
         { k: 'serial_nos', label: 'Serial nos (tools/assets)', type: 'tags', width: '180px' },
@@ -357,6 +384,12 @@ export const grn = {
   ],
   validate(ctx) {
     for (const r of ctx.grids.lines) {
+      if (num(r.received_qty) > 0) {
+        fillExpiry(r, ctx.doc);
+        if (needsBatch(r) && !String(r.batch_no || '').trim()) throw new Error(`${itemName(r.item_id)}: batch no. is required (batch-controlled item)`);
+        if (needsExpiry(r) && !r.expiry_date) throw new Error(`${itemName(r.item_id)}: expiry date is required (or enter the mfg date — shelf life fills it)`);
+        if (r.expiry_date && ctx.doc.receipt_type !== 'OPENING' && r.expiry_date <= (ctx.doc.grn_date || today())) throw new Error(`${itemName(r.item_id)}: already expired (${dt(r.expiry_date)}) — do not receive`);
+      }
       if (num(r.damaged_qty) < 0 || num(r.damaged_qty) > num(r.received_qty)) throw new Error(`${itemName(r.item_id)}: damaged qty must be between 0 and the received qty`);
       if ((num(r.damaged_qty) > 0 || (r.dn_qty != null && num(r.dn_qty) > num(r.received_qty))) && !r.rejection_reason)
         throw new Error(`${itemName(r.item_id)}: add a remark for the damaged / short quantity`);
@@ -506,6 +539,7 @@ async function loadMrIntoIssue(ctx, mrId) {
   ctx.grids.lines = lines.map(l => ({ mr_line_id: l.id, item_id: l.item_id, qty: num(l.approved_qty ?? l.requested_qty) - num(l.issued_qty), remarks: l.remarks }))
     .filter(l => l.qty > 0);
   await fillAvail(ctx, 'lines', ctx.doc.from_location_id);
+  await loadLotOpts(ctx);
   ctx.dirty = true;
 }
 export const issue = {
@@ -520,7 +554,7 @@ export const issue = {
   async onNew(ctx, parts) { await loadApprovedMrs(); if (parts[0] === 'mr' && parts[1]) await loadMrIntoIssue(ctx, parts[1]); },
   async afterLoad(ctx) {
     await loadApprovedMrs(ctx.doc.mr_id);
-    if (ctx.doc.status === 'DRAFT') await fillAvail(ctx, 'lines', ctx.doc.from_location_id);
+    if (ctx.doc.status === 'DRAFT') { await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); }
     ctx.extra.budget = ctx.doc.project_id ? must(await sb.rpc('issue_budget_check', { p_issue: ctx.doc.id })) : null;
   },
   header: [
@@ -528,7 +562,7 @@ export const issue = {
     ...mrTarget.map(f => ({ ...f, ro: d => !!d.mr_id })),
     { k: 'issue_date', label: 'Issue date', type: 'date', required: true },
     { k: 'from_location_id', label: 'Issue from', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock && r.loc_type !== 'QUARANTINE',
-      onChange: (d, v, ctx) => fillAvail(ctx, 'lines', v) },
+      onChange: async (d, v, ctx) => { ctx.grids.lines.forEach(r => { r.lot_id = null; }); await fillAvail(ctx, 'lines', v); await loadLotOpts(ctx); } },
     { k: 'received_by_employee_id', label: 'Received by (employee)', type: 'ref', ref: 'employees', onChange: (d, v) => { const e = refRow('employees', v); if (e) d.received_by_name = e.name; } },
     { k: 'received_by_name', label: 'Received by (name)' },
     roMoney('total_value', 'Issue value AED', { show: d => d.status === 'POSTED' }),
@@ -554,8 +588,10 @@ export const issue = {
   grids: [{
     key: 'lines', title: 'Items to issue', table: 'issue_lines', fk: 'issue_id', order: 'line_no', saveKeys: ['mr_line_id'],
     fields: [
-      itemF({ filter: isLotItem, ro: r => !!r.mr_line_id, onChange: (r, v, ctx) => fillAvail(ctx, 'lines', ctx.doc.from_location_id) }), uomF,
+      itemF({ filter: isLotItem, ro: r => !!r.mr_line_id, onChange: async (r, v, ctx) => { r.lot_id = null; await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); } }), uomF,
       { ...availF, show: d => d.status === 'DRAFT' },
+      { k: 'lot_id', label: 'Batch (blank = oldest / earliest expiry first)', type: 'ref', width: '260px', refOptions: r => opts.lots[r.item_id] || [],
+        show: d => d.status === 'DRAFT' },
       { k: 'qty', label: 'Issue qty', type: 'number', required: true },
       roMoney('value', 'Value', { show: d => d.status === 'POSTED' }),
       { k: 'received_qty', label: 'Received good', type: 'ro', fmt: (v, r) => v == null ? '' : (num(v) + num(r.damaged_qty) === num(r.qty) ? qty(v) : '⚠ ' + qty(v)), show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
@@ -564,7 +600,13 @@ export const issue = {
       { k: 'remarks', label: 'Remarks' },
     ],
   }],
-  validate(ctx) { for (const r of ctx.grids.lines) if (r._avail !== undefined && num(r.qty) > num(r._avail)) throw new Error(`${itemName(r.item_id)}: only ${qty(r._avail)} available at this location`); },
+  validate(ctx) {
+    for (const r of ctx.grids.lines) {
+      if (r._avail !== undefined && num(r.qty) > num(r._avail)) throw new Error(`${itemName(r.item_id)}: only ${qty(r._avail)} available at this location`);
+      const lot = r.lot_id && (opts.lots[r.item_id] || []).find(l => l.id === r.lot_id);
+      if (lot && num(r.qty) > lot.qty) throw new Error(`${itemName(r.item_id)}: the chosen batch has only ${qty(lot.qty)} — split the line or leave the batch blank`);
+    }
+  },
   async loadInfo(ctx) {
     if (ctx.doc.status !== 'POSTED') return [];
     const rows = must(await sb.from('issue_line_lots').select('qty,unit_cost,returned_qty,issue_lines!inner(issue_id,item_id),stock_lots(lot_no,batch_no,received_date,expiry_date)').eq('issue_lines.issue_id', ctx.doc.id).order('seq'));

@@ -48,12 +48,13 @@ const EMIRATES = ['Abu Dhabi', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ra
 const TEMPLATES = {
   items: {
     title: 'Items', roles: ['stores', 'purchase'],
-    help: 'One row per item. Existing item codes are updated; new codes are created. Put AUTO in item_code to number automatically by class (e.g. RM-0001).',
+    help: 'One row per item. Existing item codes are updated; new codes are created. Put AUTO in item_code to number automatically by class (e.g. RM-0001). ' +
+      'batch_controlled and has_expiry (Y / N) must be answered for every stocked item; they cannot be changed once the item has receipts.',
     cols: ['item_code', 'item_name', 'class_code', 'category_code', 'uom_code', 'brand', 'specification', 'length_mm', 'width_mm', 'thickness_mm',
-           'vat_rate', 'has_expiry', 'shelf_life_days', 'buffer_target', 'safety_stock', 'reorder_level', 'reorder_qty', 'max_stock', 'moq', 'order_multiple',
+           'vat_rate', 'batch_controlled', 'has_expiry', 'shelf_life_days', 'buffer_target', 'safety_stock', 'reorder_level', 'reorder_qty', 'max_stock', 'moq', 'order_multiple',
            'lead_time_days', 'standard_cost', 'default_location_code', 'dbm_enabled', 'description'],
     required: ['item_code', 'item_name', 'class_code', 'uom_code'],
-    example: ['AUTO', 'MDF 18mm 1220x2440 plain', 'RM', 'RM-BRD', 'SHT', 'Kronospan', 'E1 grade', 2440, 1220, 18, 5, 'N', '', 60, 10, '', '', 120, 20, 10, 14, 95, 'MS', 'Y', ''],
+    example: ['AUTO', 'MDF 18mm 1220x2440 plain', 'RM', 'RM-BRD', 'SHT', 'Kronospan', 'E1 grade', 2440, 1220, 18, 5, 'Y', 'N', '', 60, 10, '', '', 120, 20, 10, 14, 95, 'MS', 'Y', ''],
     refs: ['item_classes', 'item_categories', 'uoms', 'locations', 'items'],
     async validate(rows) {
       const cls = byCode('item_classes'), cat = byCode('item_categories'), uom = byCode('uoms'), loc = byCode('locations'), items = byCode('items');
@@ -73,11 +74,17 @@ const TEMPLATES = {
         for (const k of ['length_mm', 'width_mm', 'thickness_mm', 'vat_rate', 'shelf_life_days', 'buffer_target', 'safety_stock', 'reorder_level', 'reorder_qty', 'max_stock', 'moq', 'order_multiple', 'lead_time_days', 'standard_cost']) {
           n[k] = numOrNull(r[k]); if (Number.isNaN(n[k])) e.push(`${k} is not a number`);
         }
+        // batch / expiry: required Y / N for stocked lot items; not applicable to assets and services
+        const stocked = c && c.tracking === 'LOT' && c.valuation_method !== 'EXPENSE';
+        const yn = v => ['y', 'yes', 'true', '1'].includes(str(v).toLowerCase()) ? true : ['n', 'no', 'false', '0'].includes(str(v).toLowerCase()) ? false : null;
+        const bc = stocked ? yn(r.batch_controlled) : false, he = stocked ? yn(r.has_expiry) : false;
+        if (stocked && bc === null) e.push('batch_controlled must be Y or N');
+        if (stocked && he === null) e.push('has_expiry must be Y or N');
         let code = str(r.item_code).toUpperCase() === 'AUTO' ? null : str(r.item_code);
         if (code === null && c) autoCount[c.code] = (autoCount[c.code] || 0) + 1;
         const row = {
           code, name: str(r.item_name), class_id: c?.id, category_id: ct?.id || null, uom_id: u?.id, brand: str(r.brand) || null, specification: str(r.specification) || null,
-          length_mm: n.length_mm, width_mm: n.width_mm, thickness_mm: n.thickness_mm, vat_rate: n.vat_rate ?? 5, has_expiry: yes(r.has_expiry), shelf_life_days: n.shelf_life_days,
+          length_mm: n.length_mm, width_mm: n.width_mm, thickness_mm: n.thickness_mm, vat_rate: n.vat_rate ?? 5, batch_controlled: !!bc, has_expiry: !!he, shelf_life_days: he ? n.shelf_life_days : null,
           buffer_target: n.buffer_target ?? 0, safety_stock: n.safety_stock ?? 0, reorder_level: n.reorder_level ?? 0, reorder_qty: n.reorder_qty ?? 0, max_stock: n.max_stock ?? 0,
           moq: n.moq ?? 0, order_multiple: n.order_multiple ?? 0, lead_time_days: n.lead_time_days ?? 0, standard_cost: n.standard_cost ?? 0,
           default_location_id: dl?.id || null, dbm_enabled: yes(r.dbm_enabled), description: str(r.description) || null, is_active: true,
