@@ -40,7 +40,7 @@ const MENU = [
     { to: 'd/grn', t: 'Goods receipts (GRN)', roles: ['stores', 'purchase', 'finance', 'factory_manager', 'site_supervisor'] },
     { to: 'd/issue', t: 'Material issues', roles: ['stores', 'factory_manager', 'production_incharge'], badge: 'issue' },
     { to: 'd/trf', t: 'Stock transfers', roles: ['stores', 'factory_manager'] },
-    { to: 'd/rel', t: 'Project stock releases', roles: ['stores', 'factory_manager', 'production_incharge'], badge: 'rel' },
+    { to: 'd/rel', t: 'Project stock releases', roles: ['stores', 'factory_manager', 'production_incharge', 'purchase', 'finance'], badge: 'rel' },
     { to: 'd/adj', t: 'Stock adjustments', roles: ['stores', 'factory_manager', 'finance'], badge: 'adj' },
     { to: 'd/prt', t: 'Purchase returns', roles: ['stores', 'purchase', 'finance'] },
     { to: 'holds', t: 'Quarantine & exceptions', roles: ['stores', 'purchase', 'factory_manager', 'finance'], badge: 'holds' },

@@ -182,6 +182,7 @@ export async function refreshPending() {
   if (hasRole('finance')) {
     p.po = (p.po || 0) + await count('purchase_orders', q => q.eq('status', 'PENDING_FINANCE'));
     p.disposal = (p.disposal || 0) + await count('scrap_disposals', q => q.eq('status', 'PENDING_FINANCE'));
+    p.rel = (p.rel || 0) + await count('stock_releases', q => q.eq('status', 'PENDING_FINANCE'));
   }
   if (hasRole('purchase')) p.po = (p.po || 0) + await count('purchase_orders', q => q.in('status', ['PENDING_TOP_MGMT', 'APPROVED']));
   if (hasRole('purchase', 'factory_manager')) p.dbm = await count('buffer_suggestions', q => q.eq('status', 'PENDING'));

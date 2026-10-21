@@ -65,10 +65,12 @@ export const Dashboard = {
         add(must(await sb.from('stock_adjustments').select('id,adj_no,status,created_at').eq('status', 'PENDING_APPROVAL')), 'Stock adjustment', 'adj', 'adj_no');
         add(must(await sb.from('scrap_notes').select('id,scrap_no,status,created_at').eq('status', 'PENDING_APPROVAL')), 'Scrap note', 'scrap', 'scrap_no');
         add(must(await sb.from('scrap_disposals').select('id,disposal_no,status,created_at').eq('status', 'PENDING_APPROVAL')), 'Scrap disposal', 'disposal', 'disposal_no');
+        add(must(await sb.from('stock_releases').select('id,release_no,status,created_at').eq('status', 'PENDING_APPROVAL')), 'Project stock release', 'rel', 'release_no');
       }
       if (hasRole('finance')) {
         add(must(await sb.from('purchase_orders').select('id,po_no,status,created_at').eq('status', 'PENDING_FINANCE')), 'Purchase order', 'po', 'po_no');
         add(must(await sb.from('scrap_disposals').select('id,disposal_no,status,created_at').eq('status', 'PENDING_FINANCE')), 'Scrap disposal (confirm rate)', 'disposal', 'disposal_no');
+        add(must(await sb.from('stock_releases').select('id,release_no,status,created_at').eq('status', 'PENDING_FINANCE')), 'Project stock release (final approval)', 'rel', 'release_no');
       }
       if (hasRole('purchase')) add(must(await sb.from('purchase_orders').select('id,po_no,status,created_at').in('status', ['PENDING_TOP_MGMT', 'APPROVED'])), 'Purchase order (top mgmt / release)', 'po', 'po_no');
       if (hasRole('production_incharge')) add(must(await sb.from('material_requests').select('id,mr_no,status,created_at').eq('status', 'PENDING_APPROVAL')), 'Material request', 'mr', 'mr_no');

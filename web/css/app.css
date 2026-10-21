@@ -128,6 +128,7 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .b.NON_MOVING, .b.CLOSED, .b.ON_HOLD { background: #ede9fe; color: #5b21b6; }
 .b.A { background: #fee2e2; color: #991b1b; } .b.B { background: #fef3c7; color: #92400e; } .b.C { background: #dcfce7; color: #166534; }
 .b.IN_PROGRESS { background: #dbeafe; color: #1e40af; } .b.COMPLETED, .b.DELIVERED, .b.DONE, .b.PROD_RECEIPT { background: #dcfce7; color: #166534; }
+.b.PENDING_FINANCE { background: #fef3c7; color: #92400e; }
 .b.URGENT, .b.DOWN, .b.PENDING_FM { background: #fee2e2; color: #991b1b; } .b.SKIPPED { background: #ede9fe; color: #5b21b6; }
 .b.INSTALLED { background: #dbeafe; color: #1e40af; } .b.SNAGGING { background: #fef3c7; color: #92400e; } .b.HANDED_OVER { background: #dcfce7; color: #166534; }
 .b.RUNNING { background: #dcfce7; color: #166534; } .b.OPEN { background: #fef3c7; color: #92400e; } .b.PLANNED { background: #dbeafe; color: #1e40af; }

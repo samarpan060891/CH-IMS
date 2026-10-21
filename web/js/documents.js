@@ -1213,7 +1213,8 @@ export const pay = {
 };
 
 // ======================================================================
-// STOCK RELEASE: project-reserved leftovers -> general stock (FM approval)
+// STOCK RELEASE: project-reserved stock -> general stock or another project
+// (requested lots / quantities only; Factory Manager approves, then Finance gives the final approval)
 // ======================================================================
 async function loadReservedLots(ctx) {
   if (!ctx.doc.project_id) throw new Error('Select the project first');
@@ -1227,10 +1228,11 @@ async function loadReservedLots(ctx) {
 }
 export const rel = {
   key: 'rel', title: 'Project Stock Releases', single: 'Stock Release', table: 'stock_releases', noField: 'release_no', dateField: 'release_date',
-  statuses: ['DRAFT', 'PENDING_APPROVAL', 'POSTED', 'REJECTED'], createRoles: ['stores', 'production_incharge'], editStatuses: ['DRAFT', 'REJECTED'],
-  refs: ['items', 'projects', 'profiles'],
-  list: { select: '*, projects(code,name)', columns: [{ k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : '', label: 'Project' }, { k: 'reason', label: 'Reason' },
-          { k: 'total_value', label: 'Value released', fmt: 'money', cost: true, sum: true }] },
+  statuses: ['DRAFT', 'PENDING_APPROVAL', 'PENDING_FINANCE', 'POSTED', 'REJECTED', 'CANCELLED'], createRoles: ['stores', 'production_incharge', 'purchase', 'factory_manager'],
+  editStatuses: ['DRAFT', 'REJECTED'], refs: ['items', 'projects', 'profiles'],
+  list: { select: '*, p:projects!stock_releases_project_id_fkey(code,name), t:projects!stock_releases_target_project_id_fkey(code)', columns: [
+          { k: r => r.p ? `${r.p.code} — ${r.p.name}` : '', label: 'From project' }, { k: r => r.t?.code || 'General stock', label: 'Release to' },
+          { k: 'reason', label: 'Reason' }, { k: 'total_value', label: 'Value released', fmt: 'money', cost: true, sum: true }] },
   defaults: () => ({ release_date: today() }),
   async afterLoad(ctx) {
     if (!ctx.grids.lines.length) return;
@@ -1238,14 +1240,22 @@ export const rel = {
     ctx.grids.lines.forEach(l => { const x = lots.find(q => q.id === l.lot_id); if (x) Object.assign(l, { _lot: x.lot_no, _loc: x.locations?.code, _avail: num(x.qty_on_hand) }); });
   },
   header: [
-    { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', required: true, wide: true, onChange: (d, v, ctx) => { ctx.grids.lines = []; } },
+    { k: 'project_id', label: 'Reserved for project (release from)', type: 'ref', ref: 'projects', required: true, wide: true, onChange: (d, v, ctx) => { ctx.grids.lines = []; } },
+    { k: 'target_project_id', label: 'Release to (blank = general stock)', type: 'ref', ref: 'projects', wide: true,
+      filter: (r, d) => r.status === 'OPEN' && r.project_type === 'PROJECT' && r.id !== d.project_id },
     { k: 'release_date', label: 'Date', type: 'date', required: true },
-    { k: 'approved_by', label: 'Approved / rejected by', type: 'ro', fmt: v => refLabel('profiles', v), show: d => !!d.approved_by },
-    { k: 'approval_comments', label: 'Approval comments', type: 'ro', show: d => !!d.approval_comments },
+    { k: 'requested_by', label: 'Requested by', type: 'ro', fmt: (v, d) => v ? `${refLabel('profiles', v)} · ${dt(d.submitted_at)}` : '', show: d => !!d.requested_by },
+    { k: 'fm_approved_by', label: '1. Factory Manager', type: 'ro', fmt: (v, d) => v ? `✔ ${refLabel('profiles', v)} · ${dt(d.fm_approved_at)}${d.fm_comments ? ' — ' + d.fm_comments : ''}` : 'pending',
+      show: d => ['PENDING_APPROVAL', 'PENDING_FINANCE', 'POSTED'].includes(d.status) },
+    { k: 'fin_approved_by', label: '2. Finance Manager', type: 'ro', fmt: (v, d) => v ? `✔ ${refLabel('profiles', v)} · ${dt(d.fin_approved_at)}${d.fin_comments ? ' — ' + d.fin_comments : ''}` : 'pending',
+      show: d => ['PENDING_APPROVAL', 'PENDING_FINANCE', 'POSTED'].includes(d.status) },
+    { k: 'approval_comments', label: 'Rejection reason', type: 'ro', wide: true, show: d => d.status === 'REJECTED' && !!d.approval_comments },
     roMoney('total_value', 'Value released AED', { show: d => d.status === 'POSTED' }),
-    { k: 'reason', label: 'Reason', type: 'textarea', full: true, required: true },
+    { k: 'reason', label: 'Reason / purpose', type: 'textarea', full: true, required: true },
   ],
-  headerNote: () => 'Moves stock that is still <b>reserved</b> for the project (never issued) back to general stock. Cost and receipt date stay the same. Material already issued to the floor comes back through <b>Return from floor</b> instead.',
+  headerNote: () => 'Stock bought for a project stays <b>reserved</b> for it from the GRN. Only the lots and quantities requested here can be freed — to <b>general stock</b> or to <b>another project</b> — ' +
+    'after approval by the <b>Factory Manager</b> and then the <b>Finance Manager</b>. Nothing moves until the final approval. Cost and receipt date stay the same. ' +
+    'Material already issued to the floor comes back through <b>Return to store</b> instead.',
   grids: [{ key: 'lines', title: 'Reserved lots to release', table: 'release_lines', fk: 'release_id', lineNo: false, addable: false, saveKeys: ['lot_id', 'item_id'],
     importers: [{ label: '⇩ Load reserved stock of project', run: ctx => loadReservedLots(ctx) }],
     fields: [itemF({ ro: true }), uomF,
@@ -1259,17 +1269,26 @@ export const rel = {
     for (const r of ctx.grids.lines) if (r._avail !== undefined && num(r.qty) > num(r._avail)) throw new Error(`${itemName(r.item_id)}: only ${qty(r._avail)} reserved in lot ${r._lot}`);
   },
   actions: ctx => [
-    { label: 'Submit for approval', cls: 'primary', show: statusIs(ctx, 'DRAFT', 'REJECTED') && hasRole('stores', 'production_incharge'), done: 'Sent to Factory Manager',
-      run: c => rpc('release_action', { p_rel: c.doc.id, p_action: 'SUBMIT' }) },
-    { label: '✔ Approve & release', cls: 'ok', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'), confirm: 'Release this stock to general stock? Other projects will be able to use it.', done: 'Released to general stock',
-      run: c => rpc('release_action', { p_rel: c.doc.id, p_action: 'APPROVE' }) },
-    { label: '✖ Reject', cls: 'bad', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'),
+    { label: 'Submit for approval', cls: 'primary', show: statusIs(ctx, 'DRAFT', 'REJECTED') && hasRole('stores', 'production_incharge', 'purchase', 'factory_manager'),
+      done: 'Sent to the Factory Manager', run: c => rpc('release_action', { p_rel: c.doc.id, p_action: 'SUBMIT' }) },
+    { label: '✔ Approve (Factory Manager)', cls: 'ok', show: statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager'), done: 'Approved — sent to Finance for the final approval',
+      run: async c => { const v = await ask({ title: 'Approve release', fields: [{ k: 'c', label: 'Comments (optional)', type: 'textarea' }], okText: 'Approve' });
+        if (v) return rpc('release_action', { p_rel: c.doc.id, p_action: 'APPROVE', p_comments: v.c || null }); } },
+    { label: '✔ Final approval & release (Finance)', cls: 'ok', show: statusIs(ctx, 'PENDING_FINANCE') && hasRole('finance'),
+      confirm: `Release the requested quantities to ${ctx.doc.target_project_id ? refLabel('projects', ctx.doc.target_project_id) : 'general stock'}? The stock moves now.`,
+      done: 'Released', run: c => rpc('release_action', { p_rel: c.doc.id, p_action: 'APPROVE' }) },
+    { label: '✖ Reject', cls: 'bad', show: (statusIs(ctx, 'PENDING_APPROVAL') && hasRole('factory_manager')) || (statusIs(ctx, 'PENDING_FINANCE') && hasRole('finance')),
       run: async c => { const r = await reason('Reject release'); if (r) return rpc('release_action', { p_rel: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
+    { label: 'Cancel request', show: statusIs(ctx, 'DRAFT', 'PENDING_APPROVAL', 'PENDING_FINANCE', 'REJECTED') && hasRole('stores', 'production_incharge', 'purchase', 'factory_manager'),
+      confirm: 'Cancel this release request?', run: c => rpc('release_action', { p_rel: c.doc.id, p_action: 'CANCEL' }) },
     { label: '🖨 PDF', reload: false, run: c => makePdf({ title: 'Project Stock Release', no: c.doc.release_no, date: c.doc.release_date, subtitle: label(c.doc.status),
-        meta: [['Project', refLabel('projects', c.doc.project_id)], ['Reason', c.doc.reason || ''], ['Approved by', refLabel('profiles', c.doc.approved_by) || '-']],
+        meta: [['From project', refLabel('projects', c.doc.project_id)], ['Release to', c.doc.target_project_id ? refLabel('projects', c.doc.target_project_id) : 'General stock'],
+               ['Reason', c.doc.reason || ''], ['Requested by', refLabel('profiles', c.doc.requested_by) || '-'],
+               ['Factory Manager', c.doc.fm_approved_by ? `${refLabel('profiles', c.doc.fm_approved_by)} (${dt(c.doc.fm_approved_at)})` : '-'],
+               ['Finance Manager', c.doc.fin_approved_by ? `${refLabel('profiles', c.doc.fin_approved_by)} (${dt(c.doc.fin_approved_at)})` : '-']],
         columns: [{ h: 'Item', k: r => itemName(r.item_id) }, { h: 'Lot', k: '_lot' }, { h: 'Location', k: '_loc' }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty released', k: r => qty(r.qty), align: 'right' },
                   ...(canSeeCost() ? [{ h: 'Value', k: r => money(r.value), align: 'right' }] : [])],
-        rows: c.grids.lines, signatures: ['Stores', 'Production In-charge', 'Factory Manager'] }) },
+        rows: c.grids.lines, signatures: ['Requested by', 'Factory Manager', 'Finance Manager'] }) },
   ],
 };
 
