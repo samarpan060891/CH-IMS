@@ -42,6 +42,18 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
 - **Reports**: stock in hand, by lot/location, stock-out, overstock & non-moving, TOC buffer status, aging, ABC, valuation by category, project consumption, expiry, payables, open invoices, GRN-not-invoiced, tools with workers, calibration, stock ledger.
 - **PDFs**: PO, GRN, material request, **issue slip**, return notes, transfer, count sheet, scrap note, disposal gate pass, debit note, payment voucher.
 
+## Dashboards
+Each user lands on the dashboard of their role:
+- **Management (Factory Manager):** approvals, running projects, stock / payables / receivables KPIs, production, budgets, stock charts.
+- **Finance:** bank, cash and cheques in hand, receivables, payables, revenue, profit, VAT, unbilled work, project billing.
+- **Purchase:** stock-outs, red buffers, items to order, open and late POs.
+- **Stores:** stock KPIs, expiring lots, charts, valuation.
+- **Production (In-charge, Shop Floor):** open and late orders, stages, QC, machines down, work-centre load.
+- **HR:** headcount, attendance today, leave, expiring documents, payroll status.
+- **Site Supervisor:** lands on the Site app.
+
+The Administrator has a **Dashboards** menu with every dashboard, showing each role's approvals.
+
 ## Valuation
 Per item class: Raw materials **FIFO**; consumables, packing, spares, scrap **weighted average**; machines/tools/equipment **fixed assets at landed cost**. An item may override FIFO/WAVG until it has transactions.
 

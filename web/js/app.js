@@ -5,7 +5,8 @@ import { dialog, FieldInput, Modal, Icon } from './components.js';
 import { DocList, DocEditor } from './docengine.js';
 import { DOCS } from './documents.js';
 import { MASTERS, MasterPage } from './masters.js';
-import { Dashboard, Reports, REPORTS, Replenishment, Assets, Users, Settings, BufferReview, ConsolidatePR, Holds } from './pages.js';
+import { Dashboard, DASHBOARDS } from './dashboards.js';
+import { Reports, REPORTS, Replenishment, Assets, Users, Settings, BufferReview, ConsolidatePR, Holds } from './pages.js';
 import { CONFIG } from './config.js';
 import { Importer } from './importer.js';
 import { Logo } from './logo.js';
@@ -31,6 +32,8 @@ const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', res
 // Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
 const MENU = [
+  // administrator: every role's dashboard (other users have the single Dashboard link for their role)
+  { g: 'Dashboards', icon: 'layout-dashboard', items: Object.entries(DASHBOARDS).map(([k, d]) => ({ to: d.route || 'dashboard/' + k, t: d.title, roles: [] })) },
   { g: 'Purchase', icon: 'shopping-cart', items: [
     { to: 'replenish', t: 'Replenishment', roles: ['purchase', 'stores', 'factory_manager'] },
     { to: 'buffers', t: 'Buffer review', roles: ['purchase', 'factory_manager', 'stores'], badge: 'dbm' },
@@ -211,7 +214,8 @@ const App = {
       if (a === 'books') return { comp: 'Books', props: { tab: b || 'tb', arg: c || null }, title: 'Books of account' };
       // site supervisors land on the phone-friendly site app
       if (a === 'site' || (a === 'dashboard' && state.profile?.role === 'site_supervisor')) return { comp: 'SiteApp', props: {}, title: 'Site' };
-      const simple = { dashboard: ['Dashboard', 'Dashboard'], replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
+      if (a === 'dashboard') return { comp: 'Dashboard', props: { kind: b || null }, title: 'Dashboard' };
+      const simple = { replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };
       return { comp: 'Dashboard', props: {}, title: 'Dashboard' };
     },
@@ -282,7 +286,7 @@ const App = {
   <div v-else class="shell">
     <nav class="side" :class="{open: sideOpen}">
       <div class="logo"><Logo :size="58" /><div>CitiCore<small>{{ company?.company_name }}</small></div></div>
-      <a class="home" href="#/dashboard" :class="{on: active('dashboard')}" @click="sideOpen=false"><Icon name="layout-dashboard" />Dashboard</a>
+      <a v-if="state.profile.role !== 'admin'" class="home" href="#/dashboard" :class="{on: active('dashboard')}" @click="sideOpen=false"><Icon name="layout-dashboard" />Dashboard</a>
       <div v-for="g in menu" :key="g.g" class="mgrp" :class="{open: openGroup === g.g}">
         <button class="mhead" @click="toggle(g.g)" :aria-expanded="openGroup === g.g">
           <Icon :name="g.icon" /><span>{{ g.g }}</span>
