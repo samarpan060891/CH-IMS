@@ -53,6 +53,7 @@ Each user lands on the dashboard of their role:
 - **Site Supervisor:** lands on the Site app.
 
 The Administrator has a **Dashboards** menu with every dashboard, showing each role's approvals.
+In **Users & roles** the Administrator can tick which dashboards each user sees (none ticked = the role's default); users with more than one get a Dashboards menu.
 
 ## Valuation
 Per item class: Raw materials **FIFO**; consumables, packing, spares, scrap **weighted average**; machines/tools/equipment **fixed assets at landed cost**. An item may override FIFO/WAVG until it has transactions.

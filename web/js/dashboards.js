@@ -25,6 +25,12 @@ export const DASHBOARDS = {
   site:       { title: 'Site', roles: ['site_supervisor'], route: 'site' },
 };
 export const dashboardFor = role => Object.keys(DASHBOARDS).find(k => DASHBOARDS[k].roles.includes(role)) || 'management';
+// dashboards a user may open: as set by the administrator, else all (administrator) or the role's own
+export function userDashboards(p = state.profile) {
+  const set = (p?.dashboards || []).filter(k => DASHBOARDS[k]);
+  if (set.length) return set;
+  return p?.role === 'admin' ? Object.keys(DASHBOARDS) : [dashboardFor(p?.role)];
+}
 
 export const Dashboard = {
   components: { DataTable, Badge },
@@ -32,10 +38,12 @@ export const Dashboard = {
   data: () => ({ loading: true, d: {}, myPending: [], charts: [] }),
   computed: {
     isAdmin: () => state.profile?.role === 'admin',
-    // non-admins always get their own dashboard, whatever the address says
-    k() { const own = dashboardFor(state.profile?.role); return this.isAdmin ? (DASHBOARDS[this.kind] && !DASHBOARDS[this.kind].route ? this.kind : 'management') : own; },
+    // only dashboards granted to the user open, whatever the address says
+    allowed() { return userDashboards().filter(k => !DASHBOARDS[k].route); },
+    k() { return this.allowed.includes(this.kind) ? this.kind : (this.allowed[0] || dashboardFor(state.profile?.role)); },
     cfg() { return DASHBOARDS[this.k]; },
-    viewRole() { return this.isAdmin ? this.cfg.roles[0] : state.profile?.role; },
+    // approvals: the user's own; the administrator sees those of the dashboard's role
+    viewRole() { const r = state.profile?.role; return this.cfg.roles.includes(r) || !this.isAdmin ? r : this.cfg.roles[0]; },
     cost() { return canSeeCost(); },
     stock() { return this.d.stock || []; },
     stockValue() { return (this.d.val || []).filter(v => v.kind === 'STOCK').reduce((s, v) => s + num(v.value), 0); },
@@ -204,12 +212,12 @@ export const Dashboard = {
   template: `<div>
     <div class="row" style="margin-bottom:10px">
       <h2 style="margin:0;font-size:18px">{{ cfg.title }} dashboard</h2>
-      <span class="muted small" v-if="isAdmin">· showing approvals of the {{ label(viewRole) }} role</span>
+      <span class="muted small" v-if="viewRole !== $root.state.profile.role">· showing approvals of the {{ label(viewRole) }} role</span>
       <span class="spacer"></span><button class="btn sm" @click="load">⟳ Refresh</button>
     </div>
 
     <div class="card" v-if="has('pending') && myPending.length">
-      <h3>Waiting for {{ isAdmin ? label(viewRole) : 'your action' }} ({{ myPending.length }})</h3>
+      <h3>Waiting for {{ viewRole !== $root.state.profile.role ? label(viewRole) : 'your action' }} ({{ myPending.length }})</h3>
       <DataTable :columns="[{k:'type',label:'Document'},{k:'no',label:'No.'},{k:'date',label:'Created',fmt:'datetime'},{k:'status',label:'Status',fmt:'badge'}]" :rows="myPending" clickable @row="open" :searchable="false" />
     </div>
 

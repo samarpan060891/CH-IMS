@@ -1,6 +1,7 @@
 // Reports, replenishment, tool crib / assets, users, settings (dashboards are in dashboards.js)
 import { sb, state, must, run, rpc, hasRole, canSeeCost, go, loadRefs, loadRef, refRow, refLabel, money, qty, aed, dt, label, num, today, toast, ROLES, loadCompany, refreshPending } from './lib.js';
 import { DataTable, Modal, FieldInput, RefSelect, Badge, ask } from './components.js';
+import { DASHBOARDS, userDashboards } from './dashboards.js';
 
 const AGE_ORDER = ['0-30', '31-60', '61-90', '91-180', '181-365', '365+'];
 
@@ -741,15 +742,26 @@ export const Assets = {
 export const Users = {
   components: { DataTable, Modal },
   data: () => ({ rows: [], loading: true, edit: null, nu: null, busy: false }),
-  computed: { roles() { return Object.entries(ROLES).map(([v, l]) => ({ v, l })); } },
+  computed: {
+    roles() { return Object.entries(ROLES).map(([v, l]) => ({ v, l })); },
+    dashKeys: () => Object.keys(DASHBOARDS),
+  },
   async mounted() { await this.load(); },
   methods: {
+    DASHBOARDS,
     async load() { this.loading = true; await run(async () => { this.rows = must(await sb.from('profiles').select('*').order('created_at')); }); this.loading = false; },
-    open(r) { this.edit = { ...r }; },
+    // ticked = the dashboards the user sees; none ticked = the role's default
+    open(r) { this.edit = { ...r, _dash: [...(r.dashboards || [])] }; },
+    dashText(r) { return userDashboards(r).map(k => DASHBOARDS[k].title).join(', ') + (r.dashboards?.length ? '' : ' (default)'); },
+    defaultDash(role) { return userDashboards({ role }).map(k => DASHBOARDS[k].title).join(', '); },
     async save() {
       const e = this.edit;
-      const ok = await run(async () => must(await sb.from('profiles').update({ full_name: e.full_name, role: e.role, is_active: e.is_active, employee_code: e.employee_code }).eq('id', e.id)), 'User updated');
-      if (ok) { this.edit = null; this.load(); loadRef('profiles', true); }
+      const dashboards = e._dash.length ? this.dashKeys.filter(k => e._dash.includes(k)) : null;
+      const ok = await run(async () => must(await sb.from('profiles').update({ full_name: e.full_name, role: e.role, is_active: e.is_active, employee_code: e.employee_code, dashboards }).eq('id', e.id)), 'User updated');
+      if (ok) {
+        if (e.id === state.profile?.id) state.profile.dashboards = dashboards;
+        this.edit = null; this.load(); loadRef('profiles', true);
+      }
     },
     async create() {
       const u = this.nu;
@@ -777,13 +789,19 @@ export const Users = {
     <div class="row" style="margin-bottom:12px"><span class="muted small">Create each user here with a temporary password and role — they can sign in straight away (no email needed). Use Reset password when someone forgets theirs.</span><span class="spacer"></span>
       <button class="btn primary" @click="nu={email:'',password:'',full_name:'',role:'shop_floor'}">+ Create user</button></div>
     <div class="card"><DataTable :rows="rows" :loading="loading" clickable @row="open" filename="users"
-      :columns="[{k:'full_name',label:'Name'},{k:'email',label:'Email'},{k:r=>$root.ROLES[r.role],label:'Role'},{k:'employee_code',label:'Emp code'},{k:r=>r.is_active?'ACTIVE':'BLOCKED',label:'Status',fmt:'badge'},{k:'created_at',label:'Created',fmt:'date'}]" /></div>
+      :columns="[{k:'full_name',label:'Name'},{k:'email',label:'Email'},{k:r=>$root.ROLES[r.role],label:'Role'},{k:'employee_code',label:'Emp code'},{k:dashText,label:'Dashboards'},{k:r=>r.is_active?'ACTIVE':'BLOCKED',label:'Status',fmt:'badge'},{k:'created_at',label:'Created',fmt:'date'}]" /></div>
     <Modal v-if="edit" :title="'User — ' + edit.email" small @close="edit=null">
       <div class="grid">
         <label class="f full">Full name<input v-model="edit.full_name"></label>
         <label class="f">Role<select v-model="edit.role"><option v-for="r in roles" :value="r.v">{{ r.l }}</option></select></label>
         <label class="f">Employee code<input v-model="edit.employee_code"></label>
         <label class="f">Active<span class="row"><input type="checkbox" v-model="edit.is_active"> can log in</span></label>
+        <div class="f full"><span>Dashboards this user sees</span>
+          <div class="row" style="flex-wrap:wrap;gap:6px 14px;margin-top:4px">
+            <label v-for="k in dashKeys" :key="k" class="row small" style="gap:4px"><input type="checkbox" :value="k" v-model="edit._dash">{{ DASHBOARDS[k].title }}</label>
+          </div>
+          <span class="small muted">None ticked = the role's default ({{ defaultDash(edit.role) }}). With more than one, the user gets a Dashboards menu; the first ticked (in this order) opens at sign-in.</span>
+        </div>
       </div>
       <template #footer><button class="btn" @click="resetPw(edit)">Reset password</button><span class="spacer"></span><button class="btn" @click="edit=null">Close</button><button class="btn primary" @click="save">Save</button></template>
     </Modal>
