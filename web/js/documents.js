@@ -2,7 +2,7 @@
 // adjustments, scrap, disposals, purchase returns, vendor invoices, debit notes, payments.
 import { reactive } from 'vue';
 import { sb, state, must, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, toast } from './lib.js';
-import { ask } from './components.js';
+import { ask, namePick, CURRENCIES } from './components.js';
 import { makePdf } from './pdf.js';
 
 // shared dynamic option lists for ref fields ({id,label})
@@ -192,7 +192,7 @@ export const po = {
     { k: 'po_date', label: 'PO date', type: 'date', required: true },
     { k: 'po_type', label: 'Type', type: 'select', options: ['LOCAL', 'IMPORT'], required: true,
       onChange: (d, v, ctx) => ctx.grids.lines.forEach(r => { r.vat_rate = v === 'IMPORT' ? 0 : num(refRow('items', r.item_id)?.vat_rate ?? 5); }) },
-    { k: 'currency', label: 'Currency', type: 'text', required: true },
+    { k: 'currency', label: 'Currency', type: 'select', required: true, options: CURRENCIES },
     { k: 'exchange_rate', label: 'Exchange rate to AED', type: 'number', required: true },
     { k: 'payment_term_id', label: 'Payment terms', type: 'ref', ref: 'payment_terms', required: true },
     { k: 'delivery_date', label: 'Delivery date', type: 'date' },
@@ -342,7 +342,7 @@ export const grn = {
     { k: 'vendor_dn_date', label: 'DN date', type: 'date', show: d => !['OPENING'].includes(d.receipt_type) },
     { k: 'vendor_invoice_no', label: 'Vendor invoice no.', show: d => ['PO', 'NON_PO'].includes(d.receipt_type) },
     { k: 'vendor_invoice_date', label: 'Invoice date', type: 'date', show: d => ['PO', 'NON_PO'].includes(d.receipt_type) },
-    { k: 'currency', label: 'Currency', ro: d => d.receipt_type === 'PO', cost: true },
+    { k: 'currency', label: 'Currency', type: 'select', options: CURRENCIES, ro: d => d.receipt_type === 'PO', cost: true },
     { k: 'exchange_rate', label: 'Exchange rate to AED', type: 'number', cost: true },
     { k: 'vehicle_no', label: 'Vehicle no.' },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
@@ -612,7 +612,7 @@ async function loadMrIntoIssue(ctx, mrId) {
 }
 export const issue = {
   key: 'issue', title: 'Material Issues', single: 'Issue Slip', table: 'material_issues', noField: 'issue_no', dateField: 'issue_date',
-  statuses: ['DRAFT', 'POSTED'], createRoles: ['stores'],
+  statuses: ['DRAFT', 'POSTED'], createRoles: ['stores'], saveKeys: ['received_by_name'],
   refs: ['items', 'projects', 'cost_centers', 'locations', 'employees'],
   list: { select: '*, projects(code,name), cost_centers(code), material_requests(mr_no)', columns: [
     { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : r.cost_centers?.code, label: 'Project / CC' },
@@ -634,8 +634,9 @@ export const issue = {
     { k: 'issue_date', label: 'Issue date', type: 'date', required: true },
     { k: 'from_location_id', label: 'Issue from', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock && r.loc_type !== 'QUARANTINE',
       onChange: async (d, v, ctx) => { ctx.grids.lines.forEach(r => { r.lot_id = null; }); await fillAvail(ctx, 'lines', v); await loadLotOpts(ctx); } },
-    { k: 'received_by_employee_id', label: 'Received by (employee)', type: 'ref', ref: 'employees', onChange: (d, v) => { const e = refRow('employees', v); if (e) d.received_by_name = e.name; } },
-    { k: 'received_by_name', label: 'Received by (name)' },
+    { k: 'received_by_employee_id', label: 'Received by (employee)', type: 'ref', ref: 'employees', filter: r => r.is_active,
+      onChange: (d, v) => { d.received_by_name = refRow('employees', v)?.name || null; } },
+    { k: 'received_by_name', label: 'Received by (typed in earlier)', type: 'ro', show: d => !d.received_by_employee_id && !!d.received_by_name },
     roMoney('total_value', 'Issue value AED', { show: d => d.status === 'POSTED' }),
     { k: 'budget_note', label: 'Over-budget approval', type: 'ro', wide: true, fmt: (v, d) => v ? `${refLabel('profiles', d.budget_approved_by)}: ${v}` : '', show: d => !!d.budget_approved_by },
     { k: 'ack_status', label: 'Receipt acknowledgement', type: 'ro', fmt: v => label(v || ''), show: d => !!d.ack_status },
@@ -789,10 +790,10 @@ export const ret = {
   statuses: ['DRAFT', 'PENDING_PI', 'PENDING_FM', 'SUBMITTED', 'POSTED', 'CANCELLED'], createRoles: ['stores', 'shop_floor', 'production_incharge', 'site_supervisor'],
   // floor drafts and submits; Stores verifies (can change qty / condition) and posts
   canEdit: ctx => (ctx.doc.status === 'DRAFT' && hasRole('stores', 'shop_floor', 'production_incharge', 'site_supervisor')) || (ctx.doc.status === 'SUBMITTED' && hasRole('stores')),
-  refs: ['items', 'locations'],
+  refs: ['items', 'locations', 'employees'],
   list: { select: '*, material_issues(issue_no, projects(code), cost_centers(code))', columns: [{ k: r => r.material_issues?.issue_no, label: 'Issue' },
     { k: r => r.material_issues?.projects?.code || r.material_issues?.cost_centers?.code, label: 'Project / CC' }, { k: 'returned_by_name', label: 'Returned by' }, { k: 'total_value', label: 'Value', fmt: 'money', cost: true, sum: true }] },
-  defaults: () => ({ return_date: today(), to_location_id: locId('MS'), returned_by_name: state.profile?.full_name || '' }),
+  defaults: () => ({ return_date: today(), to_location_id: locId('MS'), returned_by_name: (state.refs.employees || []).find(e => e.name === state.profile?.full_name)?.name || null }),
   async onNew(ctx, parts) { await loadPostedIssues(); if (parts[0] === 'issue' && parts[1]) { ctx.doc.issue_id = parts[1]; await loadIssueIntoReturn(ctx, parts[1]); } },
   async afterLoad(ctx) {
     await loadPostedIssues(ctx.doc.issue_id);
@@ -803,7 +804,7 @@ export const ret = {
     { k: 'issue_id', label: 'Against issue slip', type: 'ref', refOptions: () => opts.issues, required: true, wide: true, onChange: (d, v, ctx) => v && loadIssueIntoReturn(ctx, v) },
     { k: 'return_date', label: 'Return date', type: 'date', required: true },
     { k: 'to_location_id', label: 'Return to location', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock },
-    { k: 'returned_by_name', label: 'Returned by' },
+    { k: 'returned_by_name', label: 'Returned by', ...namePick('employees') },
     roMoney('total_value', 'Credit value AED', { show: d => d.status === 'POSTED' }),
     { k: 'offcut_comments', label: 'Offcut comments', type: 'ro', wide: true, show: d => !!d.offcut_comments },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
@@ -1024,7 +1025,7 @@ export const disposal = {
   statuses: ['DRAFT', 'PENDING_APPROVAL', 'PENDING_FINANCE', 'POSTED', 'REJECTED'], createRoles: ['stores'],
   // Stores drafts; Finance confirms sale rates & receipt at the final step
   canEdit: ctx => (['DRAFT', 'REJECTED'].includes(ctx.doc.status) && hasRole('stores')) || (ctx.doc.status === 'PENDING_FINANCE' && hasRole('finance')),
-  refs: ['items', 'locations', 'profiles'],
+  refs: ['items', 'locations', 'profiles', 'customers'], saveKeys: ['buyer_name', 'buyer_trn'],
   list: { select: '*', columns: [{ k: 'method', label: 'Method', fmt: 'label' }, { k: 'buyer_name', label: 'Buyer' }, { k: 'gate_pass_no', label: 'Gate pass' }, { k: 'total_amount', label: 'Sale value', fmt: 'money', cost: true, sum: true }] },
   defaults: () => ({ disposal_date: today(), method: 'SALE', vat_rate: 5, location_id: locId('SY') }),
   async afterLoad(ctx) { if (ctx.doc.status !== 'POSTED') await fillAvail(ctx, 'lines', ctx.doc.location_id); },
@@ -1032,9 +1033,12 @@ export const disposal = {
     { k: 'method', label: 'Disposal method', type: 'select', required: true, options: ['SALE', 'RECYCLE', 'FREE_DISPOSAL', 'LANDFILL'] },
     { k: 'disposal_date', label: 'Date', type: 'date', required: true },
     { k: 'location_id', label: 'From location', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock },
-    { k: 'buyer_name', label: 'Buyer / contractor', required: true },
-    { k: 'buyer_trn', label: 'Buyer TRN' },
-    { k: 'buyer_contact', label: 'Buyer contact' },
+    // scrap buyers / recyclers are customers (TRN and contact come from the customer master)
+    { k: 'customer_id', label: 'Buyer / contractor', type: 'ref', ref: 'customers', required: true, wide: true, filter: r => r.status === 'ACTIVE',
+      onChange: (d, v) => { const c = refRow('customers', v); d.buyer_name = c?.name || null; d.buyer_trn = c?.trn || null; } },
+    { k: 'buyer_name', label: 'Buyer (typed in earlier)', type: 'ro', show: d => !d.customer_id && !!d.buyer_name },
+    { k: 'buyer_trn', label: 'Buyer TRN', type: 'ro', show: d => !!d.buyer_trn },
+    { k: 'buyer_contact', label: 'Buyer contact person' },
     { k: 'gate_pass_no', label: 'Gate pass no.' },
     { k: 'vehicle_no', label: 'Vehicle no.' },
     { k: 'weighbridge_ticket', label: 'Weighbridge ticket' },
@@ -1193,7 +1197,7 @@ export const inv = {
     { k: 'vendor_invoice_no', label: 'Vendor tax invoice no.', required: true },
     { k: 'invoice_date', label: 'Invoice date', type: 'date', required: true },
     { k: 'po_id', label: 'PO', type: 'ref', refOptions: () => opts.vpos },
-    { k: 'currency', label: 'Currency', required: true },
+    { k: 'currency', label: 'Currency', type: 'select', required: true, options: CURRENCIES },
     { k: 'exchange_rate', label: 'Exchange rate', type: 'number', required: true },
     { k: 'payment_term_id', label: 'Payment terms', type: 'ref', ref: 'payment_terms' },
     { k: 'due_date', label: 'Due date (blank = from terms)', type: 'date' },
@@ -1312,11 +1316,11 @@ export const pay = {
     { k: 'vendor_id', label: 'Vendor', type: 'ref', ref: 'vendors', required: true, wide: true, onChange: async (d, v, ctx) => { ctx.grids.alloc = []; await loadVendorDocs(v); await loadVendorPos(v); } },
     { k: 'payment_date', label: 'Payment date', type: 'date', required: true },
     { k: 'mode', label: 'Mode', type: 'select', required: true, options: ['BANK_TRANSFER', 'CHEQUE', 'PDC', 'CASH', 'LC'] },
-    { k: 'bank_name', label: 'Bank' },
+    { k: 'bank_name', label: 'Bank', type: 'lookup', list: 'BANK' },
     { k: 'reference_no', label: 'Cheque / transfer ref' },
     { k: 'cheque_date', label: 'Cheque (PDC) date', type: 'date', show: d => ['CHEQUE', 'PDC'].includes(d.mode) },
     { k: 'amount_aed', label: 'Amount AED', type: 'number', required: true },
-    { k: 'currency', label: 'Paid currency' },
+    { k: 'currency', label: 'Paid currency', type: 'select', options: CURRENCIES },
     { k: 'fc_amount', label: 'Foreign currency amount', type: 'number', show: d => d.currency && d.currency !== 'AED' },
     { k: 'po_id', label: 'Advance against PO', type: 'ref', refOptions: () => opts.vpos },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },

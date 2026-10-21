@@ -23,9 +23,10 @@ import { ApprovalsApp, myQueues } from './approve.js';
 import { ReceiveApp } from './receive.js';
 import { EXP_DOCS, PettyCash } from './expenses.js';
 import { PROV_DOCS, Provisions } from './provisions.js';
+import { MDR_DOCS } from './masterreq.js';
 import { MachineRates } from './machinerates.js';
 
-Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS);
+Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS, MDR_DOCS);
 
 const ALL = null;
 // short menu names for reports (full titles show on the report page)
@@ -148,6 +149,8 @@ const MENU = [
     ...['tools', 'calibration'].map(rep),
   ] },
   { g: 'Masters', icon: 'database', items: [
+    { to: 'd/mdr', t: '➕ Requests for new entries', roles: ALL, badge: 'mdr' },
+    { to: 'm/lookups', t: 'Drop-down lists', roles: ['hr_officer', 'finance', 'stores', 'purchase', 'factory_manager', 'production_incharge'] },
     { to: 'import/items', t: 'Excel import', roles: ['stores', 'purchase', 'finance'] },
     { to: 'm/items', t: 'Items', roles: ALL },
     { to: 'm/locations', t: 'Locations', roles: ['stores', 'factory_manager'] },
@@ -283,7 +286,7 @@ const App = {
         state.profile = must(await sb.from('profiles').select('*').eq('id', session.user.id).single());
         if (state.profile.is_active) {
           await loadCompany();
-          await loadRefs(['items', 'locations', 'projects', 'vendors', 'cost_centers', 'uoms', 'profiles']);
+          await loadRefs(['items', 'locations', 'projects', 'vendors', 'cost_centers', 'uoms', 'profiles', 'lookups']);
           refreshPending();
         }
       });

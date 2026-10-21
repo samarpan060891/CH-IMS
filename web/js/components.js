@@ -1,6 +1,6 @@
 // Reusable UI components: searchable reference select, field input, data table, modal, dialogs
 import { reactive } from 'vue';
-import { state, REF, money, qty, dt, dtm, label, downloadCSV, canSeeCost } from './lib.js';
+import { sb, state, REF, money, qty, dt, dtm, label, downloadCSV, canSeeCost, hasRole, run, rpc, must, toast, loadRef, ROLES, MASTER_REQ, reqRoute, reqOwners, reqNoun } from './lib.js';
 
 // ---------- global dialog (confirm / prompt with fields) ----------
 export const dialog = reactive({ open: false, title: '', message: '', fields: [], values: {}, resolve: null, okText: 'OK', danger: false });
@@ -13,18 +13,59 @@ export function ask({ title, message = '', fields = [], okText = 'OK', danger = 
 }
 export const confirmBox = (title, message, danger = false) => ask({ title, message, danger, okText: 'Yes, continue' }).then(v => !!v);
 
+// Ask the keepers of a master to create a missing entry. Works from inside another dialog too (it is put back afterwards).
+export async function requestMaster({ kind, list, name = '', context = '' }) {
+  const noun = reqNoun(kind, list);
+  const owners = reqOwners(kind, list).map(r => ROLES[r]).join(' / ') || 'the administrator';
+  const outer = dialog.open ? { ...dialog, values: { ...dialog.values } } : null;
+  const v = await ask({
+    title: `Request a new ${noun}`,
+    message: `Only entries that are set up can be selected. ${owners} will be asked to create it; you are notified when it is ready to pick.`,
+    fields: [{ k: 'name', label: `Name of the ${noun}`, required: true, default: name },
+      { k: 'details', label: kind === 'VENDOR' || kind === 'CUSTOMER' ? 'Details (TRN, phone, contact, what they supply…)' : 'Details / why it is needed', type: 'textarea' }],
+    okText: 'Send request',
+  });
+  if (outer) Object.assign(dialog, outer);
+  if (!v) return null;
+  const no = await run(() => rpc('master_request_create', { p_kind: kind, p_name: v.name, p_details: v.details || null, p_list: list || null, p_context: context || null }));
+  if (no && no !== true) toast(`Request ${no} sent to ${owners}. You will be told when "${v.name.trim()}" can be selected.`, 'ok', 7000);
+  return no;
+}
+
+// Fields that store a name / code as text but must still be picked from a master (e.g. driver, unit of measure)
+export const namePick = (ref, more = {}) => ({ type: 'ref', request: { kind: MASTER_REQ[ref].kind },
+  refOptions: () => (state.refs[ref] || []).filter(r => r.is_active !== false && r.status !== 'BLOCKED').map(r => ({ id: r.name, label: r.name })), ...more });
+export const uomPick = (more = {}) => ({ type: 'ref', request: { kind: 'UOM' }, refOptions: () => (state.refs.uoms || []).map(u => ({ id: u.code, label: u.code })), ...more });
+export const CURRENCIES = ['AED', 'USD', 'EUR', 'GBP', 'CNY', 'INR', 'SAR', 'TRY', 'JPY'].map(v => ({ v, l: v }));
+
 // ---------- searchable reference select ----------
+// Missing entries can't be typed in: the bottom row requests one (or, for the people who keep that master, opens it to add one).
 export const RefSelect = {
-  props: { modelValue: null, refName: String, filter: Function, disabled: Boolean, placeholder: String, options: Array },
+  props: { modelValue: null, refName: String, filter: Function, disabled: Boolean, placeholder: String, options: Array, request: { type: [Object, Boolean], default: null }, context: String },
   emits: ['update:modelValue', 'pick'],
   data: () => ({ open: false, q: '', hi: 0 }),
   computed: {
+    req() {
+      if (this.request === false) return null;
+      if (this.request) return this.request;
+      if (this.options) return null;   // a document's own picks (lots, open invoices…), not a master
+      const m = MASTER_REQ[this.refName];
+      return m ? { kind: m.kind } : null;
+    },
+    reqText() {
+      if (!this.req) return '';
+      const noun = reqNoun(this.req.kind, this.req.list);
+      return this.isOwner ? `➕ Add a new ${noun}${this.req.kind === 'LOOKUP' ? '' : ' (opens in a new tab)'}` : `➕ Not listed? Request a new ${noun}`;
+    },
+    isOwner() { return !!this.req && hasRole(...reqOwners(this.req.kind, this.req.list)); },
     source() { return this.options || state.refs[this.refName] || []; },
     all() { return this.filter ? this.source.filter(this.filter) : this.source; },
     current() {
       if (!this.modelValue) return '';
       const r = this.source.find(r => r.id === this.modelValue);
-      return r ? this.lab(r) : '…';
+      if (r) return this.lab(r);
+      // an old typed-in name kept on a record, not in the master
+      return this.options && typeof this.modelValue === 'string' && !/^[0-9a-f-]{36}$/.test(this.modelValue) ? this.modelValue + ' (not in the list)' : '…';
     },
     list() {
       const q = this.q.toLowerCase().trim();
@@ -40,6 +81,29 @@ export const RefSelect = {
     focus() { if (this.disabled) return; this.open = true; this.q = ''; this.hi = 0; },
     blur() { setTimeout(() => { this.open = false; this.q = ''; }, 150); },
     pick(r) { this.$emit('update:modelValue', r ? r.id : null); this.$emit('pick', r); this.open = false; this.q = ''; },
+    async doRequest() {
+      const q = this.q.trim(), req = this.req;
+      this.open = false; this.q = '';
+      if (this.isOwner && req.kind === 'LOOKUP') {
+        // keepers of a list add the value straight away and it is picked
+        const v = await ask({ title: `Add a ${reqNoun(req.kind, req.list)}`, fields: [{ k: 'value', label: 'Value', required: true, default: q }], okText: 'Add' });
+        if (!v) return;
+        const row = await run(async () => must(await sb.from('lookup_values').upsert({ list_key: req.list, value: v.value.trim(), is_active: true }, { onConflict: 'list_key,value' }).select().single()), 'Added to the list');
+        if (row && row !== true) { await loadRef('lookups', true); this.$emit('update:modelValue', row.value); }
+        return;
+      }
+      if (this.isOwner) {
+        const to = reqRoute(req.kind);
+        if (to) {
+          window.open(location.pathname + '#/' + to, '_blank');
+          // the list is re-read when the user comes back to this tab
+          const ref = this.refName;
+          window.addEventListener('focus', () => { if (ref) loadRef(ref, true); }, { once: true });
+          return;
+        }
+      }
+      await requestMaster({ kind: req.kind, list: req.list, name: q, context: [this.context, location.hash.replace(/^#\//, '')].filter(Boolean).join(' · ') });
+    },
     key(e) {
       if (e.key === 'ArrowDown') { this.hi = Math.min(this.hi + 1, this.list.length - 1); e.preventDefault(); }
       else if (e.key === 'ArrowUp') { this.hi = Math.max(this.hi - 1, 0); e.preventDefault(); }
@@ -54,6 +118,7 @@ export const RefSelect = {
       <div v-if="modelValue" class="muted" @mousedown.prevent="pick(null)">— clear —</div>
       <div v-for="(r,i) in list" :key="r.id" :class="{hi: i===hi}" @mousedown.prevent="pick(r)">{{ lab(r) }}</div>
       <div v-if="!list.length" class="muted">No matches</div>
+      <div v-if="req" class="dd-req" @mousedown.prevent="doRequest">{{ reqText }}<span v-if="q.trim()"> “{{ q.trim() }}”</span></div>
     </div>
   </div>`,
 };
@@ -72,6 +137,14 @@ export const FieldInput = {
     },
     refOpts() { return typeof this.f.refOptions === 'function' ? this.f.refOptions(this.doc) : null; },
     refFilter() { return this.f.filter ? (r => this.f.filter(r, this.doc)) : null; },
+    // type 'lookup': a defined drop-down list (f.list); the text value is stored. An old typed-in value still shows, marked.
+    lookupOpts() {
+      const rows = (state.refs.lookups || []).filter(r => r.list_key === this.f.list && r.is_active).map(r => ({ id: r.value, label: r.value }));
+      const cur = this.doc[this.f.k];
+      if (cur && !rows.some(r => r.id === cur)) rows.unshift({ id: cur, label: cur + ' (not in the list)' });
+      return rows;
+    },
+    lookupReq() { return { kind: 'LOOKUP', list: this.f.list }; },
     roText() {
       const v = this.doc[this.f.k];
       if (this.f.fmt) return this.f.fmt(v, this.doc);
@@ -103,7 +176,8 @@ export const FieldInput = {
   <label v-if="!bare" class="f" :class="{wide: f.wide, full: f.full}">
     <span>{{ f.label }} <span v-if="f.required" class="req">*</span></span>
     <template v-if="f.type==='ro'"><input :value="roText" readonly></template>
-    <RefSelect v-else-if="f.type==='ref'" :modelValue="doc[f.k]" :refName="f.ref" :options="refOpts" :filter="refFilter" :disabled="ro" @update:modelValue="set" />
+    <RefSelect v-else-if="f.type==='ref'" :modelValue="doc[f.k]" :refName="f.ref" :options="refOpts" :filter="refFilter" :disabled="ro" :request="f.request" :context="f.label" @update:modelValue="set" />
+    <RefSelect v-else-if="f.type==='lookup'" :modelValue="doc[f.k]" refName="lookups" :options="lookupOpts" :disabled="ro" :request="lookupReq" :context="f.label" placeholder="Select…" @update:modelValue="set" />
     <select v-else-if="f.type==='select'" :value="doc[f.k] ?? ''" @change="set($event.target.value)" :disabled="ro">
       <option v-if="!f.required" value=""></option>
       <option v-for="o in opts" :value="o.v">{{ o.l }}</option>
@@ -118,7 +192,8 @@ export const FieldInput = {
   </label>
   <template v-else>
     <input v-if="f.type==='ro'" :value="roText" readonly>
-    <RefSelect v-else-if="f.type==='ref'" :modelValue="doc[f.k]" :refName="f.ref" :options="refOpts" :filter="refFilter" :disabled="ro" @update:modelValue="set" />
+    <RefSelect v-else-if="f.type==='ref'" :modelValue="doc[f.k]" :refName="f.ref" :options="refOpts" :filter="refFilter" :disabled="ro" :request="f.request" :context="f.label" @update:modelValue="set" />
+    <RefSelect v-else-if="f.type==='lookup'" :modelValue="doc[f.k]" refName="lookups" :options="lookupOpts" :disabled="ro" :request="lookupReq" :context="f.label" placeholder="Select…" @update:modelValue="set" />
     <select v-else-if="f.type==='select'" :value="doc[f.k] ?? ''" @change="set($event.target.value)" :disabled="ro">
       <option v-if="!f.required" value=""></option>
       <option v-for="o in opts" :value="o.v">{{ o.l }}</option>

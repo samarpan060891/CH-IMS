@@ -4,7 +4,7 @@
 // Every other module posts to the ledger automatically (gl_sync, every 15 minutes or on demand).
 import { reactive } from 'vue';
 import { sb, state, must, run, rpc, hasRole, go, today, refRow, refLabel, money, qty, dt, label, num, loadRefs, toast } from './lib.js';
-import { ask, confirmBox, Badge, DataTable, FieldInput } from './components.js';
+import { ask, confirmBox, Badge, DataTable, FieldInput, uomPick } from './components.js';
 import { makePdf } from './pdf.js';
 
 const isFin = () => hasRole('finance');
@@ -31,7 +31,7 @@ async function loadCustInvoices(customerId) {
 const lineAmt = r => Math.round((num(r.cum_qty) - num(r.prev_qty)) * num(r.rate) * 100) / 100;
 export const si = {
   key: 'si', title: 'Sales Invoices & Claims', single: 'Sales Invoice', table: 'sales_invoices', noField: 'inv_no', dateField: 'invoice_date',
-  statuses: ['DRAFT', 'SUBMITTED', 'CERTIFIED', 'POSTED', 'CANCELLED'], createRoles: ['finance', 'factory_manager'], refs: ['customers', 'projects', 'gl_accounts', 'profiles'],
+  statuses: ['DRAFT', 'SUBMITTED', 'CERTIFIED', 'POSTED', 'CANCELLED'], createRoles: ['finance', 'factory_manager'], refs: ['customers', 'projects', 'gl_accounts', 'profiles', 'uoms'],
   list: { select: '*, customers(name), projects(code)', columns: [{ k: 'inv_type', label: 'Type', fmt: 'label' }, { k: r => r.customers?.name, label: 'Customer' },
     { k: r => r.projects?.code, label: 'Project' }, { k: r => r.claim_no ? '#' + r.claim_no : '', label: 'Claim' }, { k: 'cert_no', label: 'Certificate' },
     { k: r => r.certified_gross ?? r.gross_claimed, label: 'Gross', fmt: 'money', sum: true }, { k: 'vat_amount', label: 'VAT', fmt: 'money', sum: true },
@@ -73,7 +73,7 @@ export const si = {
     newRow: ctx => ({ contract_qty: PROGRESS.includes(ctx.doc.inv_type) ? null : 1, prev_qty: 0, cum_qty: 1, rate: 0 }),
     fields: [
       { k: 'description', label: 'Description', width: '260px', required: true },
-      { k: 'uom', label: 'UoM', width: '60px' },
+      { k: 'uom', label: 'UoM', ...uomPick({ width: '80px' }) },
       { k: 'contract_qty', label: 'Contract qty', type: 'number', show: d => PROGRESS.includes(d.inv_type) },
       { k: 'rate', label: 'Rate', type: 'number', required: true },
       { k: 'prev_qty', label: 'Previous certified', type: 'ro', fmt: v => qty(v), show: d => PROGRESS.includes(d.inv_type) },
@@ -188,7 +188,7 @@ export const rcv = {
     { k: 'receipt_date', label: 'Date received', type: 'date', required: true },
     { k: 'project_id', label: 'Project (optional)', type: 'ref', ref: 'projects', filter: (r, d) => !d.customer_id || r.customer_id === d.customer_id },
     { k: 'mode', label: 'Mode', type: 'select', required: true, options: ['BANK_TRANSFER', 'CHEQUE', 'PDC', 'CASH'] },
-    { k: 'bank_name', label: 'Drawn on bank' }, { k: 'reference_no', label: 'Cheque / transfer ref' },
+    { k: 'bank_name', label: 'Drawn on bank', type: 'lookup', list: 'BANK' }, { k: 'reference_no', label: 'Cheque / transfer ref' },
     { k: 'cheque_date', label: 'Cheque date', type: 'date', show: d => ['CHEQUE', 'PDC'].includes(d.mode) },
     { k: 'amount', label: 'Amount AED', type: 'number', required: true },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },

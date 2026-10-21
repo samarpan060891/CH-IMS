@@ -2,7 +2,7 @@
 // floor stage board with supervisor time logs, FG receipt and dispatch notes to site.
 import { reactive } from 'vue';
 import { sb, state, must, run, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, loadRefs, toast } from './lib.js';
-import { ask, confirmBox, Badge, Icon, Modal } from './components.js';
+import { ask, confirmBox, Badge, Icon, Modal, namePick } from './components.js';
 import { makePdf } from './pdf.js';
 import { logoPng } from './logo.js';
 import { qrMatrix, qrText } from './scan.js';
@@ -595,7 +595,7 @@ async function loadFgForProject(ctx, woId = null) {
 export const dsp = {
   key: 'dsp', title: 'Deliveries to Site', single: 'Delivery Note', table: 'dispatch_notes', noField: 'dispatch_no', dateField: 'dispatch_date',
   statuses: ['DRAFT', 'POSTED', 'DELIVERED', 'CANCELLED'], createRoles: ['stores', 'factory_manager', 'site_supervisor'],
-  refs: ['items', 'projects', 'locations', 'profiles', 'boq_lines'],
+  refs: ['items', 'projects', 'locations', 'profiles', 'boq_lines', 'employees', 'vendors'],
   list: { select: '*, projects(code,name)', columns: [{ k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : '', label: 'Project / site' },
     { k: 'vehicle_no', label: 'Vehicle' }, { k: 'driver_name', label: 'Driver' }, { k: 'received_by_name', label: 'Received at site' },
     { k: 'total_value', label: 'Value AED', fmt: 'money', cost: true, sum: true }] },
@@ -619,7 +619,12 @@ export const dsp = {
       onChange: (d, v, ctx) => fgAvail(ctx) },
     { k: 'dispatch_date', label: 'Dispatch date', type: 'date', required: true },
     { k: 'delivery_address', label: 'Delivery address / unit', wide: true },
-    { k: 'vehicle_no', label: 'Vehicle no.' }, { k: 'driver_name', label: 'Driver' }, { k: 'driver_phone', label: 'Driver phone' },
+    { k: 'vehicle_no', label: 'Vehicle no.' },
+    // our driver (employee) or a hired transporter (vendor master)
+    { k: 'driver_name', label: 'Driver / transporter', ...namePick('employees', {
+      refOptions: () => [...(state.refs.employees || []).filter(e => e.is_active).map(e => ({ id: e.name, label: e.name })),
+        ...(state.refs.vendors || []).filter(v => v.status !== 'BLOCKED').map(v => ({ id: v.name, label: v.name + ' (hired)' }))] }) },
+    { k: 'driver_phone', label: 'Driver phone' },
     { k: 'total_value', label: 'Value charged to project AED', type: 'ro', fmt: v => money(v), cost: true, show: d => ['POSTED', 'DELIVERED'].includes(d.status) },
     { k: 'received_by_name', label: 'Received at site by', type: 'ro', fmt: (v, d) => v ? `${v} · ${dt(d.delivered_at)}` : '', show: d => d.status === 'DELIVERED' },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },

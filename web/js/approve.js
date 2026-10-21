@@ -1,8 +1,9 @@
 // Approvals app: phone-first inbox of everything waiting for the signed-in person's decision, across modules.
 // Each queue reuses the same server action as its full screen; "Open" goes to the full document for details or edits.
-import { sb, must, run, rpc, hasRole, canSeeCost, today, num, qty, money, dt, label, go, toast } from './lib.js';
+import { sb, state, must, run, rpc, hasRole, canSeeCost, today, num, qty, money, dt, label, go, toast, reqNoun } from './lib.js';
 import { ask, confirmBox, Badge } from './components.js';
 import { qcDecide } from './production.js';
+import { markCreated } from './masterreq.js';
 
 const ago = d => { const n = Math.floor((Date.now() - new Date(d).getTime()) / 864e5); return n <= 0 ? 'today' : n === 1 ? '1 day' : n + ' days'; };
 const reason = async title => (await ask({ title, fields: [{ k: 'r', label: 'Reason', type: 'textarea', required: true }], okText: 'Send', danger: true }))?.r;
@@ -50,6 +51,13 @@ const QUEUES = [
       .map(x => ({ id: x.id, no: x.receipt_no, title: `${x.production_orders?.wo_no} — ${x.production_orders?.description || ''}`, sub: `proposed ${qty(x.rework_qty)} rework, ${qty(x.scrap_qty)} scrap${x.remarks ? ' · ' + x.remarks : ''}`,
                    amount: num(x.rework_value) + num(x.scrap_value), at: x.created_at, link: 'd/wo/' + x.wo_id, raw: x })),
     actions: [{ label: '⚖ Decide', cls: 'ok', run: r => qcDecide(r.raw, r.raw.production_orders?.wo_no) }] },
+  // missing suppliers, accounts, list values… requested by users (only those this role keeps are visible)
+  { k: 'mdr', t: 'Requests for new entries', roles: ['purchase', 'finance', 'stores', 'factory_manager', 'hr_officer', 'production_incharge'],
+    load: async () => must(await sb.from('master_requests').select('*, profiles:requested_by(full_name)').eq('status', 'PENDING').neq('requested_by', state.profile?.id).order('created_at'))
+      .map(x => ({ id: x.id, no: x.req_no, title: x.name, sub: `New ${reqNoun(x.kind, x.list_key)} · ${x.profiles?.full_name || ''}${x.details ? ' · ' + x.details : ''}`, at: x.created_at, link: 'd/mdr/' + x.id, raw: x })),
+    actions: [
+      { label: '✔ Created / add', cls: 'ok', run: r => markCreated({ doc: r.raw }) },
+      { label: '✖ Not approved', cls: 'bad', run: async r => { const x = await reason('Not approving ' + r.title); if (!x) return false; return rpc('master_request_resolve', { p_id: r.id, p_action: 'REJECTED', p_comments: x }); } }] },
   { k: 'offcut', t: 'Offcuts keep / scrap', roles: ['production_incharge', 'factory_manager'],
     load: async () => {
       const st = [hasRole('production_incharge') && 'PENDING_PI', hasRole('factory_manager') && 'PENDING_FM'].filter(Boolean);

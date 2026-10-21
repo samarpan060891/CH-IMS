@@ -89,8 +89,10 @@ export const exp = {
   header: [
     { k: 'exp_type', label: 'Type', type: 'select', required: true, wide: true, options: () => staffOnly() ? EXP_TYPES.filter(t => ['CLAIM', 'PETTY'].includes(t.v)) : EXP_TYPES },
     { k: 'exp_date', label: 'Bill / receipt date', type: 'date', required: true },
-    { k: 'vendor_id', label: 'Supplier', type: 'ref', ref: 'vendors', wide: true, show: d => ['BILL', 'PAID'].includes(d.exp_type) },
-    { k: 'payee_name', label: 'Paid to (shop / payee)', show: d => d.exp_type !== 'BILL' },
+    // suppliers / shops come from the vendor master (request a new one from the drop-down); no typed-in payees
+    { k: 'vendor_id', label: 'Supplier / shop', type: 'ref', ref: 'vendors', wide: true, required: true, filter: r => r.status !== 'BLOCKED', show: d => ['BILL', 'PAID'].includes(d.exp_type) },
+    { k: 'vendor_id', label: 'Shop (optional)', type: 'ref', ref: 'vendors', wide: true, filter: r => r.status !== 'BLOCKED', show: d => d.exp_type === 'PETTY' },
+    { k: 'payee_name', label: 'Paid to (typed in earlier)', type: 'ro', show: d => !!d.payee_name && !d.vendor_id },
     { k: 'bill_no', label: 'Bill / receipt no.' },
     { k: 'due_date', label: 'Due date (blank = supplier terms)', type: 'date', show: d => d.exp_type === 'BILL' },
     { k: 'pay_account_id', label: 'Paid from (bank / cash)', type: 'ref', ref: 'gl_accounts', filter: isPayAcct, show: d => d.exp_type === 'PAID' },
@@ -111,7 +113,7 @@ export const exp = {
       { k: 'cost_center_id', label: 'Cost centre', type: 'ref', ref: 'cost_centers', required: true, width: '150px', filter: r => r.is_active },
       { k: 'project_id', label: 'Project (optional)', type: 'ref', ref: 'projects', width: '150px', filter: r => r.status === 'OPEN' },
       // repairs, spares, service of a specific machine: counts in its machine-rate calculation
-      { k: 'work_center_id', label: 'Machine (optional)', type: 'ref', ref: 'work_centers', width: '140px', filter: r => r.kind === 'MACHINE' && r.is_active },
+      { k: 'work_center_id', label: 'Machine / work centre (optional)', type: 'ref', ref: 'work_centers', width: '160px', filter: r => r.is_active },
       { k: 'amount', label: 'Amount (excl. VAT)', type: 'number', required: true },
       { k: 'vat_rate', label: 'VAT %', type: 'number' },
       { k: '_vat', label: 'VAT', type: 'ro', virtual: true, fmt: (v, r) => money(num(r.amount) * num(r.vat_rate) / 100) },
@@ -176,8 +178,9 @@ export const rexp = {
   header: [
     { k: 'title', label: 'Bill name (e.g. Factory rent, DEWA, Etisalat)', required: true, wide: true },
     { k: 'exp_type', label: 'Type', type: 'select', required: true, options: EXP_TYPES },
-    { k: 'vendor_id', label: 'Supplier', type: 'ref', ref: 'vendors', wide: true, show: d => ['BILL', 'PAID'].includes(d.exp_type) },
-    { k: 'payee_name', label: 'Paid to', show: d => d.exp_type !== 'BILL' },
+    { k: 'vendor_id', label: 'Supplier / shop', type: 'ref', ref: 'vendors', wide: true, required: true, filter: r => r.status !== 'BLOCKED', show: d => ['BILL', 'PAID'].includes(d.exp_type) },
+    { k: 'vendor_id', label: 'Shop (optional)', type: 'ref', ref: 'vendors', wide: true, filter: r => r.status !== 'BLOCKED', show: d => d.exp_type === 'PETTY' },
+    { k: 'payee_name', label: 'Paid to (typed in earlier)', type: 'ro', show: d => !!d.payee_name && !d.vendor_id },
     { k: 'pay_account_id', label: 'Paid from', type: 'ref', ref: 'gl_accounts', filter: isPayAcct, show: d => d.exp_type === 'PAID' },
     { k: 'petty_float_id', label: 'Petty cash float', type: 'ref', refOptions: () => xopts.floats, show: d => d.exp_type === 'PETTY' },
     { k: 'day_of_month', label: 'Bill day of month (1–28)', type: 'number', required: true },

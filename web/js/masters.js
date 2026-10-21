@@ -1,6 +1,8 @@
 // Master data: generic list + modal form, and per-master configuration
-import { sb, state, must, run, hasRole, loadRefs, loadRef, refRow, refLabel, money, qty, label, num } from './lib.js';
-import { FieldInput, DataTable, Modal } from './components.js';
+import { sb, state, must, run, hasRole, loadRefs, loadRef, refRow, refLabel, money, qty, label, num, LOOKUP_LISTS } from './lib.js';
+import { FieldInput, DataTable, Modal, CURRENCIES } from './components.js';
+
+const LOOKUP_KEEPERS = [...new Set(Object.values(LOOKUP_LISTS).flatMap(l => l.owners))];
 
 const EMIRATES = ['Abu Dhabi', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah'];
 
@@ -46,7 +48,7 @@ export const MASTERS = {
         { k: 'code', label: 'Item code', required: true },
         { k: 'name', label: 'Item name', required: true, wide: true },
         { k: 'uom_id', label: 'Stock UoM', type: 'ref', ref: 'uoms', required: true },
-        { k: 'brand', label: 'Brand / make' },
+        { k: 'brand', label: 'Brand / make', type: 'lookup', list: 'BRAND' },
         { k: 'specification', label: 'Specification (grade, finish, colour)', wide: true },
         { k: 'length_mm', label: 'Length mm (full sheet / length — needed for offcuts)', type: 'number' }, { k: 'width_mm', label: 'Width mm (panels; blank for timber)', type: 'number' }, { k: 'thickness_mm', label: 'Thickness mm', type: 'number' },
         { k: 'description', label: 'Description', type: 'textarea', full: true },
@@ -115,9 +117,9 @@ export const MASTERS = {
         { k: 'country', label: 'Country' }, { k: 'address', label: 'Address', type: 'textarea', full: true },
       ] },
       { title: 'Commercial & bank', fields: [
-        { k: 'currency', label: 'Currency', required: true }, { k: 'payment_term_id', label: 'Payment terms', type: 'ref', ref: 'payment_terms', required: true },
+        { k: 'currency', label: 'Currency', type: 'select', required: true, options: CURRENCIES }, { k: 'payment_term_id', label: 'Payment terms', type: 'ref', ref: 'payment_terms', required: true },
         { k: 'credit_limit', label: 'Credit limit AED', type: 'number' },
-        { k: 'bank_name', label: 'Bank' }, { k: 'bank_account_name', label: 'Account name' }, { k: 'iban', label: 'IBAN', wide: true }, { k: 'swift_code', label: 'SWIFT' },
+        { k: 'bank_name', label: 'Bank', type: 'lookup', list: 'BANK' }, { k: 'bank_account_name', label: 'Account name' }, { k: 'iban', label: 'IBAN', wide: true }, { k: 'swift_code', label: 'SWIFT' },
         { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
       ] },
     ],
@@ -185,7 +187,7 @@ export const MASTERS = {
     defaults: () => ({ currency: 'AED', is_preferred: false }),
     sections: [{ title: 'Price', fields: [
       { k: 'item_id', label: 'Item', type: 'ref', ref: 'items', required: true, wide: true }, { k: 'vendor_id', label: 'Vendor', type: 'ref', ref: 'vendors', required: true, wide: true },
-      { k: 'vendor_item_code', label: 'Vendor item code' }, { k: 'price', label: 'Price', type: 'number' }, { k: 'currency', label: 'Currency' },
+      { k: 'vendor_item_code', label: 'Vendor item code' }, { k: 'price', label: 'Price', type: 'number' }, { k: 'currency', label: 'Currency', type: 'select', options: CURRENCIES },
       { k: 'moq', label: 'Vendor MOQ', type: 'number' }, { k: 'lead_time_days', label: 'Lead time days', type: 'number' }, { k: 'is_preferred', label: 'Preferred vendor', type: 'check' }, { k: 'valid_to', label: 'Valid to', type: 'date' }] }],
   },
   locations: {
@@ -234,7 +236,7 @@ export const MASTERS = {
       { k: r => refRow('labour_grades', r.grade_id)?.name, label: 'Worker grade' }, { k: 'is_active', label: 'Active', fmt: 'bool' }],
     defaults: () => ({ is_active: true }),
     sections: [{ title: 'Employee', fields: [{ k: 'emp_code', label: 'Employee code', required: true }, { k: 'name', label: 'Name', required: true, wide: true },
-      { k: 'department', label: 'Department' }, { k: 'designation', label: 'Designation' },
+      { k: 'department', label: 'Department', type: 'lookup', list: 'DEPARTMENT' }, { k: 'designation', label: 'Designation', type: 'lookup', list: 'DESIGNATION' },
       { k: 'grade_id', label: 'Worker grade (production)', type: 'ref', ref: 'labour_grades' }, { k: 'is_active', label: 'Active', type: 'check' }] }],
     afterSave: () => loadRef('employees', true),
   },
@@ -311,6 +313,20 @@ export const MASTERS = {
       { k: 'sort_order', label: 'Sort order', type: 'number' }] }],
     note: 'Only the administrator can change classes. Valuation cannot change for items that already have transactions.',
     afterSave: () => loadRef('item_classes', true),
+  },
+  lookups: {
+    title: 'Drop-down Lists', single: 'List Value', table: 'lookup_values', order: 'list_key', editRoles: LOOKUP_KEEPERS,
+    columns: [{ k: r => LOOKUP_LISTS[r.list_key]?.noun || r.list_key, label: 'List', fmt: 'label' }, { k: 'value', label: 'Value' },
+      { k: 'sort_order', label: 'Order', n: true }, { k: 'is_active', label: 'Active', fmt: 'bool' }],
+    defaults: () => ({ sort_order: 50, is_active: true }),
+    sections: [{ title: 'List value', fields: [
+      { k: 'list_key', label: 'List', type: 'select', required: true, ro: d => !!d.id,
+        options: () => Object.entries(LOOKUP_LISTS).filter(([, l]) => hasRole(...l.owners)).map(([k, l]) => ({ v: k, l: label(l.noun) })) },
+      { k: 'value', label: 'Value (what people pick)', required: true, wide: true },
+      { k: 'sort_order', label: 'Order in the list', type: 'number' }, { k: 'is_active', label: 'Active (untick to stop it being picked)', type: 'check' }] }],
+    note: 'Departments, designations, nationalities, accommodation (HR) · banks (Finance) · brands (Stores / Purchase) · unit types and rooms / areas (Factory Manager). Everyone picks from these lists; missing values are requested and added here.',
+    validate: d => { d.value = (d.value || '').trim(); },
+    afterSave: () => loadRef('lookups', true),
   },
   uoms: {
     title: 'Units of Measure', single: 'UoM', table: 'uoms', order: 'code', editRoles: ['stores', 'purchase'],

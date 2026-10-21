@@ -36,8 +36,8 @@ export const MachineRates = {
       this.sel = r; this.calc = r.c;
       await run(async () => {
         this.history = must(await sb.from('machine_rate_reviews').select('*, profiles:applied_by(full_name)').eq('work_center_id', r.id).order('applied_at', { ascending: false }).limit(20));
-        // machines registered as assets (machine class), linked here or not linked anywhere yet
-        const a = must(await sb.from('assets').select('id,asset_tag,purchase_cost,purchase_date,work_center_id,items!inner(name,item_classes!inner(code))').eq('items.item_classes.code', 'MAC').not('status', 'in', '(SCRAPPED,DISPOSED,LOST)').order('asset_tag'));
+        // any asset in the register (machines, tools, vehicles…), linked here or not linked anywhere yet
+        const a = must(await sb.from('assets').select('id,asset_tag,purchase_cost,purchase_date,work_center_id,items(name,item_classes(code))').not('status', 'in', '(SCRAPPED,DISPOSED,LOST)').order('asset_tag'));
         this.machines = a.filter(x => x.work_center_id === r.id);
         this.free = a.filter(x => !x.work_center_id);
       });
@@ -46,9 +46,10 @@ export const MachineRates = {
       if (await run(() => rpc('machine_link_asset', { p_asset: a.id, p_wc: on ? this.sel.id : null }), on ? `${a.asset_tag} linked` : `${a.asset_tag} unlinked`)) await this.load();
     },
     async addMachine() {
-      if (!this.free.length) return toast('No unlinked machines in the asset register (machine class)', 'info');
-      const v = await ask({ title: 'Link a machine to ' + this.sel.name, fields: [{ k: 'a', label: 'Machine (asset)', type: 'select', required: true,
-        options: this.free.map(a => ({ v: a.id, l: `${a.asset_tag} — ${a.items.name} · ${money(a.purchase_cost)} (${dt(a.purchase_date)})` })) }], okText: 'Link' });
+      if (!this.free.length) return toast('Every asset in the register is already linked to a work centre — add the machine in Tool crib & assets first', 'info', 6000);
+      const opts = this.free.map(a => ({ id: a.id, label: `${a.asset_tag} — ${a.items?.name || ''}${a.items?.item_classes?.code ? ' [' + a.items.item_classes.code + ']' : ''} · ${money(a.purchase_cost)} (${dt(a.purchase_date)})` }));
+      const v = await ask({ title: 'Link a machine to ' + this.sel.name, message: 'All assets in the register not yet linked to a work centre — search by tag or name.',
+        fields: [{ k: 'a', label: 'Machine (asset)', type: 'ref', required: true, request: false, refOptions: () => opts }], okText: 'Link' });
       if (v) await this.link(this.free.find(a => a.id === v.a), true);
     },
     async editInputs() {

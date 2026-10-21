@@ -90,7 +90,7 @@ export const SiteApp = {
     // ---------- snags ----------
     async raiseSnag(u) {
       const v = await ask({ title: 'New snag' + (u ? ' — ' + u.unit_code : ''), message: 'You can take photos right after saving.',
-        fields: [{ k: 'd', label: 'What is wrong', type: 'textarea', required: true }, { k: 'l', label: 'Where (kitchen, master wardrobe …)' },
+        fields: [{ k: 'd', label: 'What is wrong', type: 'textarea', required: true }, { k: 'l', label: 'Where (room / area)', type: 'lookup', list: 'ROOM' },
           { k: 'c', label: 'Category', type: 'select', required: true, default: 'FINISH', options: ['FINISH', 'DAMAGE', 'ALIGNMENT', 'MISSING', 'HARDWARE', 'GAP_SEALANT', 'OTHER'] },
           { k: 's', label: 'Severity', type: 'select', required: true, default: 'MINOR', options: ['MINOR', 'MAJOR', 'CRITICAL'] },
           { k: 'r', label: 'Raised by', type: 'select', required: true, default: 'INTERNAL', options: [{ v: 'INTERNAL', l: 'Our inspection' }, { v: 'CLIENT', l: 'Client' }, { v: 'CONSULTANT', l: 'Consultant' }] },

@@ -2,7 +2,7 @@
 // own-team installation logs, and material planning (MRP) across all running projects.
 import { reactive } from 'vue';
 import { sb, state, must, run, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, loadRefs, toast } from './lib.js';
-import { ask, confirmBox, Badge } from './components.js';
+import { ask, confirmBox, Badge, uomPick, namePick } from './components.js';
 import { loadXlsx } from './importer.js';
 import { makePdf } from './pdf.js';
 
@@ -107,7 +107,7 @@ export const proj = {
   statuses: ['OPEN', 'ON_HOLD', 'CLOSED'], defaultTab: 'OPEN', createRoles: ['factory_manager', 'production_incharge'],
   canEdit: ctx => hasRole('factory_manager', 'production_incharge', 'finance') && ctx.doc.status !== 'CLOSED',
   headerEditable: () => planner(),
-  refs: ['items', 'bom_templates', 'profiles'],
+  refs: ['items', 'bom_templates', 'profiles', 'customers', 'uoms'], saveKeys: ['customer'],
   list: { select: '*', columns: [{ k: 'name', label: 'Project' }, { k: 'project_type', label: 'Type', fmt: 'label' }, { k: 'customer', label: 'Customer' },
     { k: 'end_date', label: 'Due', fmt: 'date' }, { k: r => r.billing_basis === 'UNIT' ? 'Unit-wise' : 'BOQ item', label: 'Billing' },
     { k: 'contract_value', label: 'Contract', fmt: 'money', cost: true, sum: true }] },
@@ -116,7 +116,9 @@ export const proj = {
     { k: 'code', label: 'Project code', required: true },
     { k: 'name', label: 'Project name', required: true, wide: true },
     { k: 'project_type', label: 'Type', type: 'select', required: true, options: [{ v: 'PROJECT', l: 'Customer project' }, { v: 'MTS', l: 'Make-to-stock order' }] },
-    { k: 'customer', label: 'Customer / developer' },
+    { k: 'customer_id', label: 'Customer / developer', type: 'ref', ref: 'customers', wide: true, show: d => d.project_type === 'PROJECT',
+      onChange: (d, v) => { d.customer = refRow('customers', v)?.name || null; } },
+    { k: 'customer', label: 'Customer (typed in earlier)', type: 'ro', show: d => !d.customer_id && !!d.customer },
     { k: 'site_address', label: 'Site address', wide: true },
     { k: 'start_date', label: 'Start', type: 'date' }, { k: 'end_date', label: 'Completion due', type: 'date' },
     { k: 'billing_basis', label: 'Billing basis', type: 'select', required: true, options: [{ v: 'BOQ_ITEM', l: 'Per BOQ item (qty × rate)' }, { v: 'UNIT', l: 'Per unit (unit price × progress / handover)' }] },
@@ -132,7 +134,7 @@ export const proj = {
   grids: [
     { key: 'units', title: 'Units (apartments / villas)', table: 'project_units', fk: 'project_id', order: 'unit_code', lineNo: false,
       newRow: () => ({ status: 'NOT_STARTED' }),
-      fields: [{ k: 'unit_code', label: 'Unit code', required: true, width: '100px' }, { k: 'unit_type', label: 'Unit type', width: '100px' },
+      fields: [{ k: 'unit_code', label: 'Unit code', required: true, width: '100px' }, { k: 'unit_type', label: 'Unit type', type: 'lookup', list: 'UNIT_TYPE', width: '110px' },
         { k: 'building', label: 'Building', width: '100px' }, { k: 'floor', label: 'Floor', width: '60px' },
         { k: 'sale_value', label: 'Unit price AED', type: 'number', cost: true },
         { k: 'status', label: 'Status', type: 'ro', fmt: v => label(v || 'NOT_STARTED') },
@@ -148,8 +150,8 @@ export const proj = {
         { k: 'category', label: 'Category', type: 'select', required: true, options: CATS, width: '130px' },
         { k: 'item_id', label: 'Item / product / service', type: 'ref', ref: 'items', width: '200px', filter: itemOk,
           onChange: (r, v) => { const it = refRow('items', v); if (it && !r.uom) r.uom = it.uoms?.code; } },
-        { k: 'uom', label: 'UoM', width: '60px' },
-        { k: 'unit_type', label: 'Unit type', width: '80px' }, { k: 'unit_codes', label: 'Unit codes', width: '120px' },
+        { k: 'uom', label: 'UoM', ...uomPick({ width: '80px' }) },
+        { k: 'unit_type', label: 'Unit type', type: 'lookup', list: 'UNIT_TYPE', width: '110px' }, { k: 'unit_codes', label: 'Unit codes', width: '120px' },
         { k: 'qty_per_unit', label: 'Qty / unit', type: 'number' },
         { k: 'qty', label: 'Qty (auto with units)', type: 'number', required: true },
         { k: 'sell_rate', label: 'Sell rate', type: 'number', cost: true },
@@ -271,7 +273,7 @@ async function loadProjectOpts(projectId) {
 export const ins = {
   key: 'ins', title: 'Installation Logs', single: 'Installation Log', table: 'install_logs', noField: 'log_no', dateField: 'log_date',
   statuses: ['DRAFT', 'POSTED'], createRoles: ['shop_floor', 'production_incharge', 'factory_manager', 'site_supervisor'],
-  refs: ['projects', 'labour_grades', 'profiles'],
+  refs: ['projects', 'labour_grades', 'profiles', 'employees', 'vendors'],
   list: { select: '*, projects(code,name)', columns: [{ k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : '', label: 'Project' },
     { k: 'team_leader', label: 'Team leader' }, { k: 'notes', label: 'Notes' }, { k: 'total_cost', label: 'Labour cost', fmt: 'money', cost: true, sum: true }] },
   defaults: () => ({ log_date: today() }),
@@ -281,7 +283,10 @@ export const ins = {
     { k: 'project_id', label: 'Project / site', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT',
       onChange: (d, v) => loadProjectOpts(v) },
     { k: 'log_date', label: 'Date', type: 'date', required: true },
-    { k: 'team_leader', label: 'Team leader / subcontractor' },
+    // an employee, or a subcontractor from the vendor master
+    { k: 'team_leader', label: 'Team leader / subcontractor', ...namePick('employees', { wide: true,
+      refOptions: () => [...(state.refs.employees || []).filter(e => e.is_active).map(e => ({ id: e.name, label: e.name })),
+        ...(state.refs.vendors || []).filter(v => v.status !== 'BLOCKED').map(v => ({ id: v.name, label: v.name + ' (subcontractor)' }))] }) },
     { k: 'total_cost', label: 'Labour cost AED', type: 'ro', fmt: v => money(v), cost: true, show: d => d.status === 'POSTED' },
     { k: 'notes', label: 'Notes / issues on site', type: 'textarea', full: true },
   ],
@@ -390,7 +395,7 @@ const voEditable = ctx => ['DRAFT', 'REJECTED'].includes(ctx.doc.status) && hasR
 export const vo = {
   key: 'vo', title: 'Variation Orders', single: 'Variation Order', table: 'variation_orders', noField: 'vo_no', dateField: 'vo_date',
   statuses: ['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED'], createRoles: ['factory_manager', 'production_incharge', 'finance'],
-  canEdit: voEditable, refs: ['projects', 'items', 'profiles'],
+  canEdit: voEditable, refs: ['projects', 'items', 'profiles', 'uoms'],
   list: { select: '*, projects(code,name)', columns: [{ k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : '', label: 'Project' },
     { k: 'title', label: 'Title' }, { k: 'client_ref', label: 'Client ref' }, { k: 'value_change', label: 'Value change', fmt: 'money', cost: true, sum: true }] },
   defaults: () => ({ vo_date: today() }),
@@ -423,8 +428,8 @@ export const vo = {
       { k: 'description', label: 'Description', width: '180px', ro: r => r.change_type === 'OMIT' },
       { k: 'category', label: 'Category', type: 'select', options: CATS, width: '125px', ro: r => r.change_type !== 'ADD' },
       { k: 'item_id', label: 'Item / product / service', type: 'ref', ref: 'items', width: '180px', filter: (r, row) => !row.category || itemOk(r, row), ro: r => r.change_type === 'OMIT' },
-      { k: 'uom', label: 'UoM', width: '55px', ro: r => r.change_type === 'OMIT' },
-      { k: 'unit_type', label: 'Unit type', width: '80px', ro: r => r.change_type === 'OMIT' },
+      { k: 'uom', label: 'UoM', ...uomPick({ width: '80px', ro: r => r.change_type === 'OMIT' }) },
+      { k: 'unit_type', label: 'Unit type', type: 'lookup', list: 'UNIT_TYPE', width: '110px', ro: r => r.change_type === 'OMIT' },
       { k: 'unit_codes', label: 'Unit codes', width: '110px', ro: r => r.change_type === 'OMIT' },
       { k: 'qty_per_unit', label: 'Qty / unit', type: 'number', ro: r => r.change_type === 'OMIT' },
       { k: 'qty', label: 'New qty', type: 'number', ro: r => r.change_type === 'OMIT' },
@@ -582,7 +587,7 @@ export const snag = {
     { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT',
       onChange: (d, v) => { d.unit_id = null; d.boq_line_id = null; return loadProjectOpts(v); } },
     { k: 'unit_id', label: 'Unit', type: 'ref', refOptions: () => popts.units },
-    { k: 'location_text', label: 'Location in unit (kitchen, master wardrobe …)' },
+    { k: 'location_text', label: 'Location in unit (room / area)', type: 'lookup', list: 'ROOM' },
     { k: 'boq_line_id', label: 'BOQ line (optional)', type: 'ref', wide: true, refOptions: () => popts.boq },
     { k: 'description', label: 'Snag description', type: 'textarea', required: true, full: true },
     { k: 'category', label: 'Category', type: 'select', required: true, options: SNAG_CATS },

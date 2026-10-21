@@ -92,7 +92,36 @@ export const REF = {
   boq_lines: { table: 'boq_lines', order: 'line_no', select: 'id,project_id,line_no,boq_ref,description,category,item_id,qty,uom', label: r => `${r.boq_ref || r.line_no} — ${r.description}` },
   labour_grades: { table: 'labour_grades', order: 'sort_order', select: 'id,code,name,rate_per_hour,ot_rate_per_hour,is_active', label: r => r.name },
   bom_templates: { table: 'bom_templates', order: 'name', select: 'id,item_id,name,version,is_active', label: r => `${r.name} (v${r.version})` },
+  lookups: { table: 'lookup_values', order: 'sort_order', select: 'id,list_key,value,sort_order,is_active', label: r => r.value },
 };
+
+// No typed-in parameters: a missing supplier, account, list value… is requested from the people who keep that master
+// (same roles as master_owner_roles in the database). `to` is where an owner adds it.
+export const MASTER_REQ = {
+  vendors: { kind: 'VENDOR', noun: 'supplier', owners: ['purchase', 'finance'], to: 'm/vendors' },
+  customers: { kind: 'CUSTOMER', noun: 'customer', owners: ['finance', 'factory_manager'], to: 'm/customers' },
+  gl_accounts: { kind: 'GL_ACCOUNT', noun: 'account / cost head', owners: ['finance'], to: 'm/gl_accounts' },
+  cost_centers: { kind: 'COST_CENTER', noun: 'cost centre', owners: ['finance', 'factory_manager'], to: 'm/cost_centers' },
+  items: { kind: 'ITEM', noun: 'item', owners: ['stores', 'purchase'], to: 'm/items' },
+  uoms: { kind: 'UOM', noun: 'unit of measure', owners: ['stores', 'purchase'], to: 'm/uoms' },
+  projects: { kind: 'PROJECT', noun: 'project', owners: ['factory_manager', 'finance'], to: 'm/projects' },
+  employees: { kind: 'EMPLOYEE', noun: 'employee', owners: ['hr_officer', 'factory_manager'], to: () => hasRole('hr_officer') ? 'd/emp/new' : 'm/employees' },
+  work_centers: { kind: 'WORK_CENTER', noun: 'work centre', owners: ['factory_manager', 'finance'], to: 'm/work_centers' },
+};
+export const LOOKUP_LISTS = {
+  DEPARTMENT: { noun: 'department', owners: ['hr_officer'] },
+  DESIGNATION: { noun: 'designation', owners: ['hr_officer'] },
+  NATIONALITY: { noun: 'nationality', owners: ['hr_officer'] },
+  ACCOMMODATION: { noun: 'accommodation', owners: ['hr_officer'] },
+  BANK: { noun: 'bank', owners: ['finance'] },
+  BRAND: { noun: 'brand', owners: ['stores', 'purchase'] },
+  UNIT_TYPE: { noun: 'unit type', owners: ['factory_manager'] },
+  ROOM: { noun: 'room / area', owners: ['factory_manager', 'production_incharge'] },
+};
+export const REQ_KIND = Object.fromEntries([...Object.entries(MASTER_REQ).map(([ref, m]) => [m.kind, { ...m, ref }]), ['LOOKUP', { kind: 'LOOKUP', noun: 'list value' }]]);
+export const reqOwners = (kind, list) => kind === 'LOOKUP' ? LOOKUP_LISTS[list]?.owners || [] : REQ_KIND[kind]?.owners || [];
+export const reqRoute = kind => { const t = REQ_KIND[kind]?.to; return typeof t === 'function' ? t() : t; };
+export const reqNoun =(kind, list) => kind === 'LOOKUP' ? LOOKUP_LISTS[list]?.noun || 'list value' : REQ_KIND[kind]?.noun || kind;
 
 export async function loadRef(name, force = false) {
   if (state.refs[name] && !force) return state.refs[name];
@@ -220,6 +249,8 @@ export async function refreshPending() {
   if (hasRole('production_incharge', 'factory_manager')) p.snagVerify = await count('snags', q => q.eq('status', 'FIXED'));
   if (hasRole('site_supervisor') && !hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'POSTED'));
   if (hasRole('factory_manager', 'production_incharge', 'shop_floor')) p.down = await count('wc_downtime', q => q.eq('status', 'OPEN'));
+  // requests for new suppliers, accounts, list values… that this user's role keeps (they only see those, plus their own)
+  if (r !== 'shop_floor' && r !== 'site_supervisor') p.mdr = await count('master_requests', q => q.eq('status', 'PENDING').neq('requested_by', state.profile.id));
   state.pending = p;
   try { await loadNotifications(); } catch (e) { console.warn('notifications', e); }
 }

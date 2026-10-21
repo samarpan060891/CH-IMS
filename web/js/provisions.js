@@ -8,6 +8,10 @@ const monthStart = d => (d || today()).slice(0, 8) + '01';
 const monthName = m => new Date(m + 'T00:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 const isHead = r => !r.is_group && r.is_active && r.acc_type === 'EXPENSE' && !['PROD_ABSORBED', 'LABOUR_ABSORBED', 'MAT_CONSUMED', 'COGS', 'DEPRECIATION'].includes(r.system_key);
 
+const PCT_STEPS = [0, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 75, 80, 90, 100];
+const PCT_SMALL = [0, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10];
+const MONTH_STEPS = [3, 6, 9, 12, 18, 24, 36];
+
 // what each automation does, in the order shown
 const ITEMS = [
   { key: 'ACCRUALS', title: 'Accruals for bills not yet received', kind: 'doc',
@@ -49,15 +53,18 @@ export const Provisions = {
     async editParams(it) {
       const p = this.settings[it.key].params || {};
       let fields, toParams;
+      // percentages and periods are picked from set steps, not typed
+      const pick = (k, lbl, list, cur, unit) => ({ k, label: lbl, type: 'select', required: true, default: num(cur),
+        options: [...new Set([...list, num(cur)])].sort((a, b) => a - b).map(x => ({ v: x, l: x + unit })) });
       if (it.params === 'bands') {
         const b = p.bands || [];
-        fields = b.map((x, i) => ({ k: 'b' + i, label: `From ${x.from} ${it.basis} — %`, type: 'number', default: x.pct }));
+        fields = b.map((x, i) => pick('b' + i, `From ${x.from} ${it.basis}`, PCT_STEPS, x.pct, '%'));
         toParams = v => ({ bands: b.map((x, i) => ({ from: x.from, pct: num(v['b' + i]) })) });
       } else if (it.params === 'pct_months') {
-        fields = [{ k: 'p', label: '% of contract revenue', type: 'number', default: p.pct }, { k: 'm', label: 'Defects-liability period (months)', type: 'number', default: p.months }];
+        fields = [pick('p', '% of contract revenue', PCT_SMALL, p.pct, '%'), pick('m', 'Defects-liability period', MONTH_STEPS, p.months, ' months')];
         toParams = v => ({ pct: num(v.p), months: Math.max(1, Math.round(num(v.m))) });
       } else {
-        fields = [{ k: 'p', label: '% of unbilled earned value to recognise (100 = all)', type: 'number', default: p.pct }];
+        fields = [pick('p', 'Share of unbilled earned value to recognise (100% = all)', PCT_STEPS, p.pct, '%')];
         toParams = v => ({ pct: num(v.p) });
       }
       const v = await ask({ title: it.title + ' — settings', fields, okText: 'Save' });

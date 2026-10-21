@@ -1,7 +1,10 @@
 // Floor app: phone-first screen for the shop floor — raise a material request (search or scan items, name boards /
 // offcuts), follow my requests, approve them (Production In-charge) and confirm material received. Same server rules as the full screens.
 import { sb, state, must, run, rpc, hasRole, today, num, qty, dt, label, loadRefs, refRow, toast, go } from './lib.js';
-import { ask, confirmBox, Badge } from './components.js';
+import { ask, confirmBox, Badge, RefSelect, namePick } from './components.js';
+const BY_PICK = namePick('employees');
+// the signed-in user's employee name when it is in the employee master
+const myEmployeeName = () => (state.refs.employees || []).find(e => e.name === state.profile?.full_name)?.name || '';
 import { Scanner, parseCode } from './scan.js';
 
 const KEY = 'cc.floor.for';
@@ -17,12 +20,13 @@ function offcutQty(item, l, w, pcs) {
 const sizeText = r => `${qty(r.offcut_length_mm)}${r.offcut_width_mm ? ' × ' + qty(r.offcut_width_mm) : ''} mm × ${r.pieces || 1}`;
 
 export const FloorApp = {
-  components: { Badge, Scanner },
+  components: { Badge, Scanner, RefSelect },
   data: () => ({ tab: 'new', loading: false, busy: false, wos: [], projects: [], ccs: [], f: blank(), q: '', avail: {}, scanning: false,
                  mine: [], pending: [], receive: [], openId: null, fits: [],
                  issues: [], iq: '', rt: null, myReturns: [], ocPI: [], ocFM: [] }),
   computed: {
     isPI: () => hasRole('production_incharge'),
+    byOpts: () => BY_PICK.refOptions(), byReq: () => BY_PICK.request,
     isFM: () => hasRole('factory_manager'),
     canReturn: () => hasRole('shop_floor', 'production_incharge', 'stores'),
     approvals() { return this.pending.length + this.ocPI.length + this.ocFM.length; },
@@ -50,7 +54,7 @@ export const FloorApp = {
   },
   async mounted() {
     await run(async () => {
-      await loadRefs(['items', 'locations']);
+      await loadRefs(['items', 'locations', 'employees']);
       const [w, p, c] = await Promise.all([
         sb.from('production_orders').select('id,wo_no,description,project_id,status,projects(code,project_type)').in('status', ['RELEASED', 'IN_PROGRESS']).order('wo_no'),
         sb.from('projects').select('id,code,name,project_type').eq('status', 'OPEN').order('code'),
@@ -178,7 +182,7 @@ export const FloorApp = {
       this.issues = rows.filter(i => i.issue_lines.some(l => num(l.qty) > num(l.returned_qty)));
     },
     startReturn(i) {
-      this.rt = { issue: i, to: i.from_location_id, by: state.profile?.full_name || '', remarks: '',
+      this.rt = { issue: i, to: i.from_location_id, by: myEmployeeName(), remarks: '',
         lines: i.issue_lines.filter(l => num(l.qty) > num(l.returned_qty)).map(l => ({ issue_line_id: l.id, item_id: l.item_id, bal: num(l.qty) - num(l.returned_qty), qty: null, condition: 'GOOD', reason: '' })),
         offcuts: [] };
     },
@@ -283,7 +287,7 @@ export const FloorApp = {
         </div>
         <button v-if="sheet(l.item_id)" class="btn sm" style="margin-top:6px" @click="addOffcut(l)">✂ Add offcut piece</button>
       </div>
-      <label class="f"><span>Returned by</span><input v-model="rt.by"></label>
+      <label class="f"><span>Returned by</span><RefSelect v-model="rt.by" refName="employees" :options="byOpts" :request="byReq" context="Returned by (Floor app)" placeholder="Pick the employee…" /></label>
       <textarea v-model="rt.remarks" placeholder="Remarks (optional)" style="width:100%;margin:6px 0 8px"></textarea>
       <div class="small muted" v-if="rt.offcuts.length" style="margin-bottom:6px">Offcuts go to the Production In-charge (keep / scrap) and the Factory Manager before Stores receives them.</div>
       <button class="btn primary" style="width:100%;justify-content:center;padding:12px" :disabled="busy" @click="sendReturn">↩ Send return</button>

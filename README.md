@@ -70,7 +70,7 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   months (expense lines can say "spread over N months"; monthly release, catches up late schedules), **doubtful debts** (% by days overdue),
   **slow-moving stock** (% by days in stock), **warranty / defects** (% of contract revenue in the defects period less snag rework) and **contract work done
   not yet billed** (unbilled earned value). The four provisions are true-ups to a target balance, so re-running a month posts nothing extra. Percentages
-  and periods are set by Finance on the page.
+  and periods are picked by Finance on the page.
 - **Finance — payables**: vendor invoices (3-way match), payment vouchers (bank, cheque, PDC, cash, LC, advances), debit notes, net payables with aging.
 - **Finance — receivables**: customers master; project billing terms (advance %, advance recovery %, retention %, payment terms); sales invoices: advance invoice, progress claims filled from
   BOQ / unit progress (previous certified, cumulative, this claim) → submitted to the client → **payment certificate** (certified cumulative qty per line) → posted tax invoice with advance recovery,
@@ -80,6 +80,12 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   production receipts / deliveries, production labour + machine + overhead absorbed into WIP, production scrap, service certificates, site installation & snag labour, supplier invoices, debit notes,
   payments and returned cheques, scrap sales, salary advances, payroll accrual and payment, sales invoices and receipts; manual journals with reversal; month end (depreciation by asset class useful life,
   gratuity & leave-salary provision true-up); period close / reopen; trial balance, P&L, balance sheet, ledgers with bank reconciliation ticks, FTA VAT 201 return.
+- **Master data — no typed-in parameters**: suppliers, customers, accounts / cost heads, cost centres, items, units of measure, projects, employees and work centres are always
+  picked from their masters; departments, designations, nationalities, accommodation, banks, brands, unit types and rooms / areas from **Drop-down lists** (Masters), kept by
+  HR, Finance, Stores / Purchase or the Factory Manager. Expense payees are suppliers, scrap buyers are customers, drivers / team leaders / "returned by" are employees (or a
+  hired transporter / subcontractor), currencies and provision %s are fixed choices. When something is missing, the bottom of every drop-down offers **➕ Request a new …**:
+  the request (Masters → Requests for new entries, also in My approvals) notifies the people who keep that master; they create it (or add the list value in one click) and
+  mark it done, and the requester is told it can now be selected. The keepers themselves see **➕ Add a new …** instead. Old typed-in values still show, marked "not in the list".
 - **Reports**: stock in hand, by lot/location, stock-out, overstock & non-moving, TOC buffer status, aging, ABC, valuation by category, project consumption, expiry, payables, open invoices, GRN-not-invoiced, tools with workers, calibration, stock ledger.
 - **PDFs**: PO, GRN, material request, **issue slip**, return notes, transfer, count sheet, scrap note, disposal gate pass, debit note, payment voucher.
 
