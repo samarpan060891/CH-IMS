@@ -166,6 +166,7 @@ export const DocEditor = {
           }
         }
         this.removed = {};
+        if (this.cfg.afterSave) await this.cfg.afterSave(this);
       }, silent ? null : 'Saved');
       if (ok && this.isNew) { go(`d/${this.cfg.key}/${this.doc.id}`); return true; }
       if (ok) { this.dirty = false; await this.load(); }

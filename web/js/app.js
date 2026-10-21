@@ -13,14 +13,16 @@ import { CountSheet } from './counting.js';
 import { Labels } from './labels.js';
 import { Scanner, describeCode } from './scan.js';
 import { PROD_DOCS, StageBoard, QcApprovals } from './production.js';
+import { PROJ_DOCS, Mrp } from './projects.js';
 
-Object.assign(DOCS, PROD_DOCS);
+Object.assign(DOCS, PROD_DOCS, PROJ_DOCS);
 
 const ALL = null;
 // short menu names for reports (full titles show on the report page)
 const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', reserved: 'Reserved for projects', stockout: 'Stock-outs', overstock: 'Overstock & non-moving',
   expiry: 'Expiring stock', buffer: 'Buffer status', aging: 'Aging', abc: 'ABC analysis', valuation: 'Valuation', projects: 'Project consumption',
   invoices: 'Open invoices', grni: 'Received, not invoiced', tools: 'Tools with workers', calibration: 'Calibration due',
+  boqprog: 'BOQ progress & billing', unitprog: 'Unit progress & billing',
   jobcost: 'Job costing & margin', wcload: 'Work centre load & availability', downtime: 'Downtime analysis', fg: 'Finished goods stock', projprod: 'Project cost & margin' };
 // Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
@@ -60,11 +62,18 @@ const MENU = [
     { to: 'qc', t: 'QC approvals', roles: ['factory_manager', 'production_incharge'], badge: 'qc' },
     { to: 'd/down', t: 'Machine downtime', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'stores'], badge: 'down' },
     { to: 'd/bom', t: 'BOM templates', roles: ['production_incharge', 'factory_manager'] },
-    { to: 'd/dsp', t: 'Dispatch notes', roles: ['stores', 'factory_manager', 'production_incharge', 'finance'], badge: 'dsp' },
     { to: 'm/work_centers', t: 'Work centres', roles: ['factory_manager', 'finance', 'production_incharge'] },
     { to: 'm/labour_grades', t: 'Worker grades & rates', roles: ['factory_manager', 'finance'] },
     { sep: 'Production reports' },
-    ...['jobcost', 'wcload', 'downtime', 'fg', 'projprod'].map(rep),
+    ...['jobcost', 'wcload', 'downtime', 'fg'].map(rep),
+  ] },
+  { g: 'Projects', icon: 'building-community', items: [
+    { to: 'd/proj', t: 'Projects & BOQ', roles: ALL },
+    { to: 'mrp', t: 'Material planning (MRP)', roles: ['purchase', 'stores', 'production_incharge', 'factory_manager'] },
+    { to: 'd/ins', t: 'Installation logs', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'finance'] },
+    { to: 'd/dsp', t: 'Deliveries to site', roles: ['stores', 'factory_manager', 'production_incharge', 'finance'], badge: 'dsp' },
+    { sep: 'Progress & billing' },
+    ...['boqprog', 'unitprog', 'projprod'].map(rep),
   ] },
   { g: 'Finance', icon: 'report-money', items: [
     { to: 'd/inv', t: 'Vendor invoices', roles: ['finance', 'factory_manager'] },
@@ -136,7 +145,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -165,6 +174,7 @@ const App = {
       if (a === 'assets') return { comp: 'Assets', props: { tag: b || null }, title: 'Tool crib & assets' };
       if (a === 'floor') return { comp: 'StageBoard', props: { woId: b || null }, title: 'Stage board' };
       if (a === 'qc') return { comp: 'QcApprovals', props: {}, title: 'QC approvals' };
+      if (a === 'mrp') return { comp: 'Mrp', props: { projectId: b || null }, title: 'Material planning (MRP)' };
       const simple = { dashboard: ['Dashboard', 'Dashboard'], replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };
       return { comp: 'Dashboard', props: {}, title: 'Dashboard' };

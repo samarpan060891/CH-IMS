@@ -9,7 +9,7 @@ import { makePdf } from './pdf.js';
 export const opts = reactive({ pos: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [] });
 
 // ---------- common field builders ----------
-const isLotItem = r => r.is_active && r.item_classes?.tracking === 'LOT' && !r.item_classes?.is_scrap;
+const isLotItem = r => r.is_active && r.item_classes?.tracking === 'LOT' && !r.item_classes?.is_scrap && r.item_classes?.code !== 'SRV';
 const isScrapItem = r => r.is_active && r.item_classes?.is_scrap;
 const itemF = (extra = {}) => ({ k: 'item_id', label: 'Item', type: 'ref', ref: 'items', required: true, width: '260px', ...extra });
 const uomF = { k: '_uom', label: 'UoM', type: 'ro', virtual: true, fmt: (v, r) => refRow('items', r.item_id)?.uoms?.code || '' };
@@ -44,6 +44,9 @@ const availF = { k: '_avail', label: 'Available', type: 'ro', virtual: true, fmt
 const lineProjectF = (extra = {}) => ({ k: 'project_id', label: 'For project (blank = stock)', type: 'ref', ref: 'projects', width: '190px',
   filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT', ...extra });
 const locId = code => (state.refs.locations || []).find(l => l.code === code)?.id || null;
+// BOQ line of the line's project (links purchases and services to the project scope)
+const boqF = (extra = {}) => ({ k: 'boq_line_id', label: 'BOQ line', type: 'ref', ref: 'boq_lines', width: '180px',
+  filter: (r, row) => !!row.project_id && r.project_id === row.project_id, ro: row => !row.project_id, ...extra });
 
 function approvalsInfo(rows) {
   return {
@@ -65,7 +68,7 @@ const pr = {
   key: 'pr', title: 'Purchase Requisitions', single: 'Requisition', table: 'purchase_requisitions', noField: 'pr_no', dateField: 'pr_date',
   statuses: ['DRAFT', 'SUBMITTED', 'PARTIAL_PO', 'PO_CREATED', 'CANCELLED'],
   createRoles: ['stores', 'purchase', 'production_incharge', 'factory_manager'], editStatuses: ['DRAFT', 'SUBMITTED'],
-  refs: ['items', 'projects'],
+  refs: ['items', 'projects', 'boq_lines'],
   list: { select: '*, projects(code), material_requests(mr_no)', columns: [{ k: 'source', label: 'Source', fmt: 'label' }, { k: r => r.projects?.code || 'Stock', label: 'For' },
           { k: r => r.material_requests?.mr_no, label: 'From request' }, { k: 'required_date', label: 'Required', fmt: 'date' }, { k: 'remarks', label: 'Remarks' }] },
   defaults: () => ({ pr_date: today(), source: 'MANUAL' }),
@@ -75,7 +78,7 @@ const pr = {
   header: [
     { k: '_mr_no', label: 'Raised from material request', type: 'ro', virtual: true, show: d => !!d.mr_id },
     { k: 'pr_date', label: 'Date', type: 'date', required: true },
-    { k: 'source', label: 'Source', type: 'select', options: ['MANUAL', 'BUFFER', 'MATERIAL_REQUEST'], required: true },
+    { k: 'source', label: 'Source', type: 'select', options: ['MANUAL', 'BUFFER', 'MATERIAL_REQUEST', 'MRP'], required: true },
     { k: 'project_id', label: 'Project (optional)', type: 'ref', ref: 'projects' },
     { k: 'required_date', label: 'Required by', type: 'date' },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
@@ -83,7 +86,7 @@ const pr = {
   grids: [{
     key: 'lines', title: 'Items required', table: 'pr_lines', fk: 'pr_id', order: 'line_no',
     newRow: ctx => ({ project_id: ctx.doc.project_id || null }),
-    fields: [itemF({ filter: r => r.is_active }), uomF, { k: 'qty', label: 'Qty', type: 'number', required: true }, lineProjectF(), roQty('ordered_qty', 'Ordered'),
+    fields: [itemF({ filter: r => r.is_active }), uomF, { k: 'qty', label: 'Qty', type: 'number', required: true }, lineProjectF(), boqF(), roQty('ordered_qty', 'Ordered'),
              { k: 'required_date', label: 'Required', type: 'date' }, { k: 'remarks', label: 'Remarks' }],
   }],
   actions: ctx => [
@@ -108,12 +111,12 @@ const pr = {
 // ======================================================================
 function poLineAmount(r) { return num(r.qty) * num(r.rate) * (1 - num(r.discount_pct) / 100); }
 async function loadPrLines(ctx, prId) {
-  const lines = must(await sb.from('pr_lines').select('id,item_id,qty,ordered_qty,required_date,pr_id,project_id').eq('pr_id', prId).order('line_no'));
+  const lines = must(await sb.from('pr_lines').select('id,item_id,qty,ordered_qty,required_date,pr_id,project_id,boq_line_id').eq('pr_id', prId).order('line_no'));
   for (const l of lines) {
     const bal = num(l.qty) - num(l.ordered_qty);
     if (bal <= 0) continue;
     if (ctx.grids.lines.some(x => x.pr_line_id === l.id)) continue;
-    const row = { item_id: l.item_id, qty: bal, pr_line_id: l.id, required_date: l.required_date, discount_pct: 0, project_id: l.project_id };
+    const row = { item_id: l.item_id, qty: bal, pr_line_id: l.id, required_date: l.required_date, discount_pct: 0, project_id: l.project_id, boq_line_id: l.boq_line_id };
     await poItemDefaults(row, ctx);
     ctx.grids.lines.push(row);
   }
@@ -137,7 +140,7 @@ export const po = {
   key: 'po', title: 'Purchase Orders', single: 'Purchase Order', table: 'purchase_orders', noField: 'po_no', dateField: 'po_date',
   statuses: ['DRAFT', 'PENDING_FM', 'PENDING_FINANCE', 'PENDING_TOP_MGMT', 'APPROVED', 'RELEASED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CLOSED', 'REJECTED', 'CANCELLED'],
   createRoles: ['purchase'], editStatuses: ['DRAFT', 'REJECTED'],
-  refs: ['items', 'vendors', 'payment_terms', 'locations', 'projects'],
+  refs: ['items', 'vendors', 'payment_terms', 'locations', 'projects', 'boq_lines'],
   list: { select: '*, vendors(name)', columns: [{ k: r => r.vendors?.name, label: 'Vendor' }, { k: 'po_type', label: 'Type', fmt: 'label' }, { k: 'currency', label: 'Cur' },
           { k: 'total_amount', label: 'Total', fmt: 'money', cost: true }, { k: 'total_aed', label: 'Total AED', fmt: 'money', cost: true, sum: true }, { k: 'delivery_date', label: 'Delivery', fmt: 'date' }] },
   defaults: () => ({ po_date: today(), po_type: 'LOCAL', currency: 'AED', exchange_rate: 1, delivery_location_id: locId('MS'), terms_conditions: state.company?.po_terms_conditions || '' }),
@@ -178,7 +181,7 @@ export const po = {
     fields: [
       itemF({ filter: r => r.is_active, onChange: (r, v, ctx) => poItemDefaults(r, ctx) }), uomF,
       { k: 'description', label: 'Description', width: '180px' },
-      lineProjectF(),
+      lineProjectF(), boqF(),
       { k: 'qty', label: 'Qty', type: 'number', required: true },
       { k: 'rate', label: 'Rate', type: 'number', required: true },
       { k: 'discount_pct', label: 'Disc %', type: 'number' },

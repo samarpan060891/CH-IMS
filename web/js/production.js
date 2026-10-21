@@ -9,6 +9,11 @@ import { qrMatrix, qrText } from './scan.js';
 import { loadXlsx } from './importer.js';
 
 const popts = reactive({ wos: [] });
+const dspProject = reactive({ id: null, units: [] });   // project of the open dispatch note (BOQ line / unit choices)
+async function setDspProject(id) {
+  dspProject.id = id || null;
+  dspProject.units = id ? must(await sb.from('project_units').select('id,unit_code').eq('project_id', id).order('unit_code')).map(u => ({ id: u.id, label: u.unit_code })) : [];
+}
 
 // ---------- field helpers ----------
 const isFG = r => r.is_active && r.item_classes?.code === 'FG';
@@ -555,22 +560,33 @@ async function fgAvail(ctx) {
   lots.forEach(l => { if (l.status === 'AVAILABLE' && (!l.project_id || l.project_id === ctx.doc.project_id)) m[l.item_id] = (m[l.item_id] || 0) + num(l.qty_on_hand); });
   rows.forEach(r => { r._avail = m[r.item_id] || 0; });
 }
+// everything reserved for the project at the "From" location: finished goods (by order) and bought-out items
 async function loadFgForProject(ctx, woId = null) {
   if (!ctx.doc.project_id && !woId) throw new Error('Choose the project first');
-  let q = sb.from('stock_lots').select('id,item_id,qty_on_hand,source_id,lot_no').eq('source_type', 'PRODUCTION').eq('status', 'AVAILABLE').gt('qty_on_hand', 0);
-  q = woId ? q.eq('source_id', woId) : q.eq('project_id', ctx.doc.project_id);
+  let q = sb.from('stock_lots').select('id,item_id,qty_on_hand,source_id,source_type,lot_no').eq('status', 'AVAILABLE').gt('qty_on_hand', 0);
+  q = woId ? q.eq('source_type', 'PRODUCTION').eq('source_id', woId) : q.eq('project_id', ctx.doc.project_id);
   if (ctx.doc.from_location_id) q = q.eq('location_id', ctx.doc.from_location_id);
   const lots = must(await q.order('received_date'));
-  if (!lots.length) throw new Error(woId ? 'Nothing from this order is left in the FG store' : 'No finished goods in the FG store for this project (MTS stock can be added line by line)');
-  const have = new Set(ctx.grids.lines.map(l => l.production_order_id));
-  lots.filter(l => !have.has(l.source_id)).forEach(l => ctx.grids.lines.push({ item_id: l.item_id, production_order_id: l.source_id, qty: num(l.qty_on_hand), remarks: null }));
+  if (!lots.length) throw new Error(woId ? 'Nothing from this order is left in the FG store' : 'No stock reserved for this project at this location (MTS / free stock can be added line by line)');
+  const grnLines = lots.filter(l => l.source_type === 'GRN').map(l => l.source_id);
+  const boqOf = grnLines.length ? Object.fromEntries(must(await sb.from('grn_lines').select('id,boq_line_id').in('id', grnLines)).map(g => [g.id, g.boq_line_id])) : {};
+  const key = l => l.source_type === 'PRODUCTION' ? 'W' + l.source_id : 'I' + l.item_id;
+  const have = new Set(ctx.grids.lines.map(l => l.production_order_id ? 'W' + l.production_order_id : 'I' + l.item_id));
+  const add = {};
+  for (const l of lots) {
+    if (have.has(key(l))) continue;
+    const r = add[key(l)] ||= { item_id: l.item_id, production_order_id: l.source_type === 'PRODUCTION' ? l.source_id : null, qty: 0,
+                                boq_line_id: l.source_type === 'GRN' ? boqOf[l.source_id] || null : null, remarks: null };
+    r.qty += num(l.qty_on_hand);
+  }
+  ctx.grids.lines.push(...Object.values(add));
   await fgAvail(ctx);
   ctx.dirty = true;
 }
 export const dsp = {
-  key: 'dsp', title: 'Dispatch Notes', single: 'Dispatch Note', table: 'dispatch_notes', noField: 'dispatch_no', dateField: 'dispatch_date',
+  key: 'dsp', title: 'Deliveries to Site', single: 'Delivery Note', table: 'dispatch_notes', noField: 'dispatch_no', dateField: 'dispatch_date',
   statuses: ['DRAFT', 'POSTED', 'DELIVERED', 'CANCELLED'], createRoles: ['stores', 'factory_manager'],
-  refs: ['items', 'projects', 'locations', 'profiles'],
+  refs: ['items', 'projects', 'locations', 'profiles', 'boq_lines'],
   list: { select: '*, projects(code,name)', columns: [{ k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : '', label: 'Project / site' },
     { k: 'vehicle_no', label: 'Vehicle' }, { k: 'driver_name', label: 'Driver' }, { k: 'received_by_name', label: 'Received at site' },
     { k: 'total_value', label: 'Value AED', fmt: 'money', cost: true, sum: true }] },
@@ -583,11 +599,14 @@ export const dsp = {
       if (p?.project_type === 'PROJECT') ctx.doc.project_id = w.project_id;
       await loadFgForProject(ctx, parts[1]);
     }
+    await setDspProject(ctx.doc.project_id);
   },
-  async afterLoad(ctx) { await loadWos(); if (ctx.doc.status === 'DRAFT') await fgAvail(ctx); },
+  async afterLoad(ctx) { await loadWos(); await setDspProject(ctx.doc.project_id); if (ctx.doc.status === 'DRAFT') await fgAvail(ctx); },
   header: [
-    { k: 'project_id', label: 'Project / site', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT' },
-    { k: 'from_location_id', label: 'From', type: 'ref', ref: 'locations', required: true, filter: r => r.loc_type === 'FG_STORE' && r.is_active, onChange: (d, v, ctx) => fgAvail(ctx) },
+    { k: 'project_id', label: 'Project / site', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT',
+      onChange: (d, v) => setDspProject(v) },
+    { k: 'from_location_id', label: 'From (FG store, factory store or site store)', type: 'ref', ref: 'locations', required: true,
+      filter: r => r.is_active && r.is_stock && !['QUARANTINE', 'SCRAP_YARD'].includes(r.loc_type), onChange: (d, v, ctx) => fgAvail(ctx) },
     { k: 'dispatch_date', label: 'Dispatch date', type: 'date', required: true },
     { k: 'delivery_address', label: 'Delivery address / unit', wide: true },
     { k: 'vehicle_no', label: 'Vehicle no.' }, { k: 'driver_name', label: 'Driver' }, { k: 'driver_phone', label: 'Driver phone' },
@@ -595,13 +614,17 @@ export const dsp = {
     { k: 'received_by_name', label: 'Received at site by', type: 'ro', fmt: (v, d) => v ? `${v} · ${dt(d.delivered_at)}` : '', show: d => d.status === 'DELIVERED' },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: () => 'Posting takes the finished goods out of the FG store (oldest first) and <b>charges their full production cost to the project</b>. Stock made for this project is used first, then MTS stock.',
-  grids: [{ key: 'lines', title: 'Finished goods dispatched', table: 'dispatch_lines', fk: 'dispatch_id', order: 'line_no',
-    importers: [{ label: '⬇ Load FG for this project', run: c => loadFgForProject(c) }],
+  headerNote: () => 'Posting takes the goods out of the chosen store (oldest first) and <b>charges their full cost to the project</b>. Stock reserved for this project is used first, then free / MTS stock. ' +
+    'Use it for finished goods from the FG store, bought-out items from the factory store, and to <b>hand over items delivered direct to the site store</b>.',
+  grids: [{ key: 'lines', title: 'Goods dispatched / handed over', table: 'dispatch_lines', fk: 'dispatch_id', order: 'line_no',
+    importers: [{ label: '⬇ Load project stock at this location', run: c => loadFgForProject(c) }],
     fields: [
-      { k: 'item_id', label: 'Product', type: 'ref', ref: 'items', required: true, width: '240px', filter: isFG, onChange: (r, v, ctx) => fgAvail(ctx) }, uomF(),
-      { k: '_avail', label: 'In FG store', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.status === 'DRAFT' },
+      { k: 'item_id', label: 'Item / product', type: 'ref', ref: 'items', required: true, width: '240px',
+        filter: r => r.is_active && r.item_classes?.tracking === 'LOT' && !['SRV'].includes(r.item_classes?.code) && !r.item_classes?.is_scrap, onChange: (r, v, ctx) => fgAvail(ctx) }, uomF(),
+      { k: '_avail', label: 'Available', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.status === 'DRAFT' },
       { k: 'production_order_id', label: 'Production order', type: 'ref', width: '150px', refOptions: () => popts.wos },
+      { k: 'boq_line_id', label: 'BOQ line', type: 'ref', ref: 'boq_lines', width: '180px', filter: (r, row) => r.project_id === dspProject.id },
+      { k: 'unit_id', label: 'Unit', type: 'ref', width: '110px', refOptions: () => dspProject.units },
       { k: 'qty', label: 'Qty', type: 'number', required: true }, { k: 'packages', label: 'Packages', type: 'number' },
       { k: 'value', label: 'Value', type: 'ro', fmt: v => money(v), cost: true, show: d => d.status !== 'DRAFT' },
       { k: 'remarks', label: 'Remarks' }] }],

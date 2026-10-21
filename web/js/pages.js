@@ -230,8 +230,24 @@ export const REPORTS = {
     { k: 'code', label: 'Code' }, { k: 'name', label: 'Project' }, { k: 'project_type', label: 'Type', fmt: 'label' }, { k: 'orders', label: 'Orders', n: true }, { k: 'wip_orders', label: 'In WIP', n: true },
     { k: 'contract_value', label: 'Contract value', fmt: 'money', sum: true },
     { k: 'wip_value', label: 'WIP', fmt: 'money', sum: true }, { k: 'fg_in_store', label: 'FG in store', fmt: 'money', sum: true }, { k: 'dispatched_value', label: 'Dispatched', fmt: 'money', sum: true },
+    { k: 'reserved_stock', label: 'Bought, not delivered', fmt: 'money', sum: true }, { k: 'services_cost', label: 'Subcontract / hire', fmt: 'money', sum: true },
+    { k: 'install_labour', label: 'Own installation', fmt: 'money', sum: true },
     { k: 'scrap_written_off', label: 'Scrap written off', fmt: 'money', sum: true }, { k: 'site_material', label: 'Other material issued', fmt: 'money', sum: true },
     { k: 'total_cost', label: 'Total cost', fmt: 'money', sum: true }, { k: 'margin', label: 'Margin', fmt: 'money', sum: true }, { k: 'margin_pct', label: 'Margin %', n: true }] },
+  boqprog: { title: 'BOQ progress & billing (per BOQ item)', src: 'v_boq_progress', order: 'project_code', columns: [
+    { k: 'project_code', label: 'Project' }, { k: r => r.billing_basis === 'UNIT' ? 'Unit-wise' : 'BOQ item', label: 'Billing' }, { k: 'boq_ref', label: 'Ref' },
+    { k: 'description', label: 'Description' }, { k: 'category', label: 'Category', fmt: 'label' }, { k: 'uom', label: 'UoM' }, { k: 'qty', label: 'BOQ qty', fmt: 'qty' },
+    { k: 'sell_rate', label: 'Rate', fmt: 'money', cost: true }, { k: 'contract_value', label: 'Contract value', fmt: 'money', cost: true, sum: true },
+    { k: 'wo_qty', label: 'On production', fmt: 'qty' }, { k: 'produced_qty', label: 'Produced', fmt: 'qty' }, { k: 'ordered_qty', label: 'Ordered', fmt: 'qty' }, { k: 'received_qty', label: 'Received / certified', fmt: 'qty' },
+    { k: 'delivered_qty', label: 'Delivered', fmt: 'qty' }, { k: 'installed_qty', label: 'Installed', fmt: 'qty' }, { k: 'installed_pct', label: '% installed', n: true },
+    { k: 'delivered_value', label: 'Delivered value', fmt: 'money', cost: true, sum: true }, { k: 'earned_value', label: 'Installed value (billable)', fmt: 'money', cost: true, sum: true },
+    { k: 'est_cost', label: 'Est. cost', fmt: 'money', cost: true, sum: true }, { k: 'actual_cost', label: 'Actual cost', fmt: 'money', cost: true, sum: true }] },
+  unitprog: { title: 'Unit progress & billing (unit-wise)', src: 'v_unit_progress', order: 'project_code', columns: [
+    { k: 'project_code', label: 'Project' }, { k: r => r.billing_basis === 'UNIT' ? 'Unit-wise' : 'BOQ item', label: 'Billing' }, { k: 'unit_code', label: 'Unit' },
+    { k: 'unit_type', label: 'Type' }, { k: 'building', label: 'Building' }, { k: 'floor', label: 'Floor' }, { k: 'status', label: 'Status', fmt: 'badge' },
+    { k: r => `${r.lines_done}/${r.boq_lines}`, label: 'BOQ lines done' }, { k: 'progress_pct', label: 'Progress %', n: true },
+    { k: 'sale_value', label: 'Unit price', fmt: 'money', cost: true, sum: true }, { k: 'boq_value', label: 'BOQ value', fmt: 'money', cost: true, sum: true },
+    { k: 'earned_value', label: 'Earned (billable)', fmt: 'money', cost: true, sum: true }, { k: 'handed_over_at', label: 'Handed over', fmt: 'date' }, { k: 'handed_over_to', label: 'To' }] },
 };
 
 export const Reports = {
