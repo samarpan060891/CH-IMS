@@ -33,6 +33,9 @@ import { MachineRates } from './machinerates.js';
 
 Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS, MDR_DOCS, SALES_DOCS, RFQ_DOCS, PM_DOCS);
 
+// build stamp: the deploy adds ?v=<commit> to every script and writes version.json; locally there is none
+const BUILD = new URL(import.meta.url).searchParams.get('v');
+
 const ALL = null;
 // short menu names for reports (full titles show on the report page)
 const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', reserved: 'Reserved for projects', stockout: 'Stock-outs', overstock: 'Overstock & non-moving',
@@ -231,7 +234,7 @@ const Login = {
 
 const App = {
   components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions, MachineRates, CashForecast, PdfPanel },
-  data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
+  data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null, newVersion: false }),
   watch: {
     // opening a page expands its menu group
     activeGroup: { immediate: true, handler(g) { if (g) this.openGroup = g; } },
@@ -325,6 +328,15 @@ const App = {
       dialog.open = false; dialog.resolve({ ...dialog.values });
     },
     dlgCancel() { dialog.open = false; dialog.resolve(null); },
+    // a push while the app is open: offer a reload (not forced, so unsaved work is not lost)
+    async checkVersion() {
+      if (!BUILD || this.newVersion) return;
+      try {
+        const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+        if (r.ok && (await r.json()).v !== BUILD) this.newVersion = true;
+      } catch { /* offline: try again later */ }
+    },
+    reload() { location.reload(); },
   },
   async mounted() {
     if (!this.openGroup) { try { this.openGroup = localStorage.getItem(OPEN_KEY) || null; } catch { /* storage unavailable */ } }
@@ -339,6 +351,8 @@ const App = {
       if (['SIGNED_IN', 'SIGNED_OUT'].includes(event)) await this.boot(session);
     });
     setInterval(() => { if (state.profile?.is_active) refreshPending(); }, 60000);
+    setInterval(() => this.checkVersion(), 300000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') this.checkVersion(); });
   },
   template: `
   <div v-if="!ready" class="boot">Loading…</div>
@@ -410,6 +424,7 @@ const App = {
     </template>
   </Modal>
   <PdfPanel />
+  <div v-if="newVersion" class="update-bar" role="status">A new version of CitiCore is ready. Save your work, then <button class="btn sm primary" @click="reload">Reload</button></div>
   <div class="toasts"><div v-for="t in state.toasts" :key="t.id" class="toast" :class="t.type">{{ t.msg }}</div></div>`,
 };
 

@@ -26,6 +26,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Version stamp: every script and the stylesheet get ?v=<commit>, so browsers fetch fresh files after each push
+      # (GitHub Pages lets browsers cache for 10 minutes). version.json tells open tabs a newer version is live.
+      - name: Stamp version
+        run: |
+          V="${GITHUB_SHA::8}"
+          sed -i -E "s#from '\./([A-Za-z0-9_-]+)\.js'#from './\1.js?v=$V'#g" web/js/*.js
+          sed -i -E "s#src=\"js/app\.js\"#src=\"js/app.js?v=$V\"#; s#href=\"css/app\.css\"#href=\"css/app.css?v=$V\"#" web/index.html
+          echo "{\"v\":\"$V\"}" > web/version.json
+          grep -c "?v=$V" web/index.html web/js/app.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
