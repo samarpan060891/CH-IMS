@@ -83,6 +83,9 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
 - **Maintenance costing**: cost centres MNT-MAC (machines) and MNT-FAC (factory building & facilities), both factory cost centres; office maintenance on ADM.
   Machine spares requested / issued to MNT-MAC can name the machine, as can repair bills and AMC recurring bills; these plus breakdown repair costs, depreciation and
   tooling make up each machine's rate in the machine-rate calculator. Building upkeep reaches products through the overhead % (factory overheads vs absorbed).
+  The **Maintenance** menu gathers breakdowns & planned stops, spares requests (phone and desk), repair bills, AMC contracts, machines, tool crib, the
+  machine-rate calculator and the reports *Maintenance cost by machine* (stops, hours down, breakdown repairs, bills / AMC and net store spares per month),
+  downtime analysis and calibration due.
 - **Documents & PDFs**: every document prints into a panel that slides in from the right (pages drawn on screen, also on phones) with Download, Print and Open in new
   tab; the 👁 button on each list row previews a document's PDF without opening it (quotations, sales / project orders, RFQs, POs, GRNs, job cards, delivery notes,
   sales and purchase invoices, vouchers, payslips, labels …).

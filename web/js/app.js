@@ -39,7 +39,7 @@ const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', res
   invoices: 'Open invoices', grni: 'Received, not invoiced', tools: 'Tools with workers', calibration: 'Calibration due',
   boqprog: 'BOQ progress & billing', unitprog: 'Unit progress & billing', snags: 'Snag register',
   leavebal: 'Leave balances', docexpiry: 'Document expiry', gratuity: 'Gratuity provision', attmonth: 'Monthly attendance',
-  jobcost: 'Job costing & margin', wcload: 'Work centre load & availability', downtime: 'Downtime analysis', fg: 'Finished goods stock', projprod: 'Project cost & margin' };
+  jobcost: 'Job costing & margin', wcload: 'Work centre load & availability', downtime: 'Downtime analysis', mntcost: 'Maintenance cost by machine', fg: 'Finished goods stock', projprod: 'Project cost & margin' };
 // Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
 const MENU = [
@@ -87,13 +87,24 @@ const MENU = [
     { to: 'floor', t: 'Stage board', roles: ['shop_floor', 'production_incharge', 'factory_manager'], badge: 'stages' },
     { to: 'd/wo', t: 'Production orders', roles: ['production_incharge', 'factory_manager', 'shop_floor', 'stores', 'finance'], badge: 'wo' },
     { to: 'qc', t: 'QC approvals', roles: ['factory_manager', 'production_incharge'], badge: 'qc' },
-    { to: 'd/down', t: 'Machine downtime', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'stores'], badge: 'down' },
     { to: 'd/bom', t: 'BOM templates', roles: ['production_incharge', 'factory_manager'] },
-    { to: 'm/work_centers', t: 'Work centres', roles: ['factory_manager', 'finance', 'production_incharge'] },
-    { to: 'machinerates', t: 'Machine-rate calculator', roles: ['factory_manager', 'finance', 'production_incharge'] },
     { to: 'm/labour_grades', t: 'Worker grades & rates', roles: ['factory_manager', 'finance'] },
     { sep: 'Production reports' },
-    ...['jobcost', 'wcload', 'downtime', 'fg'].map(rep),
+    ...['jobcost', 'wcload', 'fg'].map(rep),
+  ] },
+  // machines (MNT-MAC) and factory building / office (MNT-FAC): breakdowns, spares from store, repair & AMC bills, machine costs
+  { g: 'Maintenance', icon: 'tool', items: [
+    { to: 'd/down', t: 'Breakdowns & planned stops', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'stores'], badge: 'down' },
+    { to: 'floorapp', t: '📱 Spares & consumables (phone)', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager'] },
+    { to: 'd/mr', t: 'Spares requests', roles: ALL },
+    { to: 'd/exp', t: 'Repair bills & service claims', roles: ['finance', 'factory_manager', 'purchase', 'stores', 'production_incharge', 'shop_floor', 'site_supervisor', 'hr_officer'] },
+    { to: 'd/rexp', t: 'AMC & service contracts', roles: ['finance', 'factory_manager'] },
+    { sep: 'Machines' },
+    { to: 'm/work_centers', t: 'Machines & work centres', roles: ['factory_manager', 'finance', 'production_incharge'] },
+    { to: 'assets', t: 'Tool crib & assets', roles: ['stores', 'factory_manager', 'finance', 'production_incharge'] },
+    { to: 'machinerates', t: 'Machine-rate calculator', roles: ['factory_manager', 'finance', 'production_incharge'] },
+    { sep: 'Maintenance reports' },
+    ...['mntcost', 'downtime', 'calibration'].map(rep),
   ] },
   { g: 'Projects', icon: 'building-community', items: [
     { to: 'site', t: '📱 Site app', roles: ['site_supervisor', 'production_incharge', 'factory_manager'], badge: 'snag' },

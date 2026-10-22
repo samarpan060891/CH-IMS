@@ -100,6 +100,12 @@ export const REPORTS = {
     { k: 'status', label: 'Status', fmt: 'badge' }, { k: 'start_at', label: 'Stopped', fmt: 'datetime' }, { k: 'end_at', label: 'Restarted', fmt: 'datetime' },
     { k: 'hours', label: 'Hours', n: true, sum: true }, { k: 'description', label: 'What happened' }, { k: 'action_taken', label: 'Action taken' },
     { k: 'repair_cost', label: 'Repair cost', fmt: 'money', cost: true, sum: true }] },
+  mntcost: { title: 'Maintenance cost by machine and month', src: 'v_machine_maintenance', order: 'period_month', cost: true,
+    roles: ['factory_manager', 'finance', 'production_incharge'], columns: [
+    { k: 'period_month', label: 'Month', fmt: 'date' }, { k: 'code', label: 'Code' }, { k: 'name', label: 'Machine / work centre' },
+    { k: 'breakdowns', label: 'Stops', n: true, sum: true }, { k: 'down_hours', label: 'Hours down', n: true, sum: true },
+    { k: 'breakdown_repairs', label: 'Repairs on breakdowns', fmt: 'money', sum: true }, { k: 'bills_amc', label: 'Repair & AMC bills', fmt: 'money', sum: true },
+    { k: 'store_spares', label: 'Spares from store (net)', fmt: 'money', sum: true }, { k: 'total_cost', label: 'Total', fmt: 'money', sum: true }] },
   fg: { title: 'Finished goods in store', src: 'v_lot_values', filter: q => q.eq('class_code', 'FG'), order: 'received_date', columns: [
     { k: 'item_code', label: 'Product' }, { k: 'item_name', label: 'Description' }, { k: 'lot_no', label: 'Order / lot' }, { k: 'location_code', label: 'Location' },
     { k: r => r.project_id ? (refRow('projects', r.project_id)?.code || 'Project') : 'MTS stock', label: 'For' },
