@@ -49,7 +49,7 @@ export const REPORTS = {
     { k: 'item_code', label: 'Code' }, { k: 'item_name', label: 'Item' }, { k: 'class_name', label: 'Class' }, { k: 'category_name', label: 'Category' }, { k: 'location_code', label: 'Location' }, { k: 'lot_no', label: 'Lot' },
     { k: 'received_date', label: 'Received', fmt: 'date' }, { k: 'age_days', label: 'Age days', n: true }, { k: 'age_bucket', label: 'Bucket' }, { k: 'qty_on_hand', label: 'Qty', fmt: 'qty' }, { k: 'value', label: 'Value AED', fmt: 'money', cost: true, sum: true }] },
   abc: { title: 'ABC analysis (12-month consumption value)', src: 'v_abc_analysis', order: 'rank', cost: true, columns: [
-    { k: 'rank', label: '#', n: true }, { k: 'code', label: 'Code' }, { k: 'name', label: 'Item' }, { k: 'class_code', label: 'Class' }, { k: 'uom', label: 'UoM' }, { k: 'annual_qty', label: 'Annual qty', fmt: 'qty' },
+    { k: 'rank', label: 'Sr. No.', n: true }, { k: 'code', label: 'Code' }, { k: 'name', label: 'Item' }, { k: 'class_code', label: 'Class' }, { k: 'uom', label: 'UoM' }, { k: 'annual_qty', label: 'Annual qty', fmt: 'qty' },
     { k: 'annual_value', label: 'Annual value AED', fmt: 'money', sum: true }, { k: 'value_pct', label: '% value', n: true }, { k: 'cumulative_pct', label: 'Cumulative %', n: true }, { k: 'abc_class', label: 'ABC', fmt: 'badge' }] },
   valuation: { title: 'Valuation by category', src: 'v_valuation_by_category', cost: true, columns: [
     { k: 'kind', label: 'Kind', fmt: 'label' }, { k: 'class_code', label: 'Class' }, { k: 'class_name', label: 'Class name' }, { k: 'category_name', label: 'Category' }, { k: 'items', label: 'Items', n: true },

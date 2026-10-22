@@ -76,7 +76,7 @@ function salesPdf(c, kind) {
   if (kind === 'qt' && d.delivery_weeks) meta.push(['Delivery time', `${d.delivery_weeks} weeks from order`]);
   if (isProj(d)) meta.push(['Site', d.site_address || d.delivery_address || '-'], ['Retention', num(d.retention_pct) + '% per progress claim'],
     ['Billing', d.billing_basis === 'UNIT' ? 'Per unit, by progress' : 'Per BOQ item, by installed quantity']);
-  const cols = [{ h: isProj(d) ? 'Ref' : '#', k: r => isProj(d) ? (r.boq_ref || c.grids.lines.indexOf(r) + 1) : c.grids.lines.indexOf(r) + 1, w: 12 },
+  const cols = [{ h: isProj(d) ? 'Ref' : 'Sr. No.', k: r => isProj(d) ? (r.boq_ref || c.grids.lines.indexOf(r) + 1) : c.grids.lines.indexOf(r) + 1, w: 15 },
     { h: 'Description', k: r => r.description + (r.unit_type ? ` (${r.unit_type}${num(r.qty_per_unit) ? ' × ' + qty(r.qty_per_unit) + ' per unit' : ''})` : '') + (r.remarks ? '\n' + r.remarks : '') },
     { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'UoM', k: r => r.uom || '' }];
   if (!internal) cols.push({ h: 'Rate', k: r => money(r.rate), align: 'right' }, { h: 'Disc.', k: r => num(r.discount_pct) ? num(r.discount_pct) + '%' : '', align: 'right' },

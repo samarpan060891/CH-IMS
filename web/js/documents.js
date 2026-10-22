@@ -138,7 +138,7 @@ const pr = {
     { label: '🖨 PDF', reload: false, run: c => makePdf({
         title: 'Purchase Requisition', no: c.doc.pr_no, date: c.doc.pr_date,
         meta: [['Source', label(c.doc.source)], ['Project', refLabel('projects', c.doc.project_id)], ['Required by', dt(c.doc.required_date)], ['Status', label(c.doc.status)]],
-        columns: [{ h: '#', k: (r) => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
+        columns: [{ h: 'Sr. No.', k: (r) => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
                   { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'Required', k: r => dt(r.required_date) }, { h: 'Remarks', k: 'remarks' }],
         rows: c.grids.lines, notes: c.doc.remarks || '', signatures: ['Requested by', 'Store In-charge', 'Purchase'] }) },
   ],
@@ -275,7 +275,7 @@ function pdfPO(c) {
     title: 'Purchase Order', no: d.po_no, date: d.po_date, subtitle: label(d.status),
     meta: [['Vendor', v.name], ['Vendor TRN', v.trn || '-'], ['Currency', d.currency + (d.currency !== 'AED' ? ` @ ${d.exchange_rate}` : '')], ['Payment terms', refLabel('payment_terms', d.payment_term_id)],
            ['Delivery date', dt(d.delivery_date)], ['Deliver to', refLabel('locations', d.delivery_location_id)], ['Quotation ref', d.quotation_ref || '-'], ['Project', refLabel('projects', d.project_id) || '-']],
-    columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) + (r.description && r.description !== refRow('items', r.item_id)?.name ? '\n' + r.description : '') },
+    columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) + (r.description && r.description !== refRow('items', r.item_id)?.name ? '\n' + r.description : '') },
               ...(c.grids.lines.some(r => r.project_id) ? [{ h: 'For project', k: r => r.project_id ? refRow('projects', r.project_id)?.code : 'Stock' }] : []),
               { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' },
               { h: 'Disc%', k: r => num(r.discount_pct) || '', align: 'right' }, { h: 'VAT%', k: r => num(r.vat_rate), align: 'right' }, { h: 'Amount', k: r => money(poLineAmount(r)), align: 'right' }],
@@ -431,7 +431,7 @@ export const grn = {
     { label: 'Book vendor invoice', show: statusIs(ctx, 'POSTED') && hasRole('finance') && ctx.doc.receipt_type === 'PO', reload: false, run: c => go(`d/inv/new/grn/${c.doc.id}`) },
     { label: '🖨 GRN PDF', reload: false, run: c => {
         const d = c.doc; const cost = canSeeCost();
-        const cols = [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
+        const cols = [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
           { h: 'DN qty', k: r => qty(r.dn_qty), align: 'right' }, { h: 'Received', k: r => qty(r.received_qty), align: 'right' },
           { h: 'Damaged', k: r => num(r.damaged_qty) ? qty(r.damaged_qty) : '', align: 'right' }, { h: 'Accepted', k: r => qty(r.accepted_qty), align: 'right' },
           { h: 'Excess', k: r => num(r.excess_qty) ? qty(r.excess_qty) : '', align: 'right' }, { h: 'Short', k: r => num(r.short_qty) ? qty(r.short_qty) : '', align: 'right' },
@@ -629,7 +629,7 @@ export const mr = {
           title: 'Material Request', no: c.doc.mr_no, date: c.doc.mr_date, subtitle: label(c.doc.status),
           meta: [['Purpose', label(c.doc.purpose)], ['Project / CC', refLabel('projects', c.doc.project_id) || refLabel('cost_centers', c.doc.cost_center_id)], ['Priority', c.doc.priority], ['Required by', dt(c.doc.required_date)],
                  ['Requested by', refLabel('profiles', c.doc.requested_by)], ['Approved by', refLabel('profiles', c.doc.approved_by) || '-']],
-          columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 },
+          columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 },
                     { h: 'Item', k: r => itemName(r.item_id) + (r.lot_id ? '\n' + ((opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.label || 'specific board') : '') }, { h: 'UoM', k: r => itemUom(r.item_id) },
                     { h: 'Requested', k: r => qty(r.requested_qty), align: 'right' }, { h: 'Approved', k: r => qty(r.approved_qty), align: 'right' }, { h: 'Issued', k: r => qty(r.issued_qty), align: 'right' }, { h: 'Remarks', k: 'remarks' }],
           rows: c.grids.lines, notes: c.doc.remarks || '', signatures: ['Requested by', 'Production In-charge', 'Stores'] }) },
@@ -793,7 +793,7 @@ function pdfIssue(c) {
   const d = c.doc; const cost = canSeeCost();
   const lots = c.extra.lots || [];
   const lotText = l => lots.filter(x => x.issue_lines.item_id === l.item_id).map(x => `${x.stock_lots?.lot_no} (${qty(x.qty)})`).join(', ');
-  const cols = [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item code', k: r => refRow('items', r.item_id)?.code }, { h: 'Description', k: r => refRow('items', r.item_id)?.name },
+  const cols = [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item code', k: r => refRow('items', r.item_id)?.code }, { h: 'Description', k: r => refRow('items', r.item_id)?.name },
     { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty issued', k: r => qty(r.qty), align: 'right' }, { h: 'Lots (FIFO)', k: lotText }];
   if (cost) cols.push({ h: 'Value AED', k: r => money(r.value), align: 'right' });
   return makePdf({
@@ -930,7 +930,7 @@ export const ret = {
     { label: '🖨 Return note PDF', reload: false, run: c => makePdf({
         title: 'Material Return Note', no: c.doc.return_no, date: c.doc.return_date,
         meta: [['Against issue', opts.issues.find(i => i.id === c.doc.issue_id)?.label || ''], ['Returned to', refLabel('locations', c.doc.to_location_id)], ['Returned by', c.doc.returned_by_name || '-'], ['Status', label(c.doc.status)]],
-        columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' },
+        columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' },
                   { h: 'Condition', k: r => label(r.condition) + (isOffcut(r) ? ` ${offcutSize(r)}${r.offcut_action ? ' · ' + label(r.offcut_action) : ''}` : '') },
                   { h: 'Reason', k: 'reason' }, ...(canSeeCost() ? [{ h: 'Value', k: r => money(r.value), align: 'right' }] : [])],
         rows: c.grids.lines, signatures: ['Returned by', 'Received by (Stores)', 'Production In-charge', ...(hasOc ? ['Factory Manager'] : [])] }) },
@@ -970,7 +970,7 @@ export const trf = {
     { label: '✔ Post transfer', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), confirm: 'Post this transfer?', done: 'Transfer posted', run: c => rpc('post_transfer', { p_trf: c.doc.id }) },
     { label: '🖨 PDF', reload: false, run: c => makePdf({ title: 'Stock Transfer Note', no: c.doc.trf_no, date: c.doc.trf_date,
         meta: [['From', refLabel('locations', c.doc.from_location_id)], ['To', refLabel('locations', c.doc.to_location_id)], ['Status', label(c.doc.status)], ['Remarks', c.doc.remarks || '-']],
-        columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' }],
+        columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' }],
         rows: c.grids.lines, signatures: ['Sent by', 'Received by'] }) },
   ],
 };
@@ -1017,7 +1017,7 @@ export const adj = {
       run: async c => { const r = await reason('Reject adjustment'); if (r) return rpc('adj_action', { p_adj: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
     { label: '🖨 Count sheet PDF', reload: false, run: c => makePdf({ title: 'Stock Count / Adjustment', no: c.doc.adj_no, date: c.doc.adj_date, subtitle: label(c.doc.status),
         meta: [['Location', refLabel('locations', c.doc.location_id)], ['Reason', label(c.doc.reason)]],
-        columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
+        columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
                   { h: 'System', k: r => qty(r.system_qty), align: 'right' }, { h: 'Counted', k: r => qty(r.counted_qty), align: 'right' }, { h: 'Diff', k: r => qty(num(r.counted_qty) - num(r.system_qty)), align: 'right' }],
         rows: c.grids.lines, signatures: ['Counted by', 'Store In-charge', 'Factory Manager'] }) },
   ],
@@ -1310,7 +1310,7 @@ export const inv = {
         return makePdf({ title: 'Purchase Invoice Voucher', no: d.inv_no, date: d.invoice_date, subtitle: label(d.status),
           meta: [['Supplier', v.name || ''], ['Supplier TRN', v.trn || '-'], ['Supplier invoice no.', d.vendor_invoice_no || '-'], ['PO', opts.vpos.find(p => p.id === d.po_id)?.label || '-'],
                  ['Currency', `${d.currency}${num(d.exchange_rate) !== 1 ? ' @ ' + d.exchange_rate : ''}`], ['Due date', dt(d.due_date) || '-'], ['Payment terms', refLabel('payment_terms', d.payment_term_id) || '-']],
-          columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item / description', k: r => [itemName(r.item_id), r.description].filter(Boolean).join('\n') || refLabel('gl_accounts', r.account_id) },
+          columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item / description', k: r => [itemName(r.item_id), r.description].filter(Boolean).join('\n') || refLabel('gl_accounts', r.account_id) },
             { h: 'Charged to', k: r => [refRow('cost_centers', r.cost_center_id)?.code, refRow('projects', r.project_id)?.code].filter(Boolean).join(' · ') },
             { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' }, { h: 'VAT %', k: r => num(r.vat_rate), align: 'right' },
             { h: 'Amount', k: r => money(num(r.qty) * num(r.rate)), align: 'right' }],

@@ -416,9 +416,9 @@ async function jobCard(c) {
   tbl('Production stages', ['Seq', 'Stage / work centre', 'Plan man-h', 'Plan mach-h', 'Instructions', 'Date', 'Crew', 'Hours', 'Qty', 'Supervisor'],
     c.grids.ops.map(o => [o.seq, wcName(o.work_center_id), qty(o.planned_labour_hours), qty(o.planned_machine_hours), o.instructions || '', '', '', '', '', '']),
     { bodyStyles: { minCellHeight: 8 }, columnStyles: { 4: { cellWidth: 38 } } });
-  if (c.grids.parts.length) tbl('Cut list', ['#', 'Part', 'Material', 'L mm', 'W mm', 'Qty', 'Edge band', 'Edges', 'Grain', 'Notes'],
+  if (c.grids.parts.length) tbl('Cut list', ['Sr. No.', 'Part', 'Material', 'L mm', 'W mm', 'Qty', 'Edge band', 'Edges', 'Grain', 'Notes'],
     c.grids.parts.map((p, i) => [i + 1, p.part_name, itemCode(p.material_id), qty(p.length_mm), qty(p.width_mm), qty(p.pieces), itemCode(p.edge_item_id), edges(p), p.grain ? 'Yes' : '', p.notes || '']));
-  if (c.grids.materials.length) tbl('Materials', ['#', 'Item', 'UoM', 'Required'],
+  if (c.grids.materials.length) tbl('Materials', ['Sr. No.', 'Item', 'UoM', 'Required'],
     c.grids.materials.map((m, i) => [i + 1, itemName(m.item_id), itemUom(m.item_id), qty(m.required_qty)]), { columnStyles: { 3: { halign: 'right' } } });
 
   const sy = Math.min(Math.max(y + 12, H - 34), H - 20);
@@ -721,7 +721,7 @@ export const dsp = {
           title: 'Delivery Note', no: c.doc.dispatch_no, date: c.doc.dispatch_date, subtitle: label(c.doc.status),
           meta: [['Project / site', refLabel('projects', c.doc.project_id)], ['Delivery address', c.doc.delivery_address || '-'], ['From', refLabel('locations', c.doc.from_location_id)],
                  ['Vehicle', c.doc.vehicle_no || '-'], ['Driver', [c.doc.driver_name, c.doc.driver_phone].filter(Boolean).join(' · ') || '-'], ['Remarks', c.doc.remarks || '-']],
-          columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Product', k: r => itemCode(r.item_id) }, { h: 'Description', k: r => refRow('items', r.item_id)?.name },
+          columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Product', k: r => itemCode(r.item_id) }, { h: 'Description', k: r => refRow('items', r.item_id)?.name },
                     { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'Packages', k: r => r.packages ?? '', align: 'right' },
                     { h: 'Order', k: r => popts.wos.find(w => w.id === r.production_order_id)?.label || '' }, { h: 'Remarks', k: 'remarks' }],
           rows: c.grids.lines, notes: c.doc.received_by_name ? `Received at site by ${c.doc.received_by_name} on ${dt(c.doc.delivered_at)}` : 'Received the above in good condition.',

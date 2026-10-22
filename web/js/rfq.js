@@ -15,7 +15,7 @@ function rfqPdf(c, rv) {
     ['Quote by', dt(d.quote_due_date) || '-'], ['Required on site / store', dt(d.required_date) || '-'], ['Deliver to', refLabel('locations', d.delivery_location_id) || 'Our factory store'],
     ['Our reference', d.rfq_no]];
   return makePdf({ title: 'Request for Quotation', no: d.rfq_no, date: d.rfq_date, subtitle: d.title, meta,
-    columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item', k: r => itemName(r.item_id) + (r.description && r.description !== refRow('items', r.item_id)?.name ? '\n' + r.description : '') },
+    columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) + (r.description && r.description !== refRow('items', r.item_id)?.name ? '\n' + r.description : '') },
       { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Needed by', k: r => dt(r.required_date || d.required_date) },
       { h: 'Unit rate (excl. VAT)', k: () => '' }, { h: 'Lead time (days)', k: () => '' }],
     rows: c.grids.lines,

@@ -246,7 +246,7 @@ export const DocEditor = {
       </div>
       <div class="tbl-wrap">
         <table class="t lines">
-          <thead><tr><th style="width:32px">#</th><th v-for="f in gridFields(g)" :style="f.width ? 'min-width:'+f.width : ''">{{ f.label }}</th><th v-if="gridEditable(g)"></th></tr></thead>
+          <thead><tr><th style="width:64px">Sr. No.</th><th v-for="f in gridFields(g)" :style="f.width ? 'min-width:'+f.width : ''">{{ f.label }}</th><th v-if="gridEditable(g)"></th></tr></thead>
           <tbody>
             <tr v-if="!(grids[g.key] || []).length"><td :colspan="gridFields(g).length + 2" class="empty">No lines</td></tr>
             <tr v-for="(r, i) in (grids[g.key] || [])" :key="r.id || i">

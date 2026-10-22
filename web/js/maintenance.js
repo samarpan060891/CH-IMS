@@ -113,7 +113,7 @@ function pmPdf(c) {
       ['Done by', d.by_vendor ? 'AMC / vendor · ' + (refLabel('vendors', d.vendor_id) || '') : 'Our maintenance team'],
       isMachine(d) ? ['Machine hours at raise', qty(d.run_hours)] : ['Cost centre', refLabel('cost_centers', d.cost_center_id)],
       ['Spares request', c.extra.mr ? c.extra.mr.mr_no : '-']],
-    columns: [{ h: '#', k: r => [...tasks, ...spares].indexOf(r) + 1, w: 8 }, { h: '', k: r => r.kind, w: 16 }, { h: 'Task / spare', k: r => r.task },
+    columns: [{ h: 'Sr. No.', k: r => [...tasks, ...spares].indexOf(r) + 1, w: 15 }, { h: '', k: r => r.kind, w: 16 }, { h: 'Task / spare', k: r => r.task },
       { h: 'Done', k: r => r.kind === 'Task' ? (r.done ? 'Yes' : '[   ]') : '', w: 14, align: 'center' }, { h: 'Remarks', k: r => r.remarks || '' }],
     rows: [...tasks, ...spares],
     notes: [(isMachine(d) ? 'Stop the machine and isolate power before starting.' : 'Isolate power / water and barricade the area before starting.') + ' Tick each task, note anything found, and return unused spares to the store.', d.remarks].filter(Boolean).join('\n'),
