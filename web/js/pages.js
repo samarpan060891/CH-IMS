@@ -103,9 +103,17 @@ export const REPORTS = {
   mntcost: { title: 'Maintenance cost by machine and month', src: 'v_machine_maintenance', order: 'period_month', cost: true,
     roles: ['factory_manager', 'finance', 'production_incharge'], columns: [
     { k: 'period_month', label: 'Month', fmt: 'date' }, { k: 'code', label: 'Code' }, { k: 'name', label: 'Machine / work centre' },
-    { k: 'breakdowns', label: 'Stops', n: true, sum: true }, { k: 'down_hours', label: 'Hours down', n: true, sum: true },
-    { k: 'breakdown_repairs', label: 'Repairs on breakdowns', fmt: 'money', sum: true }, { k: 'bills_amc', label: 'Repair & AMC bills', fmt: 'money', sum: true },
+    { k: 'breakdowns', label: 'Breakdowns', n: true, sum: true }, { k: 'down_hours', label: 'Breakdown hours', n: true, sum: true },
+    { k: 'pm_done', label: 'PM jobs done', n: true, sum: true }, { k: 'pm_hours', label: 'PM stop hours', n: true, sum: true },
+    { k: 'breakdown_repairs', label: 'Repairs on breakdowns', fmt: 'money', sum: true }, { k: 'pm_labour', label: 'In-house PM labour', fmt: 'money', sum: true },
+    { k: 'bills_amc', label: 'Repair & AMC bills', fmt: 'money', sum: true },
     { k: 'store_spares', label: 'Spares from store (net)', fmt: 'money', sum: true }, { k: 'total_cost', label: 'Total', fmt: 'money', sum: true }] },
+  pmdue: { title: 'Preventive maintenance — due list', src: 'v_pm_due', filter: q => q.eq('status', 'ACTIVE'), order: 'next_due', columns: [
+    { k: 'due_state', label: 'State', fmt: 'badge' }, { k: 'wc_code', label: 'Code' }, { k: 'wc_name', label: 'Machine' }, { k: 'title', label: 'Maintenance' },
+    { k: r => [r.every_days && r.every_days + ' d', r.every_hours && r.every_hours + ' h'].filter(Boolean).join(' / '), label: 'Every' },
+    { k: 'next_due', label: 'Next due', fmt: 'date' }, { k: 'days_left', label: 'Days left', n: true }, { k: 'hours_left', label: 'Running h left', n: true },
+    { k: 'hours_per_day', label: 'Avg h / day', n: true }, { k: r => r.done_by === 'VENDOR' ? 'AMC · ' + (r.vendor_name || '') : 'In-house', label: 'Done by' },
+    { k: 'last_done_date', label: 'Last done', fmt: 'date' }, { k: 'job_no', label: 'Open job' }, { k: 'job_status', label: 'Job status', fmt: 'badge' }] },
   fg: { title: 'Finished goods in store', src: 'v_lot_values', filter: q => q.eq('class_code', 'FG'), order: 'received_date', columns: [
     { k: 'item_code', label: 'Product' }, { k: 'item_name', label: 'Description' }, { k: 'lot_no', label: 'Order / lot' }, { k: 'location_code', label: 'Location' },
     { k: r => r.project_id ? (refRow('projects', r.project_id)?.code || 'Project') : 'MTS stock', label: 'For' },

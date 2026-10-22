@@ -115,12 +115,14 @@ export const DocEditor = {
           this.grids = Object.fromEntries((this.cfg.grids || []).map(g => [g.key, []]));
           if (this.cfg.onNew) await this.cfg.onNew(this, route.parts.slice(3));
         } else {
-          this.doc = must(await sb.from(this.cfg.table).select('*').eq('id', this.id).single());
+          // lines first: the editor renders as soon as doc is set
+          const doc = must(await sb.from(this.cfg.table).select('*').eq('id', this.id).single());
           const grids = {};
           for (const g of this.cfg.grids || []) {
             grids[g.key] = must(await sb.from(g.table).select(g.select || '*').eq(g.fk, this.id).order(g.order || 'id'));
           }
           this.grids = grids;
+          this.doc = doc;
           if (this.cfg.afterLoad) await this.cfg.afterLoad(this);
           if (this.cfg.loadInfo) this.info = await this.cfg.loadInfo(this);
         }
@@ -246,8 +248,8 @@ export const DocEditor = {
         <table class="t lines">
           <thead><tr><th style="width:32px">#</th><th v-for="f in gridFields(g)" :style="f.width ? 'min-width:'+f.width : ''">{{ f.label }}</th><th v-if="gridEditable(g)"></th></tr></thead>
           <tbody>
-            <tr v-if="!grids[g.key].length"><td :colspan="gridFields(g).length + 2" class="empty">No lines</td></tr>
-            <tr v-for="(r, i) in grids[g.key]" :key="r.id || i">
+            <tr v-if="!(grids[g.key] || []).length"><td :colspan="gridFields(g).length + 2" class="empty">No lines</td></tr>
+            <tr v-for="(r, i) in (grids[g.key] || [])" :key="r.id || i">
               <td class="muted">{{ i + 1 }}</td>
               <td v-for="f in gridFields(g)"><FieldInput bare :f="f" :doc="r" :disabled="!gridEditable(g) || (f.lockSaved && !!r.id)" @changed="lineChanged(g, f, r)" /></td>
               <td v-if="gridEditable(g)"><button class="btn sm bad" @click="removeRow(g, i)">✕</button></td>

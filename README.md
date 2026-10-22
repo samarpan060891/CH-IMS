@@ -86,6 +86,13 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   The **Maintenance** menu gathers breakdowns & planned stops, spares requests (phone and desk), repair bills, AMC contracts, machines, tool crib, the
   machine-rate calculator and the reports *Maintenance cost by machine* (stops, hours down, breakdown repairs, bills / AMC and net store spares per month),
   downtime analysis and calibration due.
+- **Preventive maintenance**: a *PM schedule* per machine is due every N days and/or every N running hours (machine hours logged on production and
+  job-work orders), whichever comes first, with a checklist and a standard spares list, done in-house or by the AMC vendor. Each morning (07:00) — or when a
+  schedule is saved — due schedules get a *PM job* a few lead days ahead plus a planned stop on the machine (so work-centre load sees it); the Production
+  In-charge and FM are notified. On the job the team presses Start (machine down now), ticks the checklist, raises the spares request (cost centre MNT-MAC,
+  tagged to the machine), records who did it and the hours (costed at the grade rate) or the vendor's service report. The Production In-charge closes it
+  (all tasks ticked) — the stop ends and the schedule rolls on; *Cancel / skip* moves to the next cycle. Reports: *PM due list*; *Maintenance cost by machine*
+  now splits breakdowns from PM and adds in-house PM labour. Job cards print from the 🖨 button.
 - **Documents & PDFs**: every document prints into a panel that slides in from the right (pages drawn on screen, also on phones) with Download, Print and Open in new
   tab; the 👁 button on each list row previews a document's PDF without opening it (quotations, sales / project orders, RFQs, POs, GRNs, job cards, delivery notes,
   sales and purchase invoices, vouchers, payslips, labels …).

@@ -247,7 +247,8 @@ export async function refreshPending() {
   if (hasRole('shop_floor', 'production_incharge', 'site_supervisor')) p.ack = await count('material_issues', q => q.eq('status', 'POSTED').eq('ack_status', 'PENDING'));
   if (hasRole('stores', 'factory_manager')) p.ack = (p.ack || 0) + await count('material_issues', q => q.eq('ack_status', 'DISCREPANCY'));
   if (hasRole('production_incharge', 'factory_manager')) p.wo = await count('production_orders', q => q.eq('status', 'DRAFT'));
-  if (hasRole('shop_floor', 'production_incharge')) p.stages = await count('wo_operations', q => q.eq('status', 'IN_PROGRESS'));
+  if (hasRole('shop_floor', 'production_incharge', 'factory_manager', 'stores')) p.pm = await count('pm_jobs', q => q.in('status', ['OPEN', 'IN_PROGRESS']).lte('due_date', today()));
+  if (hasRole('shop_floor', 'production_incharge')) p.stages =await count('wo_operations', q => q.eq('status', 'IN_PROGRESS'));
   if (hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'DRAFT'));
   if (hasRole('factory_manager')) p.qc = await count('wo_receipts', q => q.eq('qc_status', 'PENDING_FM'));
   if (hasRole('factory_manager')) p.vo = await count('variation_orders', q => q.eq('status', 'SUBMITTED'));

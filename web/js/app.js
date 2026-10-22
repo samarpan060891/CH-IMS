@@ -28,9 +28,10 @@ import { SALES_DOCS } from './sales.js';
 import { CashForecast } from './cash.js';
 import { PdfPanel } from './pdf.js';
 import { RFQ_DOCS } from './rfq.js';
+import { PM_DOCS } from './maintenance.js';
 import { MachineRates } from './machinerates.js';
 
-Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS, MDR_DOCS, SALES_DOCS, RFQ_DOCS);
+Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS, MDR_DOCS, SALES_DOCS, RFQ_DOCS, PM_DOCS);
 
 const ALL = null;
 // short menu names for reports (full titles show on the report page)
@@ -39,7 +40,7 @@ const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', res
   invoices: 'Open invoices', grni: 'Received, not invoiced', tools: 'Tools with workers', calibration: 'Calibration due',
   boqprog: 'BOQ progress & billing', unitprog: 'Unit progress & billing', snags: 'Snag register',
   leavebal: 'Leave balances', docexpiry: 'Document expiry', gratuity: 'Gratuity provision', attmonth: 'Monthly attendance',
-  jobcost: 'Job costing & margin', wcload: 'Work centre load & availability', downtime: 'Downtime analysis', mntcost: 'Maintenance cost by machine', fg: 'Finished goods stock', projprod: 'Project cost & margin' };
+  jobcost: 'Job costing & margin', wcload: 'Work centre load & availability', downtime: 'Downtime analysis', mntcost: 'Maintenance cost by machine', pmdue: 'PM due list', fg: 'Finished goods stock', projprod: 'Project cost & margin' };
 // Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
 const MENU = [
@@ -94,6 +95,8 @@ const MENU = [
   ] },
   // machines (MNT-MAC) and factory building / office (MNT-FAC): breakdowns, spares from store, repair & AMC bills, machine costs
   { g: 'Maintenance', icon: 'tool', items: [
+    { to: 'd/pm', t: 'PM jobs', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'stores'], badge: 'pm' },
+    { to: 'd/pms', t: 'PM schedules', roles: ['production_incharge', 'factory_manager', 'shop_floor', 'stores'] },
     { to: 'd/down', t: 'Breakdowns & planned stops', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'stores'], badge: 'down' },
     { to: 'floorapp', t: '📱 Spares & consumables (phone)', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager'] },
     { to: 'd/mr', t: 'Spares requests', roles: ALL },
@@ -104,7 +107,7 @@ const MENU = [
     { to: 'assets', t: 'Tool crib & assets', roles: ['stores', 'factory_manager', 'finance', 'production_incharge'] },
     { to: 'machinerates', t: 'Machine-rate calculator', roles: ['factory_manager', 'finance', 'production_incharge'] },
     { sep: 'Maintenance reports' },
-    ...['mntcost', 'downtime', 'calibration'].map(rep),
+    ...['pmdue', 'mntcost', 'downtime', 'calibration'].map(rep),
   ] },
   { g: 'Projects', icon: 'building-community', items: [
     { to: 'site', t: '📱 Site app', roles: ['site_supervisor', 'production_incharge', 'factory_manager'], badge: 'snag' },
