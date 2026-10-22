@@ -450,29 +450,33 @@ export const grn = {
 // MATERIAL REQUEST (floor -> store)
 // ======================================================================
 // what the material is for: a customer project, a sales order, an internal order (mock-up / internal use, charged to its cost centre)
-// or a make-to-stock order. Plain cost-centre requests remain only on older documents.
-const PURPOSES = [{ v: 'PROJECT', l: 'Customer project' }, { v: 'SALES', l: 'Sales order' }, { v: 'INTERNAL', l: 'Internal order (mock-up / internal use)' }, { v: 'MTS', l: 'Make to stock' }];
+// a make-to-stock order, or — for consumables, packing and spares only — straight to a cost centre (factory, maintenance, camp …).
+const PURPOSES = [{ v: 'PROJECT', l: 'Customer project' }, { v: 'SALES', l: 'Sales order' }, { v: 'INTERNAL', l: 'Internal order (mock-up / internal use)' }, { v: 'MTS', l: 'Make to stock' },
+  { v: 'COST_CENTER', l: 'Cost centre — consumables, packing & spares only' }];
 const JOB_TYPE = { PROJECT: 'PROJECT', SALES: 'SALES', INTERNAL: 'INTERNAL', MTS: 'MTS' };
 export const purposeOf = p => ({ MTS: 'MTS', SALES: 'SALES', INTERNAL: 'INTERNAL' }[p?.project_type] || 'PROJECT');
+// item classes that may go straight to a cost centre (set on the item class)
+export const ccItem = r => !!r.item_classes?.cost_centre_issue;
 const mrTarget = [
-  { k: 'purpose', label: 'Material for', type: 'select', required: true, options: d => d.purpose === 'COST_CENTER' ? [...PURPOSES, { v: 'COST_CENTER', l: 'Cost centre (older requests)' }] : PURPOSES,
-    onChange: d => { d.project_id = null; d.cost_center_id = null; } },
+  { k: 'purpose', label: 'Material for', type: 'select', required: true, options: PURPOSES,
+    onChange: d => { d.project_id = null; d.cost_center_id = null; mrBrowse.ccOnly = d.purpose === 'COST_CENTER'; } },
   { k: 'project_id', label: 'Project / order', type: 'ref', ref: 'projects', required: true, wide: true, request: false, show: d => d.purpose !== 'COST_CENTER',
     filter: (r, d) => r.status === 'OPEN' && r.project_type === JOB_TYPE[d.purpose],
     onChange: async (d, v, ctx) => { d.cost_center_id = d.purpose === 'INTERNAL' ? refRow('projects', v)?.cost_center_id || null : null; if (ctx?.grids?.lines) await fillSplit(ctx); } },
   { k: 'cost_center_id', label: 'Cost centre (charged)', type: 'ref', ref: 'cost_centers', required: true, show: d => ['COST_CENTER', 'INTERNAL'].includes(d.purpose), ro: d => d.purpose === 'INTERNAL' },
 ];
 // item browsing on a request: class → category → sub-category narrows the item drop-down
-export const mrBrowse = reactive({ cls: null, cat: null, sub: null });
+export const mrBrowse = reactive({ cls: null, cat: null, sub: null, ccOnly: false });
 const catOk = (it, b) => {
   if (b.sub) return it.category_id === b.sub;
   if (b.cat) return it.category_id === b.cat || refRow('item_categories', it.category_id)?.parent_id === b.cat;
   return true;
 };
-const browseOk = r => (!mrBrowse.cls || r.class_id === mrBrowse.cls) && catOk(r, mrBrowse);
+const browseOk = r => (!mrBrowse.cls || r.class_id === mrBrowse.cls) && catOk(r, mrBrowse) && (!mrBrowse.ccOnly || ccItem(r));
 const browseFields = [
   { k: '_cls', label: '🔎 Browse — class', type: 'ref', ref: 'item_classes', virtual: true, request: false, show: d => ['DRAFT', 'REJECTED'].includes(d.status || 'DRAFT'),
-    filter: r => r.is_active !== false && !r.is_scrap && r.code !== 'SRV' && r.tracking === 'LOT', onChange: (d, v) => { d._cat = null; d._sub = null; Object.assign(mrBrowse, { cls: v, cat: null, sub: null }); } },
+    filter: (r, d) => r.is_active !== false && !r.is_scrap && r.code !== 'SRV' && r.tracking === 'LOT' && (d.purpose !== 'COST_CENTER' || r.cost_centre_issue),
+    onChange: (d, v) => { d._cat = null; d._sub = null; Object.assign(mrBrowse, { cls: v, cat: null, sub: null }); } },
   { k: '_cat', label: 'Category', type: 'ref', ref: 'item_categories', virtual: true, request: false, show: d => ['DRAFT', 'REJECTED'].includes(d.status || 'DRAFT'),
     filter: (r, d) => r.is_active && !r.parent_id && (!d._cls || r.class_id === d._cls),
     onChange: (d, v) => { d._sub = null; const c = refRow('item_categories', v); if (c) { d._cls = c.class_id; mrBrowse.cls = c.class_id; } Object.assign(mrBrowse, { cat: v, sub: null }); } },
@@ -552,12 +556,12 @@ export const mr = {
   defaults: () => ({ mr_date: today(), purpose: 'PROJECT', priority: 'NORMAL' }),
   // from a sales / internal order or a project: d/mr/new/so/<job id>
   onNew(ctx, parts) {
-    Object.assign(mrBrowse, { cls: null, cat: null, sub: null });
+    Object.assign(mrBrowse, { cls: null, cat: null, sub: null, ccOnly: false });
     const p = parts[0] === 'so' && refRow('projects', parts[1]);
     if (p) Object.assign(ctx.doc, { purpose: purposeOf(p), project_id: p.id, cost_center_id: p.project_type === 'INTERNAL' ? p.cost_center_id : null });
   },
   async afterLoad(ctx) {
-    Object.assign(mrBrowse, { cls: null, cat: null, sub: null });
+    Object.assign(mrBrowse, { cls: null, cat: null, sub: null, ccOnly: ctx.doc.purpose === 'COST_CENTER' });
     await fillSplit(ctx);
     await loadMrLots(ctx);
     if (['APPROVED', 'PARTIALLY_ISSUED'].includes(ctx.doc.status)) {

@@ -12,7 +12,8 @@ const OPEN_MR = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PARTIALLY_ISSUED', 'R
 const isLotItem = r => r.is_active && r.item_classes?.tracking === 'LOT' && !r.item_classes?.is_scrap && r.item_classes?.code !== 'SRV';
 const blank = () => ({ target: '', required_date: '', urgent: false, remarks: '', lines: [] });
 // what a request can be for (customer projects, sales orders, internal orders, production orders, make-to-stock)
-const KINDS = [{ k: 'PROJECT', t: '🏗 Project' }, { k: 'SALES', t: '🧾 Sales order' }, { k: 'INTERNAL', t: '🔧 Internal order' }, { k: 'WO', t: '🛠 Production order' }, { k: 'MTS', t: '📦 Make to stock' }];
+const KINDS = [{ k: 'PROJECT', t: '🏗 Project' }, { k: 'SALES', t: '🧾 Sales order' }, { k: 'INTERNAL', t: '🔧 Internal order' }, { k: 'WO', t: '🛠 Production order' },
+  { k: 'CC', t: '🧴 Consumables to a cost centre' }, { k: 'MTS', t: '📦 Make to stock' }];
 const PURPOSE = { MTS: 'MTS', SALES: 'SALES', INTERNAL: 'INTERNAL' };
 const splitText = (s, own) => s ? [`${qty(s.free)} free`, s.mine ? `${qty(s.mine)} ${own}` : '', s.reserved ? `${qty(s.reserved)} reserved for projects` : ''].filter(Boolean).join(' · ') : '';
 // offcut share of a full sheet (L × W) or length (L); the server recomputes on save
@@ -25,7 +26,7 @@ const sizeText = r => `${qty(r.offcut_length_mm)}${r.offcut_width_mm ? ' × ' + 
 
 export const FloorApp = {
   components: { Badge, Scanner, RefSelect },
-  data: () => ({ tab: 'new', loading: false, busy: false, wos: [], projects: [], kind: 'PROJECT', f: blank(), q: '', split: {}, scanning: false,
+  data: () => ({ tab: 'new', loading: false, busy: false, wos: [], projects: [], ccs: [], kind: 'PROJECT', f: blank(), q: '', split: {}, scanning: false,
                  bCls: null, bCat: null, bSub: null,
                  mine: [], pending: [], receive: [], openId: null, fits: [],
                  issues: [], iq: '', rt: null, myReturns: [], ocPI: [], ocFM: [] }),
@@ -39,9 +40,10 @@ export const FloorApp = {
       const q = this.iq.trim().toLowerCase();
       return this.issues.filter(i => !q || `${i.issue_no} ${i.projects?.code || ''} ${i.cost_centers?.code || ''} ${i.material_requests?.mr_no || ''}`.toLowerCase().includes(q));
     },
-    items() { return (state.refs.items || []).filter(isLotItem); },
+    // only consumables, packing and spares can go straight to a cost centre
+    items() { return (state.refs.items || []).filter(r => isLotItem(r) && (this.kind !== 'CC' || r.item_classes?.cost_centre_issue)); },
     // browse: class → category → sub-category, then the items (search narrows further)
-    classes() { return (state.refs.item_classes || []).filter(c => c.tracking === 'LOT' && !c.is_scrap && c.code !== 'SRV' && c.is_active !== false); },
+    classes() { return (state.refs.item_classes || []).filter(c => c.tracking === 'LOT' && !c.is_scrap && c.code !== 'SRV' && c.is_active !== false && (this.kind !== 'CC' || c.cost_centre_issue)); },
     cats() { return (state.refs.item_categories || []).filter(c => c.is_active && !c.parent_id && c.class_id === this.bCls); },
     subs() { return (state.refs.item_categories || []).filter(c => c.is_active && c.parent_id && c.parent_id === this.bCat); },
     found() {
@@ -56,6 +58,7 @@ export const FloorApp = {
     // the orders of the chosen kind
     targets() {
       if (this.kind === 'WO') return this.wos.map(w => ({ v: 'wo:' + w.id, l: `${w.wo_no} — ${w.description || ''}${w.projects ? ' · ' + w.projects.code : ''}` }));
+      if (this.kind === 'CC') return this.ccs.map(c => ({ v: 'cc:' + c.id, l: `${c.code} — ${c.name}` }));
       return this.projects.filter(p => p.project_type === this.kind).map(p => ({ v: 'pr:' + p.id, l: `${p.code} — ${p.name}` }));
     },
     wo() { return this.f.target.startsWith('wo:') ? this.wos.find(w => w.id === this.f.target.slice(3)) : null; },
@@ -66,7 +69,14 @@ export const FloorApp = {
   },
   watch: {
     'f.target'(v) { try { localStorage.setItem(KEY, v); } catch { /* storage unavailable */ } this.loadFits(); this.split = {}; this.loadSplit(); },
-    kind() { if (!this.targets.some(t => t.v === this.f.target)) this.f.target = ''; },
+    kind(k) {
+      if (!this.targets.some(t => t.v === this.f.target)) this.f.target = '';
+      this.bCls = null;
+      if (k === 'CC') {
+        const keep = this.f.lines.filter(l => refRow('items', l.item_id)?.item_classes?.cost_centre_issue);
+        if (keep.length < this.f.lines.length) { toast(`${this.f.lines.length - keep.length} item(s) removed — only consumables, packing and spares go to a cost centre`, 'info', 6000); this.f.lines = keep; }
+      }
+    },
     found() { this.loadSplit(); },
     bCls() { this.bCat = null; this.bSub = null; },
     bCat() { this.bSub = null; },
@@ -75,13 +85,14 @@ export const FloorApp = {
   async mounted() {
     await run(async () => {
       await loadRefs(['items', 'locations', 'employees', 'item_classes', 'item_categories']);
-      const [w, p] = await Promise.all([
+      const [w, p, c] = await Promise.all([
         sb.from('production_orders').select('id,wo_no,description,project_id,status,projects(code,project_type)').in('status', ['RELEASED', 'IN_PROGRESS']).order('wo_no'),
-        sb.from('projects').select('id,code,name,project_type,cost_center_id').eq('status', 'OPEN').order('code')]);
-      this.wos = must(w); this.projects = must(p);
+        sb.from('projects').select('id,code,name,project_type,cost_center_id').eq('status', 'OPEN').order('code'),
+        sb.from('cost_centers').select('id,code,name').eq('is_active', true).order('code')]);
+      this.wos = must(w); this.projects = must(p); this.ccs = must(c);
       let saved = ''; try { saved = localStorage.getItem(KEY) || ''; } catch { /* storage unavailable */ }
       const sp = saved.startsWith('pr:') && this.projects.find(x => x.id === saved.slice(3));
-      const kind = saved.startsWith('wo:') && this.wos.some(x => x.id === saved.slice(3)) ? 'WO' : sp ? sp.project_type : null;
+      const kind = saved.startsWith('wo:') && this.wos.some(x => x.id === saved.slice(3)) ? 'WO' : saved.startsWith('cc:') && this.ccs.some(x => x.id === saved.slice(3)) ? 'CC' : sp ? sp.project_type : null;
       if (kind) { this.kind = kind; await this.$nextTick(); this.f.target = saved; }
     });
     await this.load();
@@ -172,11 +183,14 @@ export const FloorApp = {
       if (!f.target) return toast('Choose what the material is for', 'error');
       if (!lines.length) return toast('Add at least one item', 'error');
       const hdr = { mr_date: today(), required_date: f.required_date || null, priority: f.urgent ? 'URGENT' : 'NORMAL', remarks: f.remarks || null };
-      const p = this.job;
-      if (!p) return toast('That order is no longer open', 'error');
-      // internal orders are charged to their cost centre
-      Object.assign(hdr, { project_id: p.id, purpose: PURPOSE[p.project_type] || 'PROJECT', cost_center_id: p.project_type === 'INTERNAL' ? p.cost_center_id : null,
-                           production_order_id: this.wo?.id || null });
+      if (f.target.startsWith('cc:')) Object.assign(hdr, { purpose: 'COST_CENTER', cost_center_id: f.target.slice(3) });
+      else {
+        const p = this.job;
+        if (!p) return toast('That order is no longer open', 'error');
+        // internal orders are charged to their cost centre
+        Object.assign(hdr, { project_id: p.id, purpose: PURPOSE[p.project_type] || 'PROJECT', cost_center_id: p.project_type === 'INTERNAL' ? p.cost_center_id : null,
+                             production_order_id: this.wo?.id || null });
+      }
       this.busy = true;
       const ok = await run(async () => {
         const m = must(await sb.from('material_requests').insert(hdr).select('id,mr_no').single());
@@ -328,10 +342,11 @@ export const FloorApp = {
         <a v-for="k in KINDS" :key="k.k" class="chip" :class="{on: kind===k.k}" @click="kind = k.k">{{ k.t }}</a>
       </div>
       <select v-model="f.target" class="site-proj" style="width:100%;margin:6px 0 4px">
-        <option value="">— choose the {{ KINDS.find(k => k.k === kind)?.t.slice(2).toLowerCase() }} —</option>
+        <option value="">— choose the {{ kind === 'CC' ? 'cost centre' : KINDS.find(k => k.k === kind)?.t.slice(2).toLowerCase() }} —</option>
         <option v-for="t in targets" :key="t.v" :value="t.v">{{ t.l }}</option>
       </select>
-      <div class="small muted" style="margin-bottom:8px" v-if="kind==='INTERNAL'">Mock-ups and internal use need an internal order approved by the Factory Manager.
+      <div class="small muted" style="margin-bottom:8px" v-if="kind==='CC'">Glue, screws, sandpaper, packing, machine spares — charged to the cost centre (factory overhead). Boards and other materials go to a job.</div>
+      <div class="small muted" style="margin-bottom:8px" v-else-if="kind==='INTERNAL'">Mock-ups and internal use need an internal order approved by the Factory Manager.
         <a href="javascript:void 0" @click="go('d/so/new/internal')">＋ New internal order</a></div>
       <div class="small muted" style="margin-bottom:8px" v-else-if="!targets.length">Nothing open of this kind.</div>
 

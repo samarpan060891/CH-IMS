@@ -100,7 +100,8 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   **Customer projects also start in Sales**: a quotation for a Project (BOQ ref, unit type / codes, qty per unit, bought-out to factory or site, service by own
   team / subcontractor, retention %, advance recovery %, billing basis) → project order → on confirmation the project (PRJ-nnnn) is created with that BOQ and contract
   terms; production, purchasing, delivery, installation and progress billing (advance, claims, certificates, retention) then run in the project.
-- **Material requests** are raised for a customer project, a sales order, an internal order, a production order or make-to-stock. Items are found by class →
+- **Material requests** are raised for a customer project, a sales order, an internal order, a production order or make-to-stock — or, for consumables,
+  packing and machine spares only (item classes marked "can be issued to a cost centre"), straight to a cost centre such as the factory or maintenance. Items are found by class →
   category → sub-category (or search / scan), each showing stock free, already reserved for this project / order, and reserved for other projects (not usable).
 - **Master data — no typed-in parameters**: suppliers, customers, accounts / cost heads, cost centres, items, units of measure, projects, employees and work centres are always
   picked from their masters; departments, designations, nationalities, accommodation, banks, brands, unit types and rooms / areas from **Drop-down lists** (Masters), kept by
