@@ -1,6 +1,7 @@
-// Preventive maintenance: schedules per machine (every N days and / or N running hours) → PM jobs raised a few days ahead with a
-// planned stop on the machine → checklist, spares request to MNT-MAC, who did it & hours (or AMC vendor visit) → In-charge closes.
-import { sb, must, rpc, hasRole, go, refRow, refLabel, qty, dt, dtm, label, toast } from './lib.js';
+// Preventive maintenance: schedules per machine (every N days and / or N running hours), facility asset or building area
+// (calendar only) → PM jobs raised a few days ahead (machines also get a planned stop) → checklist, spares request to the
+// cost centre (MNT-MAC for machines; MNT-FAC / ADM for facilities), who did it & hours (or AMC vendor visit) → In-charge closes.
+import { sb, state, must, rpc, hasRole, go, refRow, refLabel, qty, dt, dtm, label, toast } from './lib.js';
 import { ask } from './components.js';
 import { makePdf } from './pdf.js';
 import { ccItem } from './documents.js';
@@ -8,6 +9,20 @@ import { ccItem } from './documents.js';
 const isLead = () => hasRole('production_incharge', 'factory_manager');
 const TEAM = ['shop_floor', 'production_incharge', 'factory_manager', 'stores'];
 const wcLabel = id => refLabel('work_centers', id);
+const TARGETS = [{ v: 'MACHINE', l: 'Machine / work centre' }, { v: 'ASSET', l: 'Facility asset (AC, compressor, extinguisher…)' }, { v: 'AREA', l: 'Building area (roof, washrooms, fire system…)' }];
+const KIND_SHORT = { MACHINE: 'Machine', ASSET: 'Facility asset', AREA: 'Building area' };
+const isMachine = d => (d.target_kind || 'MACHINE') === 'MACHINE';
+const target = d => d.work_center_id ? wcLabel(d.work_center_id) : d.asset_id ? refLabel('assets', d.asset_id) : d.facility_area || '';
+// only the target picked is kept
+const pickTarget = d => {
+  if (d.target_kind !== 'MACHINE') { d.work_center_id = null; d.every_hours = null; }
+  if (d.target_kind !== 'ASSET') d.asset_id = null;
+  if (d.target_kind !== 'AREA') d.facility_area = null;
+  if (d.target_kind === 'MACHINE') { d.cost_center_id = null; return; }
+  if (d.target_kind === 'ASSET' && d.asset_id) d.cost_center_id = refRow('assets', d.asset_id)?.cost_center_id || d.cost_center_id;
+  if (!d.cost_center_id) d.cost_center_id = (state.refs.cost_centers || []).find(c => c.code === 'MNT-FAC')?.id || null;
+};
+const facilityCc = r => r.is_active && ['MNT-FAC', 'ADM', 'GEN', 'CAMP'].includes(r.code);
 const itemName = id => { const r = refRow('items', id); return r ? `${r.code} — ${r.name}` : ''; };
 const every = r => [r.every_days && `${r.every_days} days`, r.every_hours && `${qty(r.every_hours)} running h`].filter(Boolean).join(' or ');
 const TRIGGERS = { CALENDAR: 'Calendar', HOURS: 'Running hours', MANUAL: 'Raised by hand' };
@@ -18,30 +33,44 @@ const TRIGGERS = { CALENDAR: 'Calendar', HOURS: 'Running hours', MANUAL: 'Raised
 export const pms = {
   key: 'pms', title: 'PM Schedules', single: 'PM Schedule', table: 'pm_schedules', noField: 'pm_code', dateField: 'created_at',
   statuses: ['ACTIVE', 'PAUSED'], defaultTab: 'ACTIVE', createRoles: ['production_incharge', 'factory_manager'], editStatuses: ['ACTIVE', 'PAUSED'],
-  refs: ['work_centers', 'vendors', 'items'],
-  list: { select: '*, work_centers(code,name), vendors(name)', columns: [
-    { k: r => r.work_centers ? `${r.work_centers.code} — ${r.work_centers.name}` : '', label: 'Machine' }, { k: 'title', label: 'Maintenance' },
-    { k: every, label: 'Every' }, { k: r => r.done_by === 'VENDOR' ? 'AMC · ' + (r.vendors?.name || '') : 'In-house', label: 'Done by' },
+  refs: ['work_centers', 'vendors', 'items', 'assets', 'cost_centers', 'lookups'],
+  list: { select: '*, work_centers(code,name), vendors(name), assets(asset_tag,items(name)), cost_centers(code)', columns: [
+    { k: r => KIND_SHORT[r.target_kind], label: 'For' },
+    { k: r => r.work_centers ? `${r.work_centers.code} — ${r.work_centers.name}` : r.assets ? `${r.assets.asset_tag} — ${r.assets.items?.name || ''}` : r.facility_area, label: 'Machine / asset / area' },
+    { k: 'title', label: 'Maintenance' }, { k: every, label: 'Every' }, { k: r => r.cost_centers?.code, label: 'Cost centre' },
+    { k: r => r.done_by === 'VENDOR' ? 'AMC · ' + (r.vendors?.name || '') : 'In-house', label: 'Done by' },
     { k: 'last_done_date', label: 'Last done', fmt: 'date' }, { k: 'next_due', label: 'Next due (calendar)', fmt: 'date' }] },
-  defaults: () => ({ status: 'ACTIVE', done_by: 'IN_HOUSE', every_days: 30, lead_days: 3, stop_hours: 2 }),
+  defaults: () => ({ status: 'ACTIVE', target_kind: 'MACHINE', done_by: 'IN_HOUSE', every_days: 30, lead_days: 3, stop_hours: 2 }),
   header: [
-    { k: 'work_center_id', label: 'Machine / work centre', type: 'ref', ref: 'work_centers', required: true, wide: true, filter: r => r.is_active },
+    { k: 'target_kind', label: 'PM for', type: 'select', required: true, options: TARGETS, wide: true, onChange: d => pickTarget(d) },
+    { k: 'work_center_id', label: 'Machine / work centre', type: 'ref', ref: 'work_centers', required: true, wide: true, filter: r => r.is_active, show: isMachine },
+    { k: 'asset_id', label: 'Facility asset (from the asset register)', type: 'ref', ref: 'assets', required: true, wide: true, request: false,
+      filter: r => !['LOST', 'SCRAPPED', 'DISPOSED'].includes(r.status), show: d => d.target_kind === 'ASSET', onChange: d => pickTarget(d) },
+    { k: 'facility_area', label: 'Building / facility area', type: 'lookup', list: 'FACILITY_AREA', required: true, wide: true, show: d => d.target_kind === 'AREA' },
+    { k: 'cost_center_id', label: 'Charge to cost centre', type: 'ref', ref: 'cost_centers', required: true, filter: facilityCc, request: false, show: d => !isMachine(d) },
     { k: 'title', label: 'Maintenance (e.g. Monthly service, 500 h belt change)', required: true, wide: true },
     { k: 'every_days', label: 'Every … days (calendar)', type: 'number' },
-    { k: 'every_hours', label: 'Every … running hours', type: 'number' },
+    { k: 'every_hours', label: 'Every … running hours', type: 'number', show: isMachine },
     { k: 'next_due', label: 'Next due date', type: 'date', show: d => !!d.every_days },
     { k: 'lead_days', label: 'Raise the job … days ahead', type: 'number', required: true },
-    { k: 'stop_hours', label: 'Machine stop needed (hours)', type: 'number', required: true },
+    { k: 'stop_hours', label: 'Machine stop needed (hours)', type: 'number', required: true, show: isMachine },
     { k: 'done_by', label: 'Done by', type: 'select', required: true, options: [{ v: 'IN_HOUSE', l: 'Our maintenance team' }, { v: 'VENDOR', l: 'AMC / service vendor' }] },
     { k: 'vendor_id', label: 'AMC / service vendor', type: 'ref', ref: 'vendors', required: true, wide: true, filter: r => r.status !== 'BLOCKED', show: d => d.done_by === 'VENDOR' },
     { k: 'status', label: 'Status', type: 'select', required: true, options: ['ACTIVE', 'PAUSED'] },
     { k: 'last_done_date', label: 'Last done', type: 'ro', fmt: v => dt(v) || 'Not yet', show: d => !!d.id },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: () => 'Fill <b>days</b>, <b>running hours</b> or both — whichever comes first. Running hours are the machine hours logged on production and job-work orders. ' +
-    'The job is raised automatically each morning when the machine is due within the lead days (for hours, using the last 30 days\' usage); it books a planned stop ' +
-    'so the work-centre load shows it, and notifies the Production In-charge and Factory Manager.',
-  validate(c) { if (!c.doc.every_days && !c.doc.every_hours) throw new Error('Enter every … days or every … running hours'); },
+  headerNote: c => isMachine(c.doc)
+    ? 'Fill <b>days</b>, <b>running hours</b> or both — whichever comes first. Running hours are the machine hours logged on production and job-work orders. ' +
+      'The job is raised automatically each morning when the machine is due within the lead days (for hours, using the last 30 days\' usage); it books a planned stop ' +
+      'so the work-centre load shows it, and notifies the Production In-charge and Factory Manager. Spares go to <b>MNT-MAC</b> for this machine.'
+    : 'Building and facility PM runs on the calendar. The job is raised automatically each morning when it is due within the lead days and notifies the ' +
+      'Production In-charge and Factory Manager. Spares and labour are charged to the cost centre chosen — <b>MNT-FAC</b> for the factory building ' +
+      '(a factory overhead) or <b>ADM</b> for the office. A missing area is requested from the Factory Manager.',
+  validate(c) {
+    pickTarget(c.doc);
+    if (isMachine(c.doc) ? !c.doc.every_days && !c.doc.every_hours : !c.doc.every_days) throw new Error(isMachine(c.doc) ? 'Enter every … days or every … running hours' : 'Enter every … days');
+  },
   grids: [
     { key: 'tasks', title: 'Checklist', table: 'pm_schedule_tasks', fk: 'schedule_id', order: 'line_no',
       fields: [{ k: 'task', label: 'Task (e.g. Grease the rails, Check belt tension)', required: true, width: '420px' }] },
@@ -79,40 +108,45 @@ function pmPdf(c) {
   const d = c.doc;
   const tasks = c.grids.tasks.map(t => ({ ...t, kind: 'Task' }));
   const spares = c.grids.spares.map(s => ({ kind: 'Spare', task: `${itemName(s.item_id)} × ${qty(s.qty)}` }));
-  return makePdf({ title: 'Preventive Maintenance Job', no: d.pm_no, date: d.due_date, subtitle: `${wcLabel(d.work_center_id)} · ${d.title || ''}`,
-    meta: [['Machine', wcLabel(d.work_center_id)], ['Due', dt(d.due_date)], ['Raised by', TRIGGERS[d.trigger_kind]],
+  return makePdf({ title: 'Preventive Maintenance Job', no: d.pm_no, date: d.due_date, subtitle: `${target(d)} · ${d.title || ''}`,
+    meta: [[KIND_SHORT[d.target_kind] || 'Machine', target(d)], ['Due', dt(d.due_date)], ['Raised by', TRIGGERS[d.trigger_kind]],
       ['Done by', d.by_vendor ? 'AMC / vendor · ' + (refLabel('vendors', d.vendor_id) || '') : 'Our maintenance team'],
-      ['Machine hours at raise', qty(d.run_hours)], ['Spares request', c.extra.mr ? c.extra.mr.mr_no : '-']],
+      isMachine(d) ? ['Machine hours at raise', qty(d.run_hours)] : ['Cost centre', refLabel('cost_centers', d.cost_center_id)],
+      ['Spares request', c.extra.mr ? c.extra.mr.mr_no : '-']],
     columns: [{ h: '#', k: r => [...tasks, ...spares].indexOf(r) + 1, w: 8 }, { h: '', k: r => r.kind, w: 16 }, { h: 'Task / spare', k: r => r.task },
       { h: 'Done', k: r => r.kind === 'Task' ? (r.done ? 'Yes' : '[   ]') : '', w: 14, align: 'center' }, { h: 'Remarks', k: r => r.remarks || '' }],
     rows: [...tasks, ...spares],
-    notes: ['Stop the machine and isolate power before starting. Tick each task, note anything found, and return unused spares to the store.', d.remarks].filter(Boolean).join('\n'),
+    notes: [(isMachine(d) ? 'Stop the machine and isolate power before starting.' : 'Isolate power / water and barricade the area before starting.') + ' Tick each task, note anything found, and return unused spares to the store.', d.remarks].filter(Boolean).join('\n'),
     signatures: ['Done by', 'Production In-charge'], filename: d.pm_no.replace(/[\/\\]/g, '-') + '.pdf' });
 }
 
 export const pm = {
   key: 'pm', title: 'PM Jobs', single: 'PM Job', table: 'pm_jobs', noField: 'pm_no', dateField: 'due_date',
   statuses: ['OPEN', 'IN_PROGRESS', 'DONE', 'CANCELLED'], defaultTab: 'OPEN', noCreate: true, editRoles: TEAM, editStatuses: ['OPEN', 'IN_PROGRESS'],
-  refs: ['work_centers', 'vendors', 'items', 'employees'],
-  list: { select: '*, work_centers(code,name)', columns: [
-    { k: r => r.work_centers ? `${r.work_centers.code} — ${r.work_centers.name}` : '', label: 'Machine' }, { k: 'title', label: 'Maintenance' },
+  refs: ['work_centers', 'vendors', 'items', 'employees', 'assets', 'cost_centers'],
+  list: { select: '*, work_centers(code,name), assets(asset_tag,items(name))', columns: [
+    { k: r => KIND_SHORT[r.target_kind], label: 'For' },
+    { k: r => r.work_centers ? `${r.work_centers.code} — ${r.work_centers.name}` : r.assets ? `${r.assets.asset_tag} — ${r.assets.items?.name || ''}` : r.facility_area, label: 'Machine / asset / area' },
+    { k: 'title', label: 'Maintenance' },
     { k: r => TRIGGERS[r.trigger_kind], label: 'Raised by' }, { k: r => r.by_vendor ? 'AMC vendor' : 'In-house', label: 'Done by' },
     { k: 'completed_at', label: 'Closed', fmt: 'datetime' }] },
   header: [
-    { k: 'work_center_id', label: 'Machine', type: 'ro', fmt: v => wcLabel(v), wide: true },
+    { k: '_target', label: 'PM for', type: 'ro', virtual: true, wide: true, fmt: (v, d) => `${KIND_SHORT[d.target_kind]} · ${target(d)}` },
     { k: 'title', label: 'Maintenance', type: 'ro', wide: true },
     { k: 'due_date', label: 'Due', type: 'ro', fmt: v => dt(v) },
     { k: 'trigger_kind', label: 'Raised by', type: 'ro', fmt: v => TRIGGERS[v] },
-    { k: 'run_hours', label: 'Machine hours at raise', type: 'ro', fmt: v => qty(v) },
-    { k: '_stop', label: 'Machine stop', type: 'ro', virtual: true, fmt: (v, d) => d._stop || '-' },
+    { k: 'cost_center_id', label: 'Charged to', type: 'ro', fmt: v => refLabel('cost_centers', v) },
+    { k: 'run_hours', label: 'Machine hours at raise', type: 'ro', fmt: v => qty(v), show: isMachine },
+    { k: '_stop', label: 'Machine stop', type: 'ro', virtual: true, fmt: (v, d) => d._stop || '-', show: isMachine },
     { k: 'by_vendor', label: 'Done by the AMC / service vendor', type: 'check' },
     { k: 'vendor_id', label: 'AMC / service vendor', type: 'ref', ref: 'vendors', wide: true, filter: r => r.status !== 'BLOCKED', show: d => d.by_vendor },
     { k: 'service_report', label: 'Vendor service report no. / link', wide: true, show: d => d.by_vendor },
     { k: '_mr', label: 'Spares request', type: 'ro', virtual: true, fmt: (v, d) => d._mr || 'Not requested', show: d => !!d.mr_id },
     { k: 'remarks', label: 'Findings / remarks', type: 'textarea', full: true },
   ],
-  headerNote: c => c.doc.status === 'OPEN' ? 'Press <b>Start</b> when the machine is stopped for the work — the planned stop becomes the actual stop. ' +
-    'Tick each task, request the spares, enter who did it and the hours; the Production In-charge closes the job.' : '',
+  headerNote: c => c.doc.status !== 'OPEN' ? '' : (isMachine(c.doc)
+    ? 'Press <b>Start</b> when the machine is stopped for the work — the planned stop becomes the actual stop. '
+    : 'Press <b>Start</b> when the work begins. ') + 'Tick each task, request the spares, enter who did it and the hours; the Production In-charge closes the job.',
   grids: [
     { key: 'tasks', title: 'Checklist', table: 'pm_job_tasks', fk: 'job_id', order: 'line_no',
       fields: [{ k: 'task', label: 'Task', required: true, width: '360px', lockSaved: true }, { k: 'done', label: 'Done', type: 'check' },
@@ -137,7 +171,8 @@ export const pm = {
   actions: ctx => {
     const st = ctx.doc.status, open = ['OPEN', 'IN_PROGRESS'].includes(st), mr = ctx.extra.mr;
     return [
-      { label: '▶ Start — machine stopped', cls: 'primary', show: st === 'OPEN' && hasRole(...TEAM), done: 'Started — machine shown as down',
+      { label: isMachine(ctx.doc) ? '▶ Start — machine stopped' : '▶ Start work', cls: 'primary', show: st === 'OPEN' && hasRole(...TEAM),
+        done: isMachine(ctx.doc) ? 'Started — machine shown as down' : 'Started',
         run: c => rpc('pm_start', { p_job: c.doc.id }) },
       { label: '📦 Request spares', show: open && hasRole(...TEAM) && (!mr || ['CANCELLED', 'REJECTED'].includes(mr.status)), reload: false,
         run: async c => { const id = await rpc('pm_request_spares', { p_job: c.doc.id }); toast('Spares request created — check and submit it', 'ok'); go('d/mr/' + id); } },

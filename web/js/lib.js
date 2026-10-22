@@ -96,6 +96,7 @@ export const REF = {
   bom_templates: { table: 'bom_templates', order: 'name', select: 'id,item_id,name,version,is_active', label: r => `${r.name} (v${r.version})` },
   sales_orders: { table: 'sales_orders', order: 'so_no', select: 'id,so_no,so_type,title,customer_id,cost_center_id,project_id,status,delivery_date', label: r => `${r.so_no} — ${r.title}` },
   lookups: { table: 'lookup_values', order: 'sort_order', select: 'id,list_key,value,sort_order,is_active', label: r => r.value },
+  assets: { table: 'assets', order: 'asset_tag', select: 'id,asset_tag,status,cost_center_id,work_center_id,items(name)', label: r => `${r.asset_tag} — ${r.items?.name || ''}` },
 };
 
 // No typed-in parameters: a missing supplier, account, list value… is requested from the people who keep that master
@@ -120,6 +121,7 @@ export const LOOKUP_LISTS = {
   BRAND: { noun: 'brand', owners: ['stores', 'purchase'] },
   UNIT_TYPE: { noun: 'unit type', owners: ['factory_manager'] },
   ROOM: { noun: 'room / area', owners: ['factory_manager', 'production_incharge'] },
+  FACILITY_AREA: { noun: 'building / facility area', owners: ['factory_manager', 'production_incharge'] },
 };
 export const REQ_KIND = Object.fromEntries([...Object.entries(MASTER_REQ).map(([ref, m]) => [m.kind, { ...m, ref }]), ['LOOKUP', { kind: 'LOOKUP', noun: 'list value' }]]);
 export const reqOwners = (kind, list) => kind === 'LOOKUP' ? LOOKUP_LISTS[list]?.owners || [] : REQ_KIND[kind]?.owners || [];

@@ -40,7 +40,7 @@ const REP_SHORT = { stock: 'Stock in hand', lots: 'Stock by lot & location', res
   invoices: 'Open invoices', grni: 'Received, not invoiced', tools: 'Tools with workers', calibration: 'Calibration due',
   boqprog: 'BOQ progress & billing', unitprog: 'Unit progress & billing', snags: 'Snag register',
   leavebal: 'Leave balances', docexpiry: 'Document expiry', gratuity: 'Gratuity provision', attmonth: 'Monthly attendance',
-  jobcost: 'Job costing & margin', wcload: 'Work centre load & availability', downtime: 'Downtime analysis', mntcost: 'Maintenance cost by machine', pmdue: 'PM due list', fg: 'Finished goods stock', projprod: 'Project cost & margin' };
+  jobcost: 'Job costing & margin', wcload: 'Work centre load & availability', downtime: 'Downtime analysis', mntcost: 'Maintenance cost by machine', pmdue: 'PM due list', pmcost: 'PM job costs', fg: 'Finished goods stock', projprod: 'Project cost & margin' };
 // Dashboard is the fixed home link; below it the main menus in workflow order.
 // { sep } entries are small sub-headings inside a menu.
 const MENU = [
@@ -107,7 +107,7 @@ const MENU = [
     { to: 'assets', t: 'Tool crib & assets', roles: ['stores', 'factory_manager', 'finance', 'production_incharge'] },
     { to: 'machinerates', t: 'Machine-rate calculator', roles: ['factory_manager', 'finance', 'production_incharge'] },
     { sep: 'Maintenance reports' },
-    ...['pmdue', 'mntcost', 'downtime', 'calibration'].map(rep),
+    ...['pmdue', 'pmcost', 'mntcost', 'downtime', 'calibration'].map(rep),
   ] },
   { g: 'Projects', icon: 'building-community', items: [
     { to: 'site', t: '📱 Site app', roles: ['site_supervisor', 'production_incharge', 'factory_manager'], badge: 'snag' },

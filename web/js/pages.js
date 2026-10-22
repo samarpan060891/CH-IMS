@@ -108,8 +108,16 @@ export const REPORTS = {
     { k: 'breakdown_repairs', label: 'Repairs on breakdowns', fmt: 'money', sum: true }, { k: 'pm_labour', label: 'In-house PM labour', fmt: 'money', sum: true },
     { k: 'bills_amc', label: 'Repair & AMC bills', fmt: 'money', sum: true },
     { k: 'store_spares', label: 'Spares from store (net)', fmt: 'money', sum: true }, { k: 'total_cost', label: 'Total', fmt: 'money', sum: true }] },
+  pmcost: { title: 'PM job costs — machines, facility assets & building areas', src: 'v_pm_job_costs', filter: q => q.eq('status', 'DONE'), order: 'completed_at', cost: true,
+    roles: ['factory_manager', 'finance', 'production_incharge'], columns: [
+    { k: 'period_month', label: 'Month', fmt: 'date' }, { k: 'pm_no', label: 'Job' }, { k: 'target_kind', label: 'For', fmt: 'label' },
+    { k: 'target_label', label: 'Machine / asset / area' }, { k: 'cc_code', label: 'Cost centre' }, { k: 'title', label: 'Maintenance' },
+    { k: r => r.by_vendor ? 'AMC · ' + (r.vendor_name || '') : 'In-house', label: 'Done by' }, { k: 'completed_at', label: 'Closed', fmt: 'date' },
+    { k: 'labour_hours', label: 'Hours', n: true, sum: true }, { k: 'labour_cost', label: 'Labour', fmt: 'money', sum: true },
+    { k: 'spares_value', label: 'Spares issued (net)', fmt: 'money', sum: true }, { k: 'total_cost', label: 'Total', fmt: 'money', sum: true }] },
   pmdue: { title: 'Preventive maintenance — due list', src: 'v_pm_due', filter: q => q.eq('status', 'ACTIVE'), order: 'next_due', columns: [
-    { k: 'due_state', label: 'State', fmt: 'badge' }, { k: 'wc_code', label: 'Code' }, { k: 'wc_name', label: 'Machine' }, { k: 'title', label: 'Maintenance' },
+    { k: 'due_state', label: 'State', fmt: 'badge' }, { k: 'target_kind', label: 'For', fmt: 'label' }, { k: 'target_label', label: 'Machine / asset / area' },
+    { k: 'cc_code', label: 'Cost centre' }, { k: 'title', label: 'Maintenance' },
     { k: r => [r.every_days && r.every_days + ' d', r.every_hours && r.every_hours + ' h'].filter(Boolean).join(' / '), label: 'Every' },
     { k: 'next_due', label: 'Next due', fmt: 'date' }, { k: 'days_left', label: 'Days left', n: true }, { k: 'hours_left', label: 'Running h left', n: true },
     { k: 'hours_per_day', label: 'Avg h / day', n: true }, { k: r => r.done_by === 'VENDOR' ? 'AMC · ' + (r.vendor_name || '') : 'In-house', label: 'Done by' },

@@ -544,7 +544,7 @@ export const Dashboard = {
         <div class="kpi"><div class="l">Done this month</div><div class="v">{{ (d.pmDone || []).length }}</div><div class="s" v-if="pmOnTime !== null">{{ pmOnTime }}% on time</div></div>
       </div>
       <DataTable v-if="pmRows.length" :searchable="false" :rows="pmRows" clickable @row="r => go(r.job_id ? 'd/pm/' + r.job_id : 'd/pms/' + r.id)"
-        :columns="[{k:'state',label:'State',fmt:'badge'},{k: r => r.wc_code + ' — ' + r.wc_name, label:'Machine'},{k:'title',label:'Maintenance'},{k:'due',label:'Due',fmt:'date'},
+        :columns="[{k:'state',label:'State',fmt:'badge'},{k:'target_label',label:'Machine / asset / area'},{k:'title',label:'Maintenance'},{k:'due',label:'Due',fmt:'date'},
         {k:'hours_left',label:'Running h left',n:true},{k: r => r.done_by === 'VENDOR' ? 'AMC · ' + (r.vendor_name || '') : 'In-house', label:'Done by'},{k:'job_no',label:'Job'}]" />
       <div v-else-if="!loading" class="muted small">Nothing due — all machines are within their PM intervals.</div>
     </div>

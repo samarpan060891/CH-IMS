@@ -93,6 +93,10 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   tagged to the machine), records who did it and the hours (costed at the grade rate) or the vendor's service report. The Production In-charge closes it
   (all tasks ticked) — the stop ends and the schedule rolls on; *Cancel / skip* moves to the next cycle. Reports: *PM due list*; *Maintenance cost by machine*
   now splits breakdowns from PM and adds in-house PM labour. Job cards print from the 🖨 button.
+  PM also covers **building & facility assets**: a schedule can be for a facility asset from the asset register (AC unit, compressor, extinguisher…)
+  or a building area from the *Building / facility area* drop-down (roof, washrooms, fire system… kept by FM / In-charge). These run on the calendar,
+  book no machine stop, and charge their cost centre — MNT-FAC (factory overhead) by default, the asset's own cost centre, or ADM for the office —
+  including the spares request. Report *PM job costs* shows labour and spares issued per job for machines, assets and areas.
 - **Documents & PDFs**: every document prints into a panel that slides in from the right (pages drawn on screen, also on phones) with Download, Print and Open in new
   tab; the 👁 button on each list row previews a document's PDF without opening it (quotations, sales / project orders, RFQs, POs, GRNs, job cards, delivery notes,
   sales and purchase invoices, vouchers, payslips, labels …).
