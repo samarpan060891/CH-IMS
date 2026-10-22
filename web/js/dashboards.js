@@ -19,11 +19,11 @@ function chart(el, cfg) {
 
 // role → dashboard; the first role listed is the one whose approvals the administrator sees on that dashboard
 export const DASHBOARDS = {
-  management: { title: 'Management', roles: ['factory_manager'], sections: ['pending', 'projects', 'mgmtKpis', 'prodKpis', 'budgets', 'stockCharts'] },
+  management: { title: 'Management', roles: ['factory_manager'], sections: ['pending', 'projects', 'mgmtKpis', 'prodKpis', 'pmJobs', 'budgets', 'stockCharts'] },
   finance:    { title: 'Finance', roles: ['finance'], sections: ['pending', 'finKpis', 'billing', 'payables', 'budgets'] },
   purchase:   { title: 'Purchase', roles: ['purchase'], sections: ['pending', 'purKpis', 'poLate', 'zoneChart', 'payables'] },
   stores:     { title: 'Stores', roles: ['stores'], sections: ['pending', 'stockKpis', 'expiring', 'stockCharts', 'valuation'] },
-  production: { title: 'Production', roles: ['production_incharge', 'shop_floor'], sections: ['pending', 'prodKpis', 'woLate', 'wcLoad', 'projects'] },
+  production: { title: 'Production', roles: ['production_incharge', 'shop_floor'], sections: ['pending', 'prodKpis', 'woLate', 'pmJobs', 'wcLoad', 'projects'] },
   sales:      { title: 'Sales', roles: ['sales'], sections: ['pending', 'salesKpis', 'soOpen'] },
   hr:         { title: 'HR', roles: ['hr_officer'], sections: ['pending', 'hrKpis', 'docExpiry', 'onLeave'] },
   site:       { title: 'Site', roles: ['site_supervisor'], route: 'site' },
@@ -51,7 +51,7 @@ export const SECTIONS = {
   mgmtKpis: 'Business overview figures', finKpis: 'Finance figures (bank, receivables, profit, VAT)', billing: 'Project billing', payables: 'Payables by vendor',
   purKpis: 'Purchasing figures', poLate: 'Open purchase orders', zoneChart: 'Buffer zones chart',
   stockKpis: 'Stock figures', expiring: 'Lots expiring within 60 days', stockCharts: 'Stock charts (value, aging, zones, status)', valuation: 'Valuation by category',
-  prodKpis: 'Production figures', woLate: 'Open production orders', wcLoad: 'Work centre load',
+  prodKpis: 'Production figures', woLate: 'Open production orders', wcLoad: 'Work centre load', pmJobs: 'Preventive maintenance (PM jobs due & done)',
   salesKpis: 'Sales figures (quotations, orders, margin)', soOpen: 'Open sales orders',
   hrKpis: 'HR figures (headcount, attendance, leave, documents)', docExpiry: 'Employee documents expiring', onLeave: 'Current & upcoming leave',
 };
@@ -114,6 +114,13 @@ export const Dashboard = {
     retention() { return (this.d.billing || []).reduce((s, r) => s + num(r.retention_held), 0); },
     wos() { return this.d.wos || []; },
     woLate() { return this.wos.filter(w => w.due_date && w.due_date < today()); },
+    // preventive maintenance: an open job past its due date counts as overdue
+    pmRows() {
+      const t = today(), rank = { OVERDUE: 0, IN_PROGRESS: 1, OPEN: 2, DUE_SOON: 3 };
+      return (this.d.pm || []).map(r => ({ ...r, state: r.job_id ? (r.job_due < t ? 'OVERDUE' : r.job_status) : r.due_state, due: r.job_due || r.next_due }))
+        .filter(r => r.state !== 'OK').sort((a, b) => rank[a.state] - rank[b.state] || String(a.due || '9').localeCompare(String(b.due || '9')));
+    },
+    pmOnTime() { const d = this.d.pmDone || []; return d.length ? Math.round(d.filter(j => j.completed_at.slice(0, 10) <= j.due_date).length / d.length * 100) : null; },
   },
   watch: { kind() { this.load(); } },
   async mounted() { await this.load(); },
@@ -247,6 +254,10 @@ export const Dashboard = {
         if (this.any('prodKpis', 'production')) {
           get('qc', sb.from('wo_receipts').select('id', { count: 'exact', head: true }).eq('qc_status', 'PENDING_FM').then(r => ({ data: r.count || 0, error: r.error })));
           get('stagesRunning', sb.from('wo_operations').select('id', { count: 'exact', head: true }).eq('status', 'IN_PROGRESS').then(r => ({ data: r.count || 0, error: r.error })));
+        }
+        if (this.has('pmJobs')) {
+          get('pm', sb.from('v_pm_due').select('*').eq('status', 'ACTIVE'));
+          get('pmDone', sb.from('pm_jobs').select('id,due_date,completed_at').eq('status', 'DONE').gte('completed_at', today().slice(0, 8) + '01'));
         }
         if (this.any('wcLoad', 'prodKpis')) get('wc', sb.from('v_work_center_load').select('*').order('sort_order'));
         if (this.any('purKpis', 'poLate'))
@@ -524,7 +535,20 @@ export const Dashboard = {
         {k: r => qty(r.qty_completed) + ' / ' + qty(r.qty), label:'Done / qty'},{k:'due_date',label:'Due',fmt:'date'},{k: r => r.due_date && r.due_date < today() ? 'OVERDUE' : '', label:'', fmt:'badge'},
         {k:'priority',label:'Priority',fmt:'label'},{k:'status',label:'Status',fmt:'badge'}]" />
     </div>
-    <div class="card" data-sec="wcLoad" :draggable="!!ed" :style="o('wcLoad')" v-if="has('wcLoad') && (d.wc || []).length">
+    <div class="card" data-sec="pmJobs" :draggable="!!ed" :style="o('pmJobs')" v-if="has('pmJobs')">
+      <div class="hd"><h3>Preventive maintenance</h3><span class="spacer"></span><a class="small" href="#/r/pmdue">PM due list →</a></div>
+      <div class="kpis">
+        <div class="kpi" :class="{bad: pmRows.some(r => r.state === 'OVERDUE')}"><div class="l">Overdue</div><div class="v">{{ pmRows.filter(r => r.state === 'OVERDUE').length }}</div><div class="s">past due, not done</div></div>
+        <div class="kpi"><div class="l">PM jobs open</div><div class="v">{{ pmRows.filter(r => r.job_id).length }}</div><div class="s">in progress {{ pmRows.filter(r => r.state === 'IN_PROGRESS').length }}</div></div>
+        <div class="kpi" :class="{warn: pmRows.some(r => r.state === 'DUE_SOON')}"><div class="l">Coming due</div><div class="v">{{ pmRows.filter(r => r.state === 'DUE_SOON').length }}</div><div class="s">job raised automatically</div></div>
+        <div class="kpi"><div class="l">Done this month</div><div class="v">{{ (d.pmDone || []).length }}</div><div class="s" v-if="pmOnTime !== null">{{ pmOnTime }}% on time</div></div>
+      </div>
+      <DataTable v-if="pmRows.length" :searchable="false" :rows="pmRows" clickable @row="r => go(r.job_id ? 'd/pm/' + r.job_id : 'd/pms/' + r.id)"
+        :columns="[{k:'state',label:'State',fmt:'badge'},{k: r => r.wc_code + ' — ' + r.wc_name, label:'Machine'},{k:'title',label:'Maintenance'},{k:'due',label:'Due',fmt:'date'},
+        {k:'hours_left',label:'Running h left',n:true},{k: r => r.done_by === 'VENDOR' ? 'AMC · ' + (r.vendor_name || '') : 'In-house', label:'Done by'},{k:'job_no',label:'Job'}]" />
+      <div v-else-if="!loading" class="muted small">Nothing due — all machines are within their PM intervals.</div>
+    </div>
+    <div class="card" data-sec="wcLoad":draggable="!!ed" :style="o('wcLoad')" v-if="has('wcLoad') && (d.wc || []).length">
       <h3>Work centre load</h3>
       <DataTable :searchable="false" :rows="d.wc" :columns="[{k:'code',label:'Code'},{k:'name',label:'Work centre'},{k:'open_stages',label:'Open stages',n:true},{k:'running',label:'Running',n:true},
         {k:'remaining_hours',label:'Hours queued',fmt:'qty'},{k:'load_days',label:'Load (days)',fmt:'qty'},{k:'availability_pct_30d',label:'Availability 30d %',n:true},{k: r => r.is_down ? 'DOWN' : 'RUNNING', label:'Now', fmt:'badge'}]" />
