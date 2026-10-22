@@ -209,10 +209,12 @@ export const MASTERS = {
     columns: [{ k: 'code', label: 'Code' }, { k: 'name', label: 'Name' }, { k: 'project_type', label: 'Type', fmt: 'label' }, { k: r => r.customers?.name || r.customer, label: 'Customer' },
               { k: 'start_date', label: 'Start', fmt: 'date' }, { k: 'end_date', label: 'End', fmt: 'date' }, { k: 'budget_material', label: 'Material budget', fmt: 'money', cost: true },
               { k: 'contract_value', label: 'Contract value', fmt: 'money', cost: true }, { k: 'status', label: 'Status', fmt: 'badge' }],
-    defaults: () => ({ project_type: 'PROJECT', status: 'OPEN', advance_pct: 0, retention_pct: 0 }),
-    async onNew(d) { d.code = await nextCode('projects', 'PRJ-', 4); },
+    defaults: () => ({ project_type: state.profile?.role === 'admin' ? 'PROJECT' : 'MTS', status: 'OPEN', advance_pct: 0, retention_pct: 0 }),
+    async onNew(d) { d.code = await nextCode('projects', d.project_type === 'MTS' ? 'MTS-' : 'PRJ-', 4); },
     sections: [{ title: 'Project', fields: [
-      { k: 'project_type', label: 'Type', type: 'select', required: true, options: [{ v: 'PROJECT', l: 'Customer project' }, { v: 'MTS', l: 'Make-to-stock order' }],
+      // customer projects come from Sales (project orders); here new records are make-to-stock orders
+      { k: 'project_type', label: 'Type', type: 'select', required: true, ro: d => !!d.id,
+        options: d => d.id || state.profile?.role === 'admin' ? [{ v: 'PROJECT', l: 'Customer project' }, { v: 'MTS', l: 'Make-to-stock order' }] : [{ v: 'MTS', l: 'Make-to-stock order' }],
         onChange: async (d, v) => { if (!d.id) d.code = await nextCode('projects', v === 'MTS' ? 'MTS-' : 'PRJ-', 4); } },
       { k: 'code', label: 'Code', required: true }, { k: 'name', label: 'Name', required: true, wide: true },
       { k: 'customer_id', label: 'Customer (for invoicing)', type: 'ref', ref: 'customers', show: d => d.project_type === 'PROJECT', wide: true,

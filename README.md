@@ -85,6 +85,9 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   Customer orders: advance invoice, delivery notes against the order lines, tax invoices for what is delivered / done (advance recovered pro rata, the rest on the last
   invoice), order delivery, billing & margin report, Sales dashboard and a Sales role. **Internal orders** (mock-ups, internal use) are approved by the Factory Manager
   and charged to a cost centre. Each confirmed order collects its cost on a job with the order number.
+  **Customer projects also start in Sales**: a quotation for a Project (BOQ ref, unit type / codes, qty per unit, bought-out to factory or site, service by own
+  team / subcontractor, retention %, advance recovery %, billing basis) → project order → on confirmation the project (PRJ-nnnn) is created with that BOQ and contract
+  terms; production, purchasing, delivery, installation and progress billing (advance, claims, certificates, retention) then run in the project.
 - **Material requests** are raised for a customer project, a sales order, an internal order, a production order or make-to-stock. Items are found by class →
   category → sub-category (or search / scan), each showing stock free, already reserved for this project / order, and reserved for other projects (not usable).
 - **Master data — no typed-in parameters**: suppliers, customers, accounts / cost heads, cost centres, items, units of measure, projects, employees and work centres are always

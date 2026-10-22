@@ -104,7 +104,8 @@ async function importBoq(ctx) {
 const planner = () => hasRole('factory_manager', 'production_incharge');
 export const proj = {
   key: 'proj', title: 'Projects', single: 'Project', table: 'projects', noField: 'code', dateField: 'start_date',
-  statuses: ['OPEN', 'ON_HOLD', 'CLOSED'], defaultTab: 'OPEN', createRoles: ['factory_manager', 'production_incharge'],
+  // customer projects are created by confirming a project order in Sales (the administrator can still add one here)
+  statuses: ['OPEN', 'ON_HOLD', 'CLOSED'], defaultTab: 'OPEN', createRoles: [],
   canEdit: ctx => hasRole('factory_manager', 'production_incharge', 'finance') && ctx.doc.status !== 'CLOSED',
   headerEditable: () => planner(),
   refs: ['items', 'bom_templates', 'profiles', 'customers', 'uoms'], saveKeys: ['customer'],

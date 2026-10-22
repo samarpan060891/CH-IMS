@@ -16,14 +16,22 @@ const itemFits = (r, row) => r.is_active && (row.line_type === 'MADE' ? r.item_c
   : row.line_type === 'SERVICE' ? r.item_classes?.code === 'SRV'
   : row.line_type === 'STOCK' ? r.item_classes?.tracking === 'LOT' && !r.item_classes?.is_scrap && r.item_classes?.code !== 'SRV' : false);
 
+// project quotations / orders: become a customer project with its BOQ and progress billing
+const isProj = d => d.order_type === 'PROJECT' || d.so_type === 'PROJECT';
+const projectTerms = (show = isProj) => [
+  { k: 'retention_pct', label: 'Retention per claim', type: 'select', options: PCTS.filter(p => p.v <= 20), show },
+  { k: 'advance_recovery_pct', label: 'Advance recovery per claim (blank = advance %)', type: 'select', options: PCTS, show },
+  { k: 'billing_basis', label: 'Billing basis', type: 'select', required: true, show, options: [{ v: 'BOQ_ITEM', l: 'Per BOQ item (installed qty × rate)' }, { v: 'UNIT', l: 'Per unit (unit price × progress)' }] },
+];
 // the line grid shared by quotations and orders
 function lineFields(priceShown = () => true) {
   return [
+    { k: 'boq_ref', label: 'BOQ ref', width: '70px', show: isProj },
     { k: 'line_type', label: 'Type', type: 'select', required: true, options: LINE_TYPES, width: '150px',
       onChange: r => { r.item_id = null; r.work_center_id = null; if (r.line_type === 'JOB_WORK') r.uom = 'HR'; } },
     { k: 'item_id', label: 'Product / item / service', type: 'ref', ref: 'items', width: '230px', filter: itemFits, ro: r => r.line_type === 'JOB_WORK',
       onChange: (r, v) => { const it = refRow('items', v); if (!it) return; r.description ||= it.name; r.uom = it.uoms?.code || r.uom; if (!num(r.est_unit_cost)) r.est_unit_cost = num(it.standard_cost) || num(it.avg_cost) || num(it.last_purchase_rate); } },
-    { k: 'work_center_id', label: 'Work centre (job work)', type: 'ref', ref: 'work_centers', width: '170px', filter: r => r.is_active, ro: r => r.line_type !== 'JOB_WORK',
+    { k: 'work_center_id', label: 'Work centre (job work)', type: 'ref', ref: 'work_centers', width: '170px', filter: r => r.is_active, ro: r => r.line_type !== 'JOB_WORK', show: d => !isProj(d),
       onChange: (r, v) => { const w = refRow('work_centers', v); if (!w) return; r.description ||= 'Job work — ' + w.name; r.uom = 'HR'; if (!num(r.est_unit_cost)) r.est_unit_cost = num(w.machine_rate_per_hour); } },
     { k: 'description', label: 'Description (printed)', required: true, width: '220px' },
     { k: 'qty', label: 'Qty', type: 'number', required: true },
@@ -32,11 +40,18 @@ function lineFields(priceShown = () => true) {
     { k: 'discount_pct', label: 'Disc. %', type: 'number', show: priceShown },
     { k: '_amt', label: 'Amount', type: 'ro', virtual: true, show: priceShown, fmt: (v, r) => money(num(r.qty) * num(r.rate) * (1 - num(r.discount_pct) / 100)) },
     { k: 'est_unit_cost', label: 'Est. unit cost', type: 'number', cost: true },
+    // project BOQ details: attach to units by type or codes, how bought-out goes and who does the service
+    { k: 'unit_type', label: 'Unit type', type: 'lookup', list: 'UNIT_TYPE', width: '110px', show: isProj },
+    { k: 'unit_codes', label: 'Unit codes', width: '110px', show: isProj },
+    { k: 'qty_per_unit', label: 'Qty / unit', type: 'number', show: isProj },
+    { k: 'supply_mode', label: 'Bought-out to', type: 'select', show: isProj, ro: r => r.line_type !== 'STOCK', options: [{ v: 'FACTORY', l: 'Factory store' }, { v: 'DIRECT_TO_SITE', l: 'Direct to site' }] },
+    { k: 'service_mode', label: 'Service by', type: 'select', show: isProj, ro: r => r.line_type !== 'SERVICE', options: [{ v: 'OWN_TEAM', l: 'Own team' }, { v: 'SUBCONTRACT', l: 'Subcontractor' }, { v: 'HIRED', l: 'Hired' }] },
     { k: 'remarks', label: 'Remarks / drawing', width: '150px' },
   ];
 }
-function lineCheck(lines) {
+function lineCheck(lines, proj = false) {
   lines.forEach((r, i) => {
+    if (proj && r.line_type === 'JOB_WORK') throw new Error(`Line ${i + 1}: job work is not part of a project BOQ — quote it on a normal sales quotation`);
     if (['MADE', 'STOCK'].includes(r.line_type) && !r.item_id) throw new Error(`Line ${i + 1}: pick the ${r.line_type === 'MADE' ? 'product (finished-goods item)' : 'item'}`);
     if (r.line_type === 'JOB_WORK' && !r.work_center_id) throw new Error(`Line ${i + 1}: pick the work centre for the job work`);
     if (r.line_type !== 'JOB_WORK') r.work_center_id = null;
@@ -59,12 +74,15 @@ function salesPdf(c, kind) {
        kind === 'qt' ? ['Valid until', dt(d.valid_until)] : ['Delivery', dt(d.delivery_date) || '-'],
        ['Payment', [num(d.advance_pct) ? num(d.advance_pct) + '% advance' : '', refLabel('payment_terms', d.payment_term_id)].filter(Boolean).join(' · ') || '-']];
   if (kind === 'qt' && d.delivery_weeks) meta.push(['Delivery time', `${d.delivery_weeks} weeks from order`]);
-  const cols = [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Description', k: r => r.description + (r.remarks ? '\n' + r.remarks : '') },
+  if (isProj(d)) meta.push(['Site', d.site_address || d.delivery_address || '-'], ['Retention', num(d.retention_pct) + '% per progress claim'],
+    ['Billing', d.billing_basis === 'UNIT' ? 'Per unit, by progress' : 'Per BOQ item, by installed quantity']);
+  const cols = [{ h: isProj(d) ? 'Ref' : '#', k: r => isProj(d) ? (r.boq_ref || c.grids.lines.indexOf(r) + 1) : c.grids.lines.indexOf(r) + 1, w: 12 },
+    { h: 'Description', k: r => r.description + (r.unit_type ? ` (${r.unit_type}${num(r.qty_per_unit) ? ' × ' + qty(r.qty_per_unit) + ' per unit' : ''})` : '') + (r.remarks ? '\n' + r.remarks : '') },
     { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'UoM', k: r => r.uom || '' }];
   if (!internal) cols.push({ h: 'Rate', k: r => money(r.rate), align: 'right' }, { h: 'Disc.', k: r => num(r.discount_pct) ? num(r.discount_pct) + '%' : '', align: 'right' },
     { h: 'Amount AED', k: r => money(lineAmt(r)), align: 'right' });
   const t = totals(c).filter(x => !x.cost);
-  return makePdf({ title: kind === 'qt' ? 'Quotation' : internal ? 'Internal Order' : 'Order Confirmation', no: kind === 'qt' ? d.qt_no : d.so_no,
+  return makePdf({ title: kind === 'qt' ? (isProj(d) ? 'Quotation — Bill of Quantities' : 'Quotation') : internal ? 'Internal Order' : isProj(d) ? 'Project Order Confirmation' : 'Order Confirmation', no: kind === 'qt' ? d.qt_no : d.so_no,
     date: kind === 'qt' ? d.qt_date : d.so_date, subtitle: d.title, meta, columns: cols, rows: c.grids.lines,
     totals: internal ? [] : t.map(x => [x.l, money(x.v)]), notes: [d.terms, d.remarks].filter(Boolean).join('\n'),
     signatures: kind === 'qt' ? ['Prepared by', 'Approved by', 'Accepted by customer (sign & stamp)'] : internal ? ['Requested by', 'Factory Manager'] : ['Sales', 'Finance', 'Customer acceptance'] });
@@ -79,11 +97,14 @@ export const qt = {
   refs: ['customers', 'items', 'work_centers', 'payment_terms', 'uoms', 'profiles'],
   list: { select: '*, customers(name)', columns: [{ k: r => r.customers?.name, label: 'Customer' }, { k: 'title', label: 'Title' }, { k: 'valid_until', label: 'Valid until', fmt: 'date' },
     { k: 'subtotal', label: 'Value AED', fmt: 'money', sum: true }, { k: r => num(r.subtotal) ? Math.round((1 - num(r.est_cost) / num(r.subtotal)) * 1000) / 10 : null, label: 'Est. margin %', n: true, cost: true }] },
-  defaults: () => ({ qt_date: today(), valid_until: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), vat_rate: 5, advance_pct: 0 }),
+  defaults: () => ({ qt_date: today(), valid_until: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), vat_rate: 5, advance_pct: 0, order_type: 'SALES', retention_pct: 0, billing_basis: 'BOQ_ITEM' }),
   header: [
+    { k: 'order_type', label: 'Quotation for', type: 'select', required: true, wide: true, ro: d => !!d.id,
+      options: [{ v: 'SALES', l: 'Sales order (supply / install, billed on delivery)' }, { v: 'PROJECT', l: 'Project (BOQ, progress claims, retention)' }] },
     { k: 'customer_id', label: 'Customer', type: 'ref', ref: 'customers', required: true, wide: true, filter: r => r.status === 'ACTIVE',
       onChange: (d, v) => { const c = refRow('customers', v); if (c && !d.payment_term_id) d.payment_term_id = c.payment_term_id; } },
     { k: 'title', label: 'Title (e.g. Villa 12 — kitchen & wardrobes)', required: true, wide: true },
+    { k: 'site_address', label: 'Site address', wide: true, show: isProj },
     { k: 'customer_ref', label: 'Customer enquiry ref' },
     { k: 'qt_date', label: 'Date', type: 'date', required: true },
     { k: 'valid_until', label: 'Valid until', type: 'date' },
@@ -91,6 +112,7 @@ export const qt = {
     { k: 'advance_pct', label: 'Advance payment', type: 'select', required: true, options: PCTS },
     { k: 'payment_term_id', label: 'Payment terms (balance)', type: 'ref', ref: 'payment_terms' },
     { k: 'vat_rate', label: 'VAT', type: 'select', required: true, options: VATS },
+    ...projectTerms(),
     { k: 'lost_reason', label: 'Lost because', type: 'ro', wide: true, show: d => d.status === 'LOST' },
     { k: 'sales_order_id', label: 'Sales order', type: 'ro', show: d => !!d.sales_order_id, fmt: () => 'Accepted — see the sales order' },
     { k: 'terms', label: 'Terms & conditions (printed)', type: 'textarea', full: true },
@@ -99,7 +121,7 @@ export const qt = {
   headerNote: () => 'Line types: <b>Made in-house</b> (finished-goods product — becomes a production order), <b>From stock / trading</b>, <b>Service</b> (installation, delivery, design) and <b>Job work</b> (machine hours sold on a work centre). ' +
     'Est. unit cost is only for your margin check and is never printed. A missing product, customer or unit can be requested from the bottom of its drop-down.',
   grids: [{ key: 'lines', title: 'Lines', table: 'quotation_lines', fk: 'qt_id', order: 'line_no', newRow: () => ({ line_type: 'MADE', qty: 1, rate: 0, discount_pct: 0, est_unit_cost: 0 }), fields: lineFields() }],
-  validate(ctx) { lineCheck(ctx.grids.lines); },
+  validate(ctx) { lineCheck(ctx.grids.lines, isProj(ctx.doc)); },
   totals: ctx => totals(ctx),
   actions: ctx => {
     const s = ctx.doc.status, open = ['DRAFT', 'SENT'].includes(s);
@@ -167,32 +189,37 @@ export const so = {
   statuses: ['DRAFT', 'PENDING_FM', 'REJECTED', 'CONFIRMED', 'CLOSED', 'CANCELLED'], createRoles: ['sales', 'finance', 'factory_manager', 'production_incharge', 'stores', 'shop_floor', 'site_supervisor', 'purchase', 'hr_officer'],
   canEdit: ctx => ['DRAFT', 'REJECTED'].includes(ctx.doc.status || 'DRAFT') && (ctx.isNew || isSales() || ctx.doc.created_by === state.profile?.id),
   refs: ['customers', 'cost_centers', 'items', 'work_centers', 'payment_terms', 'uoms', 'profiles'],
-  list: { select: '*, customers(name), cost_centers(code)', columns: [{ k: r => r.so_type === 'INTERNAL' ? '🔧 Internal' : 'Customer', label: 'Type' },
+  list: { select: '*, customers(name), cost_centers(code)', columns: [{ k: r => r.so_type === 'INTERNAL' ? '🔧 Internal' : r.so_type === 'PROJECT' ? '🏗 Project' : 'Customer', label: 'Type' },
     { k: r => r.customers?.name || r.cost_centers?.code, label: 'Customer / cost centre' }, { k: 'title', label: 'Title' }, { k: 'customer_ref', label: 'Customer PO' },
     { k: 'delivery_date', label: 'Delivery', fmt: 'date' }, { k: 'subtotal', label: 'Value AED', fmt: 'money', sum: true, cost: true }] },
   defaults: () => ({ so_date: today(), so_type: isSales() ? 'CUSTOMER' : 'INTERNAL', vat_rate: 5, advance_pct: 0 }),
   onNew(ctx, parts) { if (parts[0] === 'internal') ctx.doc.so_type = 'INTERNAL'; },
   header: [
     { k: 'so_type', label: 'Order type', type: 'select', required: true, wide: true, ro: d => !!d.id,
-      options: () => isSales() ? [{ v: 'CUSTOMER', l: 'Customer order' }, { v: 'INTERNAL', l: 'Internal order (mock-up / internal use — Factory Manager approves)' }]
+      options: () => isSales() ? [{ v: 'CUSTOMER', l: 'Customer order (billed on delivery)' }, { v: 'PROJECT', l: 'Project order (creates the project, BOQ and progress billing)' },
+                                  { v: 'INTERNAL', l: 'Internal order (mock-up / internal use — Factory Manager approves)' }]
                                : [{ v: 'INTERNAL', l: 'Internal order (mock-up / internal use — Factory Manager approves)' }] },
-    { k: 'customer_id', label: 'Customer', type: 'ref', ref: 'customers', required: true, wide: true, show: d => d.so_type === 'CUSTOMER', filter: r => r.status === 'ACTIVE',
+    { k: 'customer_id', label: 'Customer', type: 'ref', ref: 'customers', required: true, wide: true, show: d => d.so_type !== 'INTERNAL', filter: r => r.status === 'ACTIVE',
       onChange: (d, v) => { const c = refRow('customers', v); if (c && !d.payment_term_id) d.payment_term_id = c.payment_term_id; } },
     { k: 'cost_center_id', label: 'Charge to cost centre', type: 'ref', ref: 'cost_centers', required: true, wide: true, show: d => d.so_type === 'INTERNAL', filter: r => r.is_active },
     { k: 'title', label: 'Title (what is it for)', required: true, wide: true },
-    { k: 'customer_ref', label: 'Customer PO / LPO no.', show: d => d.so_type === 'CUSTOMER' },
+    { k: 'customer_ref', label: 'Customer PO / LPO / contract no.', show: d => d.so_type !== 'INTERNAL' },
     { k: 'so_date', label: 'Order date', type: 'date', required: true },
-    { k: 'delivery_date', label: 'Delivery / needed by', type: 'date', required: true },
-    { k: 'delivery_address', label: 'Delivery address', wide: true, show: d => d.so_type === 'CUSTOMER' },
-    { k: 'advance_pct', label: 'Advance payment', type: 'select', options: PCTS, show: d => d.so_type === 'CUSTOMER' },
-    { k: 'payment_term_id', label: 'Payment terms (balance)', type: 'ref', ref: 'payment_terms', show: d => d.so_type === 'CUSTOMER' },
-    { k: 'vat_rate', label: 'VAT', type: 'select', options: VATS, show: d => d.so_type === 'CUSTOMER' },
+    { k: 'delivery_date', label: 'Delivery / completion by', type: 'date', required: true },
+    { k: 'delivery_address', label: 'Delivery / site address', wide: true, show: d => d.so_type !== 'INTERNAL' },
+    { k: 'advance_pct', label: 'Advance payment', type: 'select', options: PCTS, show: d => d.so_type !== 'INTERNAL' },
+    { k: 'payment_term_id', label: 'Payment terms (balance)', type: 'ref', ref: 'payment_terms', show: d => d.so_type !== 'INTERNAL' },
+    { k: 'vat_rate', label: 'VAT', type: 'select', options: VATS, show: d => d.so_type !== 'INTERNAL' },
+    ...projectTerms(),
     { k: 'quotation_id', label: 'From quotation', type: 'ro', show: d => !!d.quotation_id, fmt: () => 'Yes — see Quotations' },
     { k: 'created_by', label: 'Raised by', type: 'ro', show: d => !!d.id, fmt: v => refLabel('profiles', v) },
     { k: 'approval_comments', label: 'Approval comments', type: 'ro', wide: true, show: d => !!d.approval_comments },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: ctx => ctx.doc.so_type === 'INTERNAL'
+  headerNote: ctx => ctx.doc.so_type === 'PROJECT'
+    ? 'Confirming a <b>project order</b> creates the customer project with these lines as its <b>BOQ</b> (made in-house, bought-out, services) and the contract terms. ' +
+      'Production, purchasing, site delivery, installation and <b>billing</b> (advance invoice, progress claims, payment certificates, retention) then run in the project.'
+    : ctx.doc.so_type === 'INTERNAL'
     ? 'Internal orders (showroom mock-ups, samples, internal use) are approved by the <b>Factory Manager</b>. Once approved, material is requested against the order and every cost is charged to the chosen <b>cost centre</b>; made-in-house lines become production orders.'
     : 'Confirming the order opens it for material requests, creates a <b>production order</b> for each made-in-house line (the Production In-charge picks the BOM and route), and lets Stores deliver stock lines. ' +
       'Finance raises the <b>advance invoice</b> and then <b>invoices</b> what has been delivered, services and job-work hours — the advance is recovered on each invoice.',
@@ -202,11 +229,12 @@ export const so = {
     const d = ctx.doc;
     if (d.so_type === 'INTERNAL') { d.customer_id = null; d.advance_pct = 0; ctx.grids.lines.forEach(l => { l.rate = 0; l.discount_pct = 0; }); }
     else d.cost_center_id = null;
-    lineCheck(ctx.grids.lines);
+    if (d.so_type !== 'PROJECT') { d.retention_pct = 0; d.advance_recovery_pct = null; }
+    lineCheck(ctx.grids.lines, isProj(d));
   },
   totals: ctx => totals(ctx, ctx.doc.so_type !== 'INTERNAL'),
   async loadInfo(ctx) {
-    if (!ctx.doc.project_id) return [];
+    if (!ctx.doc.project_id || ctx.doc.so_type === 'PROJECT') return [];
     const lines = must(await sb.from('v_so_lines').select('*').eq('so_id', ctx.doc.id).order('line_no'));
     const docs = await soDocs(ctx);
     const out = [{ title: 'Progress by line', rows: lines, columns: [{ k: r => typeText(r.line_type), label: 'Type' }, { k: 'description', label: 'Line' },
@@ -226,8 +254,17 @@ export const so = {
     return out;
   },
   actions: ctx => {
-    const d = ctx.doc, s = d.status, cust = d.so_type === 'CUSTOMER', live = s === 'CONFIRMED', mine = d.created_by === state.profile?.id;
+    const d = ctx.doc, s = d.status, proj = d.so_type === 'PROJECT', cust = d.so_type === 'CUSTOMER', live = s === 'CONFIRMED' && !proj, mine = d.created_by === state.profile?.id;
     const has = t => ctx.grids.lines.some(l => l.line_type === t);
+    if (proj) return [
+      { label: '✔ Confirm — create the project', cls: 'primary', show: ['DRAFT', 'REJECTED'].includes(s) && isSales(),
+        confirm: 'Confirm this project order? The project is created with these lines as its BOQ and the contract terms; the lines can no longer change here.',
+        reload: false, run: async c => { await rpc('so_action', { p_so: c.doc.id, p_action: 'SUBMIT' }); const o = must(await sb.from('sales_orders').select('project_id').eq('id', c.doc.id).single());
+          toast('Project created — add units, plan production and lock the BOQ baseline', 'ok', 7000); go('d/proj/' + o.project_id); } },
+      { label: '🏗 Open the project', cls: 'primary', show: !!d.project_id, reload: false, run: c => go('d/proj/' + c.doc.project_id) },
+      { label: '🖨 Order confirmation', reload: false, run: c => salesPdf(c, 'so') },
+      { label: 'Cancel', show: ['DRAFT', 'REJECTED'].includes(s) && isSales(), confirm: 'Cancel this order?', run: c => rpc('so_action', { p_so: c.doc.id, p_action: 'CANCEL' }) },
+    ];
     return [
       { label: cust ? '✔ Confirm order' : '📤 Send to Factory Manager', cls: 'primary', show: ['DRAFT', 'REJECTED'].includes(s) && (cust ? isSales() : (mine || isSales())),
         confirm: cust ? 'Confirm this order? Production orders are created for made-in-house lines and the lines can no longer change.' : null,
