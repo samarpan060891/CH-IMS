@@ -496,6 +496,9 @@ async function fillSplit(ctx) {
   });
 }
 const splitF = { k: '_split', label: 'In store (usable · reserved)', type: 'ro', virtual: true, width: '220px' };
+// spares / consumables for a machine: issued to the cost centre, and counted in that machine's rate (machine-rate calculator)
+const machineF = { k: 'work_center_id', label: 'For machine (optional)', type: 'ref', ref: 'work_centers', width: '170px', request: false,
+  filter: r => r.is_active, show: d => d.purpose === 'COST_CENTER' };
 // specific boards / offcut pieces that can be named on a request: available, not in quarantine / scrap, free or reserved for this project
 async function loadMrLots(ctx) {
   const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
@@ -549,7 +552,7 @@ export const mr = {
   canEdit: ctx => (['DRAFT', 'REJECTED'].includes(ctx.doc.status) && hasRole('shop_floor', 'production_incharge', 'stores', 'site_supervisor')) ||
                   (ctx.doc.status === 'PENDING_APPROVAL' && hasRole('production_incharge')),
   headerEditable: ctx => ['DRAFT', 'REJECTED'].includes(ctx.doc.status),
-  refs: ['items', 'projects', 'cost_centers', 'profiles', 'item_classes', 'item_categories'],
+  refs: ['items', 'projects', 'cost_centers', 'profiles', 'item_classes', 'item_categories', 'work_centers'],
   list: { select: '*, projects(code,name), cost_centers(code), profiles:requested_by(full_name)', columns: [
     { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : r.cost_centers?.code, label: 'Project / Cost centre' },
     { k: 'priority', label: 'Priority', fmt: 'badge' }, { k: 'required_date', label: 'Required', fmt: 'date' }, { k: r => r.profiles?.full_name, label: 'Requested by' }] },
@@ -594,6 +597,7 @@ export const mr = {
     importers: [{ label: '✂ Request offcuts', run: ctx => pickOffcuts(ctx) }],
     fields: [
       itemF({ filter: r => isLotItem(r) && browseOk(r), lockSaved: false, onChange: async (r, v, ctx) => { r.lot_id = null; await fillSplit(ctx); await loadMrLots(ctx); } }), uomF, splitF,
+      machineF,
       { k: 'lot_id', label: 'Board / offcut (optional)', type: 'ref', width: '270px', refOptions: r => opts.mrLots?.[r.item_id] || [],
         onChange: (r, v) => { const l = (opts.mrLots?.[r.item_id] || []).find(x => x.id === v); if (l?.offcut) { r.requested_qty = l.qty; if (r.approved_qty != null) r.approved_qty = l.qty; } } },
       { k: 'requested_qty', label: 'Requested', type: 'number', required: true, ro: r => !!(opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.offcut },
@@ -648,7 +652,7 @@ async function loadMrIntoIssue(ctx, mrId) {
   const m = must(await sb.from('material_requests').select('*').eq('id', mrId).single());
   Object.assign(ctx.doc, { mr_id: m.id, purpose: m.purpose, project_id: m.project_id, cost_center_id: m.cost_center_id });
   const lines = must(await sb.from('mr_lines').select('*').eq('mr_id', mrId).order('line_no'));
-  ctx.grids.lines = lines.map(l => ({ mr_line_id: l.id, item_id: l.item_id, lot_id: l.lot_id, _mrLot: !!l.lot_id, qty: num(l.approved_qty ?? l.requested_qty) - num(l.issued_qty), remarks: l.remarks }))
+  ctx.grids.lines = lines.map(l => ({ mr_line_id: l.id, item_id: l.item_id, lot_id: l.lot_id, _mrLot: !!l.lot_id, work_center_id: l.work_center_id, qty: num(l.approved_qty ?? l.requested_qty) - num(l.issued_qty), remarks: l.remarks }))
     .filter(l => l.qty > 0);
   // requested boards / offcuts fix the store location when it is not chosen yet
   const named = ctx.grids.lines.filter(l => l.lot_id).map(l => l.lot_id);
@@ -663,7 +667,7 @@ async function loadMrIntoIssue(ctx, mrId) {
 export const issue = {
   key: 'issue', title: 'Material Issues', single: 'Issue Slip', table: 'material_issues', noField: 'issue_no', dateField: 'issue_date',
   statuses: ['DRAFT', 'POSTED'], createRoles: ['stores'], saveKeys: ['received_by_name'],
-  refs: ['items', 'projects', 'cost_centers', 'locations', 'employees'],
+  refs: ['items', 'projects', 'cost_centers', 'locations', 'employees', 'work_centers'],
   list: { select: '*, projects(code,name), cost_centers(code), material_requests(mr_no)', columns: [
     { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : r.cost_centers?.code, label: 'Project / CC' },
     { k: r => r.material_requests?.mr_no, label: 'Request' }, { k: 'received_by_name', label: 'Received by' }, { k: 'total_value', label: 'Value', fmt: 'money', cost: true, sum: true },
@@ -714,6 +718,7 @@ export const issue = {
     key: 'lines', title: 'Items to issue', table: 'issue_lines', fk: 'issue_id', order: 'line_no', saveKeys: ['mr_line_id'],
     fields: [
       itemF({ filter: isLotItem, ro: r => !!r.mr_line_id, onChange: async (r, v, ctx) => { r.lot_id = null; await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); } }), uomF,
+      machineF,
       { ...availF, show: d => d.status === 'DRAFT' },
       { k: 'lot_id', label: 'Batch / offcut (blank = oldest / earliest expiry first)', type: 'ref', width: '280px', refOptions: r => opts.lots[r.item_id] || [],
         show: d => d.status === 'DRAFT', ro: r => !!r._mrLot, onChange: (r, v) => { const l = (opts.lots[r.item_id] || []).find(x => x.id === v); if (l?.offcut) r.qty = l.qty; } },

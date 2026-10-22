@@ -80,6 +80,9 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   list for the items are added automatically), RFQ PDF per supplier; quotes (rate, lead time, currency) entered side by side with the lowest price per line in green;
   award each line (Award lowest, or a dearer but faster supplier); Create POs makes one draft PO per supplier linked to the requisition lines, and the winning prices
   go on the vendor price list.
+- **Maintenance costing**: cost centres MNT-MAC (machines) and MNT-FAC (factory building & facilities), both factory cost centres; office maintenance on ADM.
+  Machine spares requested / issued to MNT-MAC can name the machine, as can repair bills and AMC recurring bills; these plus breakdown repair costs, depreciation and
+  tooling make up each machine's rate in the machine-rate calculator. Building upkeep reaches products through the overhead % (factory overheads vs absorbed).
 - **Documents & PDFs**: every document prints into a panel that slides in from the right (pages drawn on screen, also on phones) with Download, Print and Open in new
   tab; the 👁 button on each list row previews a document's PDF without opening it (quotations, sales / project orders, RFQs, POs, GRNs, job cards, delivery notes,
   sales and purchase invoices, vouchers, payslips, labels …).

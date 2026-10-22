@@ -54,6 +54,7 @@ export const FloorApp = {
           && (!this.bSub ? (!this.bCat || i.category_id === this.bCat || catOf(i.category_id)?.parent_id === this.bCat) : i.category_id === this.bSub)
           && (q.length < 2 || `${i.code} ${i.name}`.toLowerCase().includes(q))).slice(0, 40);
     },
+    machines() { return (state.refs.work_centers || []).filter(w => w.is_active); },
     KINDS() { return KINDS.filter(k => k.k !== 'MTS' || this.projects.some(p => p.project_type === 'MTS')); },
     // the orders of the chosen kind
     targets() {
@@ -84,7 +85,7 @@ export const FloorApp = {
   },
   async mounted() {
     await run(async () => {
-      await loadRefs(['items', 'locations', 'employees', 'item_classes', 'item_categories']);
+      await loadRefs(['items', 'locations', 'employees', 'item_classes', 'item_categories', 'work_centers']);
       const [w, p, c] = await Promise.all([
         sb.from('production_orders').select('id,wo_no,description,project_id,status,projects(code,project_type)').in('status', ['RELEASED', 'IN_PROGRESS']).order('wo_no'),
         sb.from('projects').select('id,code,name,project_type,cost_center_id').eq('status', 'OPEN').order('code'),
@@ -195,7 +196,8 @@ export const FloorApp = {
       const ok = await run(async () => {
         const m = must(await sb.from('material_requests').insert(hdr).select('id,mr_no').single());
         try {
-          must(await sb.from('mr_lines').insert(lines.map((l, i) => ({ mr_id: m.id, line_no: i + 1, item_id: l.item_id, requested_qty: num(l.qty), lot_id: l.lot_id || null, remarks: l.note || null }))));
+          must(await sb.from('mr_lines').insert(lines.map((l, i) => ({ mr_id: m.id, line_no: i + 1, item_id: l.item_id, requested_qty: num(l.qty), lot_id: l.lot_id || null, remarks: l.note || null,
+            work_center_id: f.target.startsWith('cc:') ? l.machine || null : null }))));
           await rpc('mr_action', { p_mr: m.id, p_action: 'SUBMIT' });
         } catch (e) { await sb.from('material_requests').delete().eq('id', m.id); throw e; }   // don't leave a half-made draft
         toast(`${m.mr_no} sent to the Production In-charge`, 'ok', 6000);
@@ -388,6 +390,10 @@ export const FloorApp = {
           <button class="btn" @click="step(l, 1)" :disabled="l.offcut">+</button>
           <span class="muted">{{ uom(l.item_id) }}</span>
           <input v-model="l.note" placeholder="drawing / note" class="floor-note">
+          <select v-if="kind==='CC'" v-model="l.machine" class="floor-note" style="padding:8px" title="Spares for a machine count in that machine's rate">
+            <option :value="undefined">For machine… (optional)</option>
+            <option v-for="w in machines" :key="w.id" :value="w.id">{{ w.code }} — {{ w.name }}</option>
+          </select>
         </div>
       </div>
       <template v-if="f.lines.length">

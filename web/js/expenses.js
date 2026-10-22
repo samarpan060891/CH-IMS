@@ -170,7 +170,7 @@ export const exp = {
 export const rexp = {
   key: 'rexp', title: 'Recurring Bills', single: 'Recurring Bill', table: 'expense_templates', noField: 'tpl_no', dateField: 'tpl_date',
   statuses: ['ACTIVE', 'PAUSED'], createRoles: ['finance'], editStatuses: ['ACTIVE', 'PAUSED'],
-  refs: ['gl_accounts', 'cost_centers', 'projects', 'vendors'],
+  refs: ['gl_accounts', 'cost_centers', 'projects', 'vendors', 'work_centers'],
   list: { select: '*, vendors(name)', columns: [{ k: 'title', label: 'Bill' }, { k: r => TYPE_SHORT[r.exp_type], label: 'Type' }, { k: r => r.vendors?.name || r.payee_name, label: 'Paid to' },
     { k: 'day_of_month', label: 'Day', n: true }, { k: 'next_date', label: 'Next draft', fmt: 'date' }] },
   defaults: () => ({ status: 'ACTIVE', exp_type: 'BILL', day_of_month: 1, next_date: today() }),
@@ -197,6 +197,8 @@ export const rexp = {
       { k: 'description', label: 'Description', width: '200px' },
       { k: 'cost_center_id', label: 'Cost centre', type: 'ref', ref: 'cost_centers', required: true, width: '150px' },
       { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', width: '150px' },
+      // machine AMC / service contracts: counted in that machine's rate
+      { k: 'work_center_id', label: 'Machine (AMC, optional)', type: 'ref', ref: 'work_centers', width: '150px', filter: r => r.is_active, request: false },
       { k: 'amount', label: 'Amount (excl. VAT)', type: 'number', required: true }, { k: 'vat_rate', label: 'VAT %', type: 'number' }] }],
   actions: ctx => [
     { label: '⚡ Create this month\'s draft now', cls: 'primary', show: isFin() && ctx.doc.status === 'ACTIVE', done: 'Draft created',

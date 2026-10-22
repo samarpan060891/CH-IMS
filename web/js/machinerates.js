@@ -85,7 +85,7 @@ export const MachineRates = {
         <label class="f"><span>From</span><input type="date" v-model="from"></label>
         <label class="f"><span>To</span><input type="date" v-model="to"></label>
         <button class="btn primary" @click="load" :disabled="loading">Calculate</button>
-        <span class="muted small" style="max-width:640px">Suggested rate = (depreciation of the machines linked to the work centre + breakdown repairs + repair / spares expenses tagged to it + tooling) ÷ machine hours, + power per running hour (kW × load × tariff in Settings).
+        <span class="muted small" style="max-width:640px">Suggested rate = (depreciation of the machines linked to the work centre + breakdown repairs + repair / spares / AMC expenses tagged to it + spares issued from store to it + tooling) ÷ machine hours, + power per running hour (kW × load × tariff in Settings).
           <b>On actual</b> divides by hours logged on production orders; <b>on capacity</b> by planned hours (hours/day × working days × utilisation) — better while few hours are logged.</span>
       </div>
     </div>
@@ -104,7 +104,8 @@ export const MachineRates = {
         <tr class="h"><td colspan="2">Fixed costs in the period</td></tr>
         <tr><td>Depreciation of linked machines</td><td class="n">{{ money(calc.depreciation) }}</td></tr>
         <tr><td>Breakdown repair costs (downtime log)</td><td class="n">{{ money(calc.repairs_breakdowns) }}</td></tr>
-        <tr><td>Repair / spares / service expenses tagged to this machine</td><td class="n">{{ money(calc.repairs_expenses) }}</td></tr>
+        <tr><td>Repair / spares / service expenses & AMC tagged to this machine</td><td class="n">{{ money(calc.repairs_expenses) }}</td></tr>
+        <tr><td>Spares issued from store to this machine (less returns)</td><td class="n">{{ money(calc.spares_store) }}</td></tr>
         <tr><td>Tooling & consumables allowance</td><td class="n">{{ money(calc.tooling) }}</td></tr>
         <tr class="s"><td>Total fixed costs</td><td class="n">{{ money(calc.fixed_total) }}</td></tr>
         <tr class="h"><td colspan="2">Hours</td></tr>
@@ -128,7 +129,7 @@ export const MachineRates = {
         <button v-if="canLink" class="btn sm" @click="link(a, false)">Unlink</button>
       </div>
       <button v-if="canLink" class="btn sm" style="margin-top:6px" @click="addMachine">+ Link a machine</button>
-      <p class="small muted" style="margin-top:8px">Tag repair, spares and service bills to this machine with the <b>Machine</b> column on expense lines; breakdown repair costs come from Machine downtime.</p>
+      <p class="small muted" style="margin-top:8px">Tag repair, spares and service bills (and AMC recurring bills) to this machine with the <b>Machine</b> column; name the machine on store requests / issues of spares to cost centre MNT-MAC; breakdown repair costs come from Machine downtime.</p>
       <template v-if="history.length">
         <h3 style="font-size:13px;margin-top:16px">Rate history</h3>
         <DataTable :searchable="false" :rows="history" :columns="[{k:'applied_at',label:'When',fmt:'datetime'},{k: r => r.profiles?.full_name, label:'By'},{k:'basis',label:'Basis',fmt:'label'},
