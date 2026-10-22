@@ -26,6 +26,7 @@ import { PROV_DOCS, Provisions } from './provisions.js';
 import { MDR_DOCS } from './masterreq.js';
 import { SALES_DOCS } from './sales.js';
 import { CashForecast } from './cash.js';
+import { PdfPanel } from './pdf.js';
 import { MachineRates } from './machinerates.js';
 
 Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS, MDR_DOCS, SALES_DOCS);
@@ -213,7 +214,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions, MachineRates, CashForecast },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions, MachineRates, CashForecast, PdfPanel },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -392,6 +393,7 @@ const App = {
       <button class="btn primary" @click="scanResult = null">Close</button>
     </template>
   </Modal>
+  <PdfPanel />
   <div class="toasts"><div v-for="t in state.toasts" :key="t.id" class="toast" :class="t.type">{{ t.msg }}</div></div>`,
 };
 

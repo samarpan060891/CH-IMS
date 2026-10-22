@@ -1293,6 +1293,19 @@ export const inv = {
     return out;
   },
   actions: ctx => [
+    // internal voucher for the supplier's invoice (the supplier's own tax invoice stays the legal document)
+    { label: '🖨 Purchase invoice voucher', reload: false, run: c => {
+        const d = c.doc, v = refRow('vendors', d.vendor_id) || {}, t = inv.totals(c);
+        return makePdf({ title: 'Purchase Invoice Voucher', no: d.inv_no, date: d.invoice_date, subtitle: label(d.status),
+          meta: [['Supplier', v.name || ''], ['Supplier TRN', v.trn || '-'], ['Supplier invoice no.', d.vendor_invoice_no || '-'], ['PO', opts.vpos.find(p => p.id === d.po_id)?.label || '-'],
+                 ['Currency', `${d.currency}${num(d.exchange_rate) !== 1 ? ' @ ' + d.exchange_rate : ''}`], ['Due date', dt(d.due_date) || '-'], ['Payment terms', refLabel('payment_terms', d.payment_term_id) || '-']],
+          columns: [{ h: '#', k: r => c.grids.lines.indexOf(r) + 1, w: 8 }, { h: 'Item / description', k: r => [itemName(r.item_id), r.description].filter(Boolean).join('\n') || refLabel('gl_accounts', r.account_id) },
+            { h: 'Charged to', k: r => [refRow('cost_centers', r.cost_center_id)?.code, refRow('projects', r.project_id)?.code].filter(Boolean).join(' · ') },
+            { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' }, { h: 'VAT %', k: r => num(r.vat_rate), align: 'right' },
+            { h: 'Amount', k: r => money(num(r.qty) * num(r.rate)), align: 'right' }],
+          rows: c.grids.lines, totals: t.map(x => [x.l, money(x.v)]), notes: d.remarks || '',
+          signatures: ['Prepared by', 'Checked (3-way match)', 'Finance Manager'] });
+      } },
     { label: '➖ Review suggested debit note', cls: 'primary', show: (ctx.extra.dns || []).some(d => d.auto_generated && d.status === 'DRAFT') && hasRole('finance'), reload: false,
       run: c => go('d/dn/' + c.extra.dns.find(d => d.auto_generated && d.status === 'DRAFT').id) },
     { label: '✔ Post invoice', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('finance'), confirm: 'Post this invoice to payables?', done: 'Invoice posted', run: c => rpc('post_vendor_invoice', { p_inv: c.doc.id }) },

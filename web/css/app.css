@@ -210,6 +210,18 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .floor-hit { padding: 11px 12px; border-bottom: 1px solid #f0f1f3; cursor: pointer; font-size: 14px; }
 .floor-hit:active, .floor-hit:hover { background: var(--brand-soft); }
 .floor-kinds { display: flex; gap: 6px; flex-wrap: wrap; }
+/* slide-in PDF viewer (from the right) */
+.pdf-shade { position: fixed; inset: 0; background: rgba(17,24,39,0); pointer-events: none; transition: background .25s; z-index: 60; }
+.pdf-shade.on { background: rgba(17,24,39,.35); pointer-events: auto; }
+.pdf-panel { position: absolute; top: 0; right: 0; height: 100%; width: min(820px, 100vw); background: #eef0f3; box-shadow: -12px 0 32px rgba(0,0,0,.18);
+  transform: translateX(100%); transition: transform .25s ease; display: flex; flex-direction: column; }
+.pdf-panel.on { transform: translateX(0); }
+.pdf-head { display: flex; align-items: center; gap: 6px; padding: 10px 12px; background: #fff; border-bottom: 1px solid var(--line); }
+.pdf-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pdf-body { flex: 1; overflow: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
+.pdf-page { display: block; margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+.btn.eye { padding: 2px 8px; font-size: 14px; }
+@media (prefers-reduced-motion: reduce) { .pdf-panel, .pdf-shade { transition: none; } }
 /* cash forecast grid */
 .cashf td:first-child, .cashf th:first-child { position: sticky; left: 0; background: #fff; min-width: 210px; z-index: 1; }
 .cashf td.n, .cashf th.n { min-width: 92px; white-space: nowrap; }

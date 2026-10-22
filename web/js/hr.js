@@ -3,7 +3,7 @@
 import { reactive } from 'vue';
 import { sb, state, must, run, rpc, hasRole, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, loadRefs, toast } from './lib.js';
 import { ask, confirmBox, Badge } from './components.js';
-import { makePdf } from './pdf.js';
+import { makePdf, showPdf } from './pdf.js';
 import { logoPng } from './logo.js';
 
 const isHR = () => hasRole('hr_officer');
@@ -393,7 +393,7 @@ async function payslips(c) {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(120);
     doc.text('Computer-generated payslip · CitiCore', 14, y + 14);
   });
-  doc.save(`Payslips-${c.doc.period_month.slice(0, 7)}.pdf`);
+  showPdf(doc, `Payslips-${c.doc.period_month.slice(0, 7)}.pdf`, 'Payslips · ' + c.doc.period_month.slice(0, 7));
 }
 
 export const HR_DOCS = { emp, leave, adv, payroll };

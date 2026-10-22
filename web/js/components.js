@@ -259,7 +259,7 @@ export const DataTable = {
     sort(i) { if (this.sortK === i) this.sortDir = -this.sortDir; else { this.sortK = i; this.sortDir = 1; } },
     total(c) { return this.filtered.reduce((s, r) => s + (Number(cellValue(c, r)) || 0), 0); },
     fmtTotal(c) { return c.fmt === 'qty' ? qty(this.total(c)) : money(this.total(c)); },
-    csv() { downloadCSV((this.filename || 'export') + '.csv', this.cols.map(c => ({ label: c.label, raw: r => cellText(c, r) })), this.filtered); },
+    csv() { downloadCSV((this.filename || 'export') + '.csv', this.cols.filter(c => !c.action).map(c => ({ label: c.label, raw: r => cellText(c, r) })), this.filtered); },
   },
   template: `<div>
     <div class="row" style="margin-bottom:8px" v-if="searchable">
@@ -276,8 +276,9 @@ export const DataTable = {
           <tr v-if="loading"><td :colspan="cols.length" class="empty">Loading…</td></tr>
           <tr v-else-if="!filtered.length"><td :colspan="cols.length" class="empty">No records</td></tr>
           <tr v-for="r in visible" :class="{click: clickable}" @click="clickable && $emit('row', r)">
-            <td v-for="c in cols" :class="{n: isNum(c)}">
-              <span v-if="c.fmt==='badge'" class="b" :class="cellValue(c,r)">{{ label(cellValue(c,r)) }}</span>
+            <td v-for="c in cols" :class="{n: isNum(c)}" :style="c.action ? 'width:1%;white-space:nowrap' : ''">
+              <button v-if="c.action" class="btn sm eye" :title="c.title || ''" :aria-label="c.title || ''" @click.stop="c.action(r)">{{ c.icon }}</button>
+              <span v-else-if="c.fmt==='badge'" class="b" :class="cellValue(c,r)">{{ label(cellValue(c,r)) }}</span>
               <template v-else>{{ text(c, r) }}</template>
             </td>
           </tr>

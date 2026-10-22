@@ -3,7 +3,7 @@
 import { reactive } from 'vue';
 import { sb, state, must, run, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, loadRefs, toast } from './lib.js';
 import { ask, confirmBox, Badge, Icon, Modal, namePick } from './components.js';
-import { makePdf } from './pdf.js';
+import { makePdf, showPdf } from './pdf.js';
 import { logoPng } from './logo.js';
 import { qrMatrix, qrText } from './scan.js';
 import { loadXlsx } from './importer.js';
@@ -429,7 +429,7 @@ async function jobCard(c) {
   const pages = doc.internal.getNumberOfPages();
   for (let p = 1; p <= pages; p++) { doc.setPage(p); doc.setFontSize(7.5); doc.setTextColor(140);
     doc.text(`${d.wo_no} · CitiCore`, 14, H - 8); doc.text(`Page ${p} of ${pages}`, W - 14, H - 8, { align: 'right' }); }
-  doc.save(`Job-card-${d.wo_no.replace(/[\/\\]/g, '-')}.pdf`);
+  showPdf(doc, `Job-card-${d.wo_no.replace(/[\/\\]/g, '-')}.pdf`, 'Job card · ' + d.wo_no);
 }
 
 // ======================================================================

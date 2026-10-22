@@ -1,8 +1,31 @@
 // Generic document list + editor driven by per-document configuration (see documents.js)
 import { sb, state, must, run, hasRole, canSeeCost, go, route, loadRefs, label, money, toast, refreshPending } from './lib.js';
 import { FieldInput, DataTable, Badge, confirmBox } from './components.js';
+import { pdfView } from './pdf.js';
 
 const visible = (f, doc) => !(f.cost && !canSeeCost()) && !(f.show && !f.show(doc));
+// documents whose screen has a 🖨 print action can be previewed straight from the list
+const printable = cfg => !!cfg.actions && cfg.actions.toString().includes('🖨');
+
+// Load a document the way its screen does (header, lines, afterLoad) without opening it, then run its 🖨 action:
+// the PDF opens in the slide-in viewer.
+export async function previewDoc(cfg, id, no) {
+  if (pdfView.url) URL.revokeObjectURL(pdfView.url);
+  Object.assign(pdfView, { open: true, url: null, pages: 0, rendering: true, title: `${cfg.single} ${no || ''}`.trim() });
+  try {
+    const ctx = { cfg, id, isNew: false, doc: null, grids: {}, extra: {}, removed: {}, info: [], dirty: false, busy: false, editable: false, headerEditable: false };
+    await loadRefs(cfg.refs || []);
+    ctx.doc = must(await sb.from(cfg.table).select('*').eq('id', id).single());
+    for (const g of cfg.grids || []) ctx.grids[g.key] = must(await sb.from(g.table).select(g.select || '*').eq(g.fk, id).order(g.order || 'id'));
+    if (cfg.afterLoad) await cfg.afterLoad(ctx);
+    const a = (cfg.actions(ctx) || []).find(x => x.show !== false && String(x.label).includes('🖨'));
+    if (!a) throw new Error(`No printable layout for this ${cfg.single.toLowerCase()} yet`);
+    await a.run(ctx);
+  } catch (e) {
+    pdfView.open = false; pdfView.rendering = false;
+    throw e;
+  }
+}
 
 // ---------------- list ----------------
 export const DocList = {
@@ -20,6 +43,7 @@ export const DocList = {
         { k: this.cfg.dateField, label: 'Date', fmt: 'date' },
         ...this.cfg.list.columns,
         { k: this.sf, label: this.cfg.statusLabel || 'Status', fmt: 'badge' },
+        ...(printable(this.cfg) ? [{ k: () => '', label: '', icon: '👁', title: 'Preview / download PDF', action: r => this.preview(r) }] : []),
       ];
     },
   },
@@ -39,6 +63,7 @@ export const DocList = {
       this.loading = false;
     },
     open(r) { go(`d/${this.cfg.key}/${r.id}`); },
+    preview(r) { return run(() => previewDoc(this.cfg, r.id, r[this.cfg.noField])); },
   },
   template: `<div>
     <div class="row" style="margin-bottom:12px">

@@ -2,6 +2,7 @@
 import { sb, state, must, run, toast, qty, dt, loadRefs } from './lib.js';
 import { RefSelect } from './components.js';
 import { qrText, qrMatrix } from './scan.js';
+import { showPdf } from './pdf.js';
 
 const COLS = 3, ROWS = 8, W = 70, H = 297 / 8;
 
@@ -35,7 +36,7 @@ export async function printLabels(labels, skip = 0, filename = 'labels.pdf', pre
     pos++;
   }
   if (preview) return doc.output('bloburl');
-  doc.save(filename);
+  showPdf(doc, filename, 'Labels · ' + labels.length + ' label' + (labels.length === 1 ? '' : 's'));
 }
 
 export const Labels = {
