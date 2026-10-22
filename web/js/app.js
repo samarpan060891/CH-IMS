@@ -27,9 +27,10 @@ import { MDR_DOCS } from './masterreq.js';
 import { SALES_DOCS } from './sales.js';
 import { CashForecast } from './cash.js';
 import { PdfPanel } from './pdf.js';
+import { RFQ_DOCS } from './rfq.js';
 import { MachineRates } from './machinerates.js';
 
-Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS, MDR_DOCS, SALES_DOCS);
+Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS, MDR_DOCS, SALES_DOCS, RFQ_DOCS);
 
 const ALL = null;
 // short menu names for reports (full titles show on the report page)
@@ -53,6 +54,7 @@ const MENU = [
     { to: 'buffers', t: 'Buffer review', roles: ['purchase', 'factory_manager', 'stores'], badge: 'dbm' },
     { to: 'd/pr', t: 'Requisitions', roles: ['purchase', 'stores', 'factory_manager', 'production_incharge'] },
     { to: 'consolidate', t: 'Consolidate requisitions', roles: ['purchase'], badge: 'prOpen' },
+    { to: 'd/rfq', t: 'Requests for quotation (RFQ)', roles: ['purchase', 'finance', 'factory_manager'] },
     { to: 'd/po', t: 'Purchase orders', roles: ['purchase', 'factory_manager', 'finance', 'stores'], badge: 'po' },
     { to: 'm/vendors', t: 'Vendors', roles: ['purchase', 'finance', 'factory_manager'] },
     { to: 'm/item_vendors', t: 'Vendor price list', roles: ['purchase', 'finance', 'factory_manager'] },

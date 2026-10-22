@@ -76,6 +76,13 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   unbilled project work, supplier invoices, open POs (advance now, balance at delivery + terms), payroll (last run repeated), recurring bills and VAT (28th after each
   quarter), plus Finance's own items (loans, capex, owner drawings; one-off or monthly). Click any amount for the documents behind it. Finance sets a minimum cash
   balance; weeks below it turn red and a daily check notifies Finance and the Factory Manager.
+- **Requests for quotation (Purchase)**: from a requisition (📨 Request quotations) or new — items and quantities, suppliers invited (those already on the price
+  list for the items are added automatically), RFQ PDF per supplier; quotes (rate, lead time, currency) entered side by side with the lowest price per line in green;
+  award each line (Award lowest, or a dearer but faster supplier); Create POs makes one draft PO per supplier linked to the requisition lines, and the winning prices
+  go on the vendor price list.
+- **Documents & PDFs**: every document prints into a panel that slides in from the right (pages drawn on screen, also on phones) with Download, Print and Open in new
+  tab; the 👁 button on each list row previews a document's PDF without opening it (quotations, sales / project orders, RFQs, POs, GRNs, job cards, delivery notes,
+  sales and purchase invoices, vouchers, payslips, labels …).
 - **Finance — payables**: vendor invoices (3-way match), payment vouchers (bank, cheque, PDC, cash, LC, advances), debit notes, net payables with aging.
 - **Finance — receivables**: customers master; project billing terms (advance %, advance recovery %, retention %, payment terms); sales invoices: advance invoice, progress claims filled from
   BOQ / unit progress (previous certified, cumulative, this claim) → submitted to the client → **payment certificate** (certified cumulative qty per line) → posted tax invoice with advance recovery,

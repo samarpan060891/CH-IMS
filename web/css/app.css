@@ -222,6 +222,13 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .pdf-page { display: block; margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
 .btn.eye { padding: 2px 8px; font-size: 14px; }
 @media (prefers-reduced-motion: reduce) { .pdf-panel, .pdf-shade { transition: none; } }
+/* RFQ quote comparison */
+.rfqc th.rfqv { min-width: 170px; vertical-align: top; }
+.rfqc td.rfqcell { vertical-align: top; min-width: 170px; }
+.rfqc td.low { background: #ecfdf5; }
+.rfqc td.won { box-shadow: inset 0 0 0 2px #15803d; }
+.rfqin { width: 90px; padding: 5px; text-align: right; }
+.rfqin.days { width: 60px; }
 /* cash forecast grid */
 .cashf td:first-child, .cashf th:first-child { position: sticky; left: 0; background: #fff; min-width: 210px; z-index: 1; }
 .cashf td.n, .cashf th.n { min-width: 92px; white-space: nowrap; }
