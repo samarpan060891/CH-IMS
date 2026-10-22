@@ -863,7 +863,11 @@ export const Settings = {
         { k: 'address', label: 'Address', type: 'textarea', full: true },
         { k: 'emirate', label: 'Emirate (VAT return box 1)', type: 'select', options: ['Abu Dhabi', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah'].map(v => ({ v, l: v })) },
         { k: 'expense_approval_limit', label: 'Expenses above AED … need Factory Manager approval', type: 'number' },
-        { k: 'default_vat_rate', label: 'Default VAT %', type: 'number' }, { k: 'grn_over_receipt_pct', label: 'Allowed over-receipt vs PO %', type: 'number' },
+        { k: 'default_vat_rate', label: 'Default VAT %', type: 'number' },
+        // FTA assigns each business a quarterly stagger; the cash forecast puts VAT on the 28th after each quarter
+        { k: 'vat_quarter_start_month', label: 'VAT quarters (as on your FTA tax certificate)', type: 'select', required: true,
+          options: [{ v: 1, l: 'Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec' }, { v: 2, l: 'Feb–Apr, May–Jul, Aug–Oct, Nov–Jan' }, { v: 3, l: 'Mar–May, Jun–Aug, Sep–Nov, Dec–Feb' }] },
+        { k: 'grn_over_receipt_pct', label: 'Allowed over-receipt vs PO %', type: 'number' },
         { k: 'overstock_months', label: 'Overstock if cover > months', type: 'number' },
         { k: 'budget_warn_pct', label: 'Project budget warning at %', type: 'number' },
         { k: 'dbm_min_red_days', label: 'DBM: min days in RED before raising', type: 'number' },
@@ -886,6 +890,7 @@ export const Settings = {
   methods: {
     async save() {
       const row = {}; this.fields.forEach(f => { row[f.k] = this.c[f.k]; });
+      row.vat_quarter_start_month = Number(row.vat_quarter_start_month) || 1;
       const ok = await run(async () => must(await sb.from('company_settings').update(row).eq('id', 1)), 'Settings saved');
       if (ok) await loadCompany();
     },
