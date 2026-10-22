@@ -210,6 +210,35 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .floor-hit { padding: 11px 12px; border-bottom: 1px solid #f0f1f3; cursor: pointer; font-size: 14px; }
 .floor-hit:active, .floor-hit:hover { background: var(--brand-soft); }
 .floor-kinds { display: flex; gap: 6px; flex-wrap: wrap; }
+/* stage board: table on wide screens, cards on phones / tablets */
+.stage-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.stage-chips .chip { cursor: pointer; }
+.stage-cards { display: none; }
+.stage-card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+.stage-card.waiting { opacity: .65; }
+.stage-card.late { border-left: 4px solid #b91c1c; }
+.stage-line { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 8px; font-size: 15px; }
+.stage-nums { display: flex; gap: 10px; margin: 8px 0; }
+.stage-nums > div { flex: 1; background: #f8fafc; border-radius: 8px; padding: 6px 10px; display: flex; flex-direction: column; font-size: 12px; }
+.stage-nums b { font-size: 16px; }
+.stage-nums b.warn { color: #b45309; }
+.stage-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.stage-btns { flex-wrap: nowrap; }
+.stage-btns .btn { flex: 1 1 0; justify-content: center; padding: 10px 6px; font-size: 15px; min-height: 44px; white-space: nowrap; }
+.stage-btns .btn.tool { flex: 0 0 44px; padding: 10px 0; }
+.crew-line { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+.crew-line select { padding: 8px; font-size: 15px; }
+.crew-nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 6px; align-items: end; }
+.crew-nums label, .crew-tot { display: flex; flex-direction: column; font-size: 12px; color: var(--muted, #6b7280); gap: 2px; }
+.crew-nums input { width: 100%; font-size: 16px; padding: 8px; text-align: center; }
+.crew-tot b { font-size: 16px; color: var(--ink, #1f2937); }
+@media (max-width: 900px) {
+  .stage-cards { display: block; }
+  .stage-table { display: none; }
+  .stage-chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .stage-chips .chip { flex: none; }
+}
+@media (max-width: 480px) { .crew-nums { grid-template-columns: repeat(3, 1fr); } .crew-tot { grid-column: 1 / -1; flex-direction: row; gap: 8px; align-items: baseline; } }
 .floor-kinds .chip { cursor: pointer; font-size: 13.5px; padding: 7px 12px; }
 .floor-found { max-height: 360px; }
 .bad-t { color: #b91c1c; }
@@ -230,7 +259,7 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .modal.sm { width: min(480px, 100%); }
 .modal .mh { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; font-weight: 600; }
 .modal .mb { padding: 18px; }
-.modal .mf { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; background: #fafafa; }
+.modal .mf { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; background: #fafafa; position: sticky; bottom: 0; }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
 .toast { background: #1f2937; color: #fff; padding: 10px 14px; border-radius: 8px; max-width: 420px; box-shadow: 0 6px 20px rgba(0,0,0,.2); font-size: 13px; }
 .toast.error { background: var(--bad); } .toast.ok { background: var(--ok); }

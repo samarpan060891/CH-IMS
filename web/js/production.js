@@ -438,15 +438,21 @@ async function jobCard(c) {
 export const StageBoard = {
   components: { Badge, Icon, Modal },
   props: { woId: String },
-  data: () => ({ rows: [], load: [], wc: '', busy: false, loading: true, dlg: null }),
+  data: () => ({ rows: [], load: [], wc: '', busy: false, loading: true, dlg: null, onlyCurrent: false }),
   computed: {
-    shown() { return this.rows.filter(r => !this.wc || r.work_center_id === this.wc); },
+    shown() { return this.rows.filter(r => (!this.wc || r.work_center_id === this.wc) && (!this.onlyCurrent || r.is_current)); },
     title() { return this.woId && this.rows[0] ? `${this.rows[0].wo_no} — open stages` : ''; },
     grades() { return (state.refs.labour_grades || []).filter(g => g.is_active); },
   },
-  async mounted() { await this.reload(); },
+  async mounted() {
+    // on a phone or tablet start with the stages that can be worked on now; the choice is remembered
+    try { const s = localStorage.getItem('cc.stage.current'); this.onlyCurrent = s === null ? innerWidth < 900 : s === '1'; } catch { this.onlyCurrent = innerWidth < 900; }
+    await this.reload();
+  },
+  watch: { onlyCurrent(v) { try { localStorage.setItem('cc.stage.current', v ? '1' : '0'); } catch { /* storage unavailable */ } } },
   methods: {
     qty, dt, label, itemName, money, canSeeCost,
+    over(r) { return num(r.planned_labour_hours) > 0 && num(r.act_labour_hours) > num(r.planned_labour_hours); },
     async reload() {
       this.loading = true;
       await run(async () => {
@@ -496,17 +502,56 @@ export const StageBoard = {
     all() { go('floor'); },
   },
   template: `<div>
-    <div class="row" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
-      <button v-if="woId" class="btn" @click="all">← All orders</button>
+    <div class="row" style="margin-bottom:8px;flex-wrap:wrap;gap:8px" v-if="woId">
+      <button class="btn" @click="all">← All orders</button>
       <b v-if="title">{{ title }}</b>
+    </div>
+    <div class="row" style="margin-bottom:8px;gap:8px">
+      <label class="row small" style="gap:6px;cursor:pointer"><input type="checkbox" v-model="onlyCurrent"> Current stages only</label>
+      <span class="spacer"></span>
+      <button class="btn sm" @click="reload" :disabled="loading">↻ Refresh</button>
+    </div>
+    <div class="stage-chips">
       <a href="javascript:void 0" class="chip" :class="{on: !wc}" @click="wc=''">All stages <span class="muted">({{ rows.length }})</span></a>
       <a v-for="w in load" :key="w.work_center_id" href="javascript:void 0" class="chip" :class="{on: wc===w.work_center_id}" @click="wc = w.work_center_id"
          :title="w.remaining_hours + ' h remaining · ' + (w.load_days || 0) + ' days load' + (w.is_down ? ' · MACHINE DOWN' : '')" :style="w.is_down ? 'border-color:#b91c1c' : ''">
         <span v-if="w.is_down" style="color:#b91c1c">⛔ </span>{{ w.name }} <span class="muted">({{ rows.filter(r=>r.work_center_id===w.work_center_id).length }}{{ w.load_days ? ' · ' + w.load_days + 'd' : '' }})</span></a>
-      <span class="spacer"></span>
-      <button class="btn sm" @click="reload" :disabled="loading">↻ Refresh</button>
     </div>
-    <div class="card">
+
+    <!-- phones / tablets: one card per stage with big buttons -->
+    <div class="stage-cards">
+      <div v-if="loading" class="card empty">Loading…</div>
+      <div v-else-if="!shown.length" class="card empty">No open stages{{ wc ? ' at this work centre' : '' }}</div>
+      <div v-for="r in shown" :key="'c' + r.operation_id" class="stage-card" :class="{waiting: !r.is_current, late: late(r)}">
+        <div class="row" style="gap:6px;align-items:flex-start">
+          <div style="flex:1;min-width:0">
+            <a href="javascript:void 0" @click="openWo(r)"><b>{{ r.wo_no }}</b></a>
+            <span class="muted small"> · {{ proj(r.project_id) }}</span>
+            <div class="small">{{ r.description || itemName(r.item_id) }} · qty {{ qty(r.qty) }}</div>
+          </div>
+          <Badge v-if="r.priority==='URGENT'" v="URGENT" /><Badge :v="r.status" />
+        </div>
+        <div class="stage-line">
+          <span><b>{{ r.seq }} · {{ r.wc_name }}</b> <Badge v-if="isDown(r.work_center_id)" v="DOWN" /></span>
+          <span class="small" :class="late(r) ? 'bad-t' : 'muted'">Due {{ dt(r.due_date) || '—' }}</span>
+        </div>
+        <div class="small muted" v-if="!r.is_current">Waiting for an earlier stage</div>
+        <div class="small" v-if="r.instructions">📝 {{ r.instructions }}</div>
+        <div class="stage-nums">
+          <div><span class="muted">Man-hours</span><b :class="{warn: over(r)}">{{ qty(r.act_labour_hours) }} / {{ qty(r.planned_labour_hours) }}</b></div>
+          <div><span class="muted">Qty done</span><b>{{ qty(r.qty_done) }} / {{ qty(r.qty) }}</b></div>
+        </div>
+        <div class="stage-btns">
+          <button v-if="r.status==='PENDING'" class="btn" :disabled="busy" @click="start(r)">▶ Start</button>
+          <button class="btn primary" :disabled="busy" @click="log(r)">⏱ Log time</button>
+          <button class="btn ok" :disabled="busy" @click="log(r, true)">✔ Finish</button>
+          <button v-if="r.status==='IN_PROGRESS'" class="btn" :disabled="busy" @click="done(r)">Close</button>
+          <button v-if="!isDown(r.work_center_id)" class="btn tool" @click="reportDown(r)" title="Report a breakdown or stoppage" aria-label="Report a breakdown">🔧</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card stage-table">
       <div class="tbl-wrap"><table class="t">
         <thead><tr><th>Order</th><th>Project</th><th>Product</th><th>Due</th><th>Stage</th><th>Status</th><th class="n">Plan man-h</th><th class="n">Logged</th><th class="n">Qty done</th><th></th></tr></thead>
         <tbody>
@@ -545,22 +590,23 @@ export const StageBoard = {
         <label class="f" v-if="dlg.machine"><span>Machine hours (blank = longest crew line)</span><input type="number" step="any" v-model.number="dlg.mh"></label>
       </div>
       <h3 style="margin:14px 0 6px">Crew</h3>
-      <div class="tbl-wrap"><table class="t lines">
-        <thead><tr><th>Worker grade</th><th style="width:80px">Workers</th><th style="width:90px">Normal h each</th><th style="width:90px">Overtime h each</th><th class="n">Man-hours</th><th class="n" v-if="canSeeCost()">Cost AED</th><th></th></tr></thead>
-        <tbody>
-          <tr v-for="(c, i) in dlg.crew" :key="i">
-            <td><select v-model="c.grade_id"><option :value="null" disabled>Select grade…</option><option v-for="g in grades" :value="g.id">{{ g.name }}</option></select></td>
-            <td><input type="number" min="1" step="1" v-model.number="c.workers"></td>
-            <td><input type="number" min="0" step="0.25" v-model.number="c.hours"></td>
-            <td><input type="number" min="0" step="0.25" v-model.number="c.ot"></td>
-            <td class="n">{{ qty(lineHours(c)) }}</td>
-            <td class="n" v-if="canSeeCost()">{{ money(lineCost(c)) }}</td>
-            <td><button class="btn sm bad" v-if="dlg.crew.length > 1" @click="dlg.crew.splice(i, 1)">✕</button></td>
-          </tr>
-        </tbody>
-        <tfoot><tr><td colspan="4"><button class="btn sm" @click="addCrew">+ Add grade</button></td><td class="n"><b>{{ qty(manHours()) }}</b></td>
-          <td class="n" v-if="canSeeCost()"><b>{{ money(crewCost()) }}</b></td><td></td></tr></tfoot>
-      </table></div>
+      <!-- one block per worker grade; fits a phone without sideways scrolling -->
+      <div v-for="(c, i) in dlg.crew" :key="i" class="crew-line">
+        <div class="row" style="gap:6px">
+          <select v-model="c.grade_id" style="flex:1;min-width:0"><option :value="null" disabled>Select grade…</option><option v-for="g in grades" :value="g.id">{{ g.name }}</option></select>
+          <button class="btn sm bad" v-if="dlg.crew.length > 1" @click="dlg.crew.splice(i, 1)" aria-label="Remove line">✕</button>
+        </div>
+        <div class="crew-nums">
+          <label><span>Workers</span><input type="number" min="1" step="1" inputmode="numeric" v-model.number="c.workers"></label>
+          <label><span>Normal h each</span><input type="number" min="0" step="0.25" inputmode="decimal" v-model.number="c.hours"></label>
+          <label><span>Overtime h each</span><input type="number" min="0" step="0.25" inputmode="decimal" v-model.number="c.ot"></label>
+          <div class="crew-tot"><span>Man-hours</span><b>{{ qty(lineHours(c)) }}</b><span v-if="canSeeCost()" class="muted small">AED {{ money(lineCost(c)) }}</span></div>
+        </div>
+      </div>
+      <div class="row" style="gap:8px;margin-top:6px">
+        <button class="btn sm" @click="addCrew">+ Add grade</button><span class="spacer"></span>
+        <span>Total <b>{{ qty(manHours()) }}</b> man-hours<span v-if="canSeeCost()"> · AED <b>{{ money(crewCost()) }}</b></span></span>
+      </div>
       <label class="f full" style="margin-top:10px"><span>Notes / issues</span><textarea v-model="dlg.n"></textarea></label>
       <label class="row small" style="margin-top:8px;gap:6px"><input type="checkbox" v-model="dlg.f"> Stage finished — close it (the next stage becomes current)</label>
       <template #footer><button class="btn" @click="dlg = null">Cancel</button><button class="btn primary" :disabled="busy" @click="saveLog">Save log</button></template>
