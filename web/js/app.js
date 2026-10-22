@@ -25,6 +25,7 @@ import { EXP_DOCS, PettyCash } from './expenses.js';
 import { PROV_DOCS, Provisions } from './provisions.js';
 import { MDR_DOCS } from './masterreq.js';
 import { SALES_DOCS } from './sales.js';
+import { CashForecast } from './cash.js';
 import { MachineRates } from './machinerates.js';
 
 Object.assign(DOCS, PROD_DOCS, PROJ_DOCS, HR_DOCS, FIN_DOCS, EXP_DOCS, PROV_DOCS, MDR_DOCS, SALES_DOCS);
@@ -112,6 +113,8 @@ const MENU = [
     ...['leavebal', 'docexpiry', 'gratuity', 'attmonth'].map(rep),
   ] },
   { g: 'Finance', icon: 'report-money', items: [
+    { sep: 'Cash' },
+    { to: 'cashforecast', t: 'Cash position & forecast', roles: ['finance', 'factory_manager'] },
     { sep: 'Expenses' },
     { to: 'd/exp', t: 'Expenses, bills & claims', roles: ['finance', 'factory_manager', 'purchase', 'stores', 'production_incharge', 'shop_floor', 'site_supervisor', 'hr_officer'], badge: 'exp' },
     { to: 'd/rexp', t: 'Recurring bills', roles: ['finance', 'factory_manager'] },
@@ -210,7 +213,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions, MachineRates },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions, MachineRates, CashForecast },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null }),
   watch: {
     // opening a page expands its menu group
@@ -256,6 +259,7 @@ const App = {
       if (a === 'approvals' || (a === 'dashboard' && !b && homeDashboard() === 'approvals')) return { comp: 'ApprovalsApp', props: {}, title: 'Approvals' };
       if (a === 'pettycash') return { comp: 'PettyCash', props: {}, title: 'Petty cash' };
       if (a === 'provisions') return { comp: 'Provisions', props: {}, title: 'Provisions & accruals' };
+      if (a === 'cashforecast') return { comp: 'CashForecast', props: {}, title: 'Cash position & forecast' };
       if (a === 'machinerates') return { comp: 'MachineRates', props: {}, title: 'Machine-rate calculator' };
       if (a === 'receiveapp' || (a === 'dashboard' && !b && homeDashboard() === 'receiving')) return { comp: 'ReceiveApp', props: {}, title: 'Receive goods' };
       if (a === 'countapp' || (a === 'dashboard' && !b && homeDashboard() === 'counting')) return { comp: 'CountApp', props: { id: a === 'countapp' ? b || null : null }, title: 'Stock count' };

@@ -210,6 +210,17 @@ table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .floor-hit { padding: 11px 12px; border-bottom: 1px solid #f0f1f3; cursor: pointer; font-size: 14px; }
 .floor-hit:active, .floor-hit:hover { background: var(--brand-soft); }
 .floor-kinds { display: flex; gap: 6px; flex-wrap: wrap; }
+/* cash forecast grid */
+.cashf td:first-child, .cashf th:first-child { position: sticky; left: 0; background: #fff; min-width: 210px; z-index: 1; }
+.cashf td.n, .cashf th.n { min-width: 92px; white-space: nowrap; }
+.cashf tr.h td { background: #f1f5f9; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: #475569; }
+.cashf tr.sub td { font-weight: 600; background: #fafafa; }
+.cashf tr.sub td:first-child, .cashf tr.tot td:first-child { background: #fafafa; }
+.cashf tr.tot td { font-weight: 700; border-top: 2px solid #cbd5e1; }
+.cashf td.clk { cursor: pointer; }
+.cashf td.clk:hover, .cashf td.on { background: var(--brand-soft); }
+.cashf td.neg, td.neg { color: #b91c1c; }
+.cashf td.short { background: #fee2e2; color: #991b1b; }
 /* stage board: table on wide screens, cards on phones / tablets */
 .stage-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 .stage-chips .chip { cursor: pointer; }

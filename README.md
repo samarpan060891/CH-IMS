@@ -71,6 +71,11 @@ projects & site (BOQ, installation, snags, variations), HR / payroll and account
   **slow-moving stock** (% by days in stock), **warranty / defects** (% of contract revenue in the defects period less snag rework) and **contract work done
   not yet billed** (unbilled earned value). The four provisions are true-ups to a target balance, so re-running a month posts nothing extra. Percentages
   and periods are picked by Finance on the page.
+- **Cash position & forecast** (Finance → Cash): cash, bank and petty cash today, cheques in hand and PDCs issued; a rolling 13-week and 12-month forecast built from
+  open customer invoices (moved by each customer's average days late; overdue spread over 4 weeks), PDCs by cheque date, sales-order and project advances and balances,
+  unbilled project work, supplier invoices, open POs (advance now, balance at delivery + terms), payroll (last run repeated), recurring bills and VAT (28th after each
+  quarter), plus Finance's own items (loans, capex, owner drawings; one-off or monthly). Click any amount for the documents behind it. Finance sets a minimum cash
+  balance; weeks below it turn red and a daily check notifies Finance and the Factory Manager.
 - **Finance — payables**: vendor invoices (3-way match), payment vouchers (bank, cheque, PDC, cash, LC, advances), debit notes, net payables with aging.
 - **Finance — receivables**: customers master; project billing terms (advance %, advance recovery %, retention %, payment terms); sales invoices: advance invoice, progress claims filled from
   BOQ / unit progress (previous certified, cumulative, this claim) → submitted to the client → **payment certificate** (certified cumulative qty per line) → posted tax invoice with advance recovery,
