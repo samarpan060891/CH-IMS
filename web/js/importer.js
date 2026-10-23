@@ -115,10 +115,19 @@ const TEMPLATES = {
 
   vendors: {
     title: 'Vendors', roles: ['purchase', 'finance'],
-    help: 'One row per vendor. Existing vendor codes are updated. Put AUTO in vendor_code to number automatically (V0001…). TRN must be 15 digits.',
+    help: 'One row per vendor. New vendors: put AUTO in vendor_code to number automatically (V0001…); payment_term_code is required. ' +
+      'Existing vendor codes are updated, and a blank cell keeps the current value, so you can fill in only what is missing. TRN must be 15 digits. ' +
+      'The download contains all your current vendors.',
     cols: ['vendor_code', 'vendor_name', 'vendor_type', 'vat_registered', 'trn', 'trade_license_no', 'trade_license_expiry', 'address', 'emirate', 'country',
            'contact_person', 'phone', 'email', 'currency', 'payment_term_code', 'credit_limit', 'bank_name', 'bank_account_name', 'iban', 'swift_code', 'supplies_classes', 'status'],
-    required: ['vendor_code', 'vendor_name', 'payment_term_code'],
+    required: ['vendor_code', 'vendor_name'],
+    async prefill() {
+      const vs = must(await sb.from('vendors').select('*, payment_terms(code)').order('code'));
+      const d = v => v ? v.split('-').reverse().join('/') : '';
+      return { Vendors: vs.map(v => [v.code, v.name, v.vendor_type, v.vat_registered ? 'Y' : 'N', v.trn || '', v.trade_license_no || '', d(v.trade_license_expiry), v.address || '',
+        v.emirate || '', v.country || '', v.contact_person || '', v.phone || '', v.email || '', v.currency, v.payment_terms?.code || '', v.credit_limit ?? '',
+        v.bank_name || '', v.bank_account_name || '', v.iban || '', v.swift_code || '', (v.supplies_classes || []).join(','), v.status]) };
+    },
     example: ['AUTO', 'Al Noor Plywood Trading LLC', 'LOCAL', 'Y', '100123456700003', 'CN-1234567', '31/12/2027', 'Industrial Area 12, Sharjah', 'Sharjah', 'United Arab Emirates',
               'Mr. Rakesh', '+971 50 123 4567', 'sales@example.ae', 'AED', 'NET60', 50000, 'Emirates NBD', 'Al Noor Plywood Trading LLC', 'AE070331234567890123456', 'EBILAEAD', 'RM,CON', 'ACTIVE'],
     refs: ['payment_terms', 'vendors'],
@@ -129,8 +138,10 @@ const TEMPLATES = {
       const seen = {};
       return rows.map(r => {
         const e = [];
+        const isNew = str(r.vendor_code).toUpperCase() === 'AUTO' || !vendors[str(r.vendor_code).toUpperCase()];
         const t = pt[str(r.payment_term_code).toUpperCase()];
-        if (!t) e.push(`payment term "${r.payment_term_code}" unknown`);
+        if (str(r.payment_term_code) === '') { if (isNew) e.push('payment_term_code is required for a new vendor'); }
+        else if (!t) e.push(`payment term "${r.payment_term_code}" unknown`);
         const type = str(r.vendor_type).toUpperCase() || 'LOCAL';
         if (!['LOCAL', 'IMPORT'].includes(type)) e.push('vendor_type must be LOCAL or IMPORT');
         const trn = str(r.trn).replace(/\s/g, '');
@@ -153,13 +164,21 @@ const TEMPLATES = {
           iban: str(r.iban).replace(/\s/g, '') || null, swift_code: str(r.swift_code) || null,
           supplies_classes: str(r.supplies_classes) ? str(r.supplies_classes).split(',').map(s => s.trim().toUpperCase()).filter(Boolean) : [], status,
         };
-        return { row, _action: vendors[code.toUpperCase()] ? 'UPDATE' : 'CREATE', _errors: e };
+        // an existing vendor: blank cells keep what is on file (only filled-in columns are changed)
+        if (!isNew) {
+          const src = { name: 'vendor_name', payment_term_id: 'payment_term_code' };
+          for (const k of Object.keys(row)) if (k !== 'code' && str(r[src[k] || k]) === '') delete row[k];
+        }
+        return { row, _action: isNew ? 'CREATE' : 'UPDATE', _errors: e };
       });
     },
     async save(valid) {
-      for (let i = 0; i < valid.length; i += 200) must(await sb.from('vendors').upsert(valid.slice(i, i + 200).map(v => v.row), { onConflict: 'code' }));
+      const adds = valid.filter(v => v._action === 'CREATE').map(v => v.row), upds = valid.filter(v => v._action === 'UPDATE');
+      for (let i = 0; i < adds.length; i += 200) must(await sb.from('vendors').insert(adds.slice(i, i + 200)));
+      // updates one by one, each with only the columns filled in the file
+      for (const v of upds) { const { code, ...set } = v.row; if (Object.keys(set).length) must(await sb.from('vendors').update(set).eq('code', code)); }
       await loadRef('vendors', true);
-      return `${valid.length} vendors imported`;
+      return `${adds.length} vendor${adds.length === 1 ? '' : 's'} created, ${upds.length} updated`;
     },
     lists: () => ({ PaymentTerms: (state.refs.payment_terms || []).map(r => ({ payment_term_code: r.code, name: r.name, days: r.credit_days })), Emirates: EMIRATES.map(e => ({ emirate: e })) }),
   },

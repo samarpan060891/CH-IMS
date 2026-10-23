@@ -73,6 +73,7 @@ const MENU = [
     { to: 'd/rfq', t: 'Requests for quotation (RFQ)', roles: ['purchase', 'finance', 'factory_manager'] },
     { to: 'd/po', t: 'Purchase orders', roles: ['purchase', 'factory_manager', 'finance', 'stores'], badge: 'po' },
     { to: 'm/vendors', t: 'Vendors', roles: ['purchase', 'finance', 'factory_manager'] },
+    { to: 'import/vendors', t: '⬆ Vendors upload', roles: ['purchase', 'finance'] },
     { to: 'm/item_vendors', t: 'Vendor price list', roles: ['purchase', 'finance', 'factory_manager'] },
   ] },
   { g: 'Inventory', icon: 'building-warehouse', items: [
