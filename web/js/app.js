@@ -53,6 +53,18 @@ const MENU = [
     { to: 'm/customers', t: 'Customers', roles: ['sales', 'finance', 'factory_manager'] },
     { to: 'r/somargin', t: 'Order delivery, billing & margin', roles: ['sales', 'finance', 'factory_manager'], cost: true },
   ] },
+  // confirmed project orders from Sales become projects here
+  { g: 'Projects', icon: 'building-community', items: [
+    { to: 'site', t: '📱 Site app', roles: ['site_supervisor', 'production_incharge', 'factory_manager'], badge: 'snag' },
+    { to: 'd/proj', t: 'Projects & BOQ', roles: ALL },
+    { to: 'd/snag', t: 'Snag list', roles: ['site_supervisor', 'production_incharge', 'factory_manager', 'finance'], badge: 'snagVerify' },
+    { to: 'd/vo', t: 'Variation orders', roles: ['factory_manager', 'production_incharge', 'finance'], badge: 'vo' },
+    { to: 'mrp', t: 'Material planning (MRP)', roles: ['purchase', 'stores', 'production_incharge', 'factory_manager'] },
+    { to: 'd/ins', t: 'Installation logs', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'finance', 'site_supervisor'] },
+    { to: 'd/dsp', t: 'Deliveries to site', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'site_supervisor'], badge: 'dsp' },
+    { sep: 'Progress & billing' },
+    ...['boqprog', 'unitprog', 'snags', 'projprod'].map(rep),
+  ] },
   { g: 'Purchase', icon: 'shopping-cart', items: [
     { to: 'replenish', t: 'Replenishment', roles: ['purchase', 'stores', 'factory_manager'] },
     { to: 'buffers', t: 'Buffer review', roles: ['purchase', 'factory_manager', 'stores'], badge: 'dbm' },
@@ -113,17 +125,6 @@ const MENU = [
     { to: 'import/machines', t: '⬆ Machine rates upload', roles: ['factory_manager', 'finance'] },
     { sep: 'Maintenance reports' },
     ...['pmdue', 'pmcost', 'mntcost', 'downtime', 'calibration'].map(rep),
-  ] },
-  { g: 'Projects', icon: 'building-community', items: [
-    { to: 'site', t: '📱 Site app', roles: ['site_supervisor', 'production_incharge', 'factory_manager'], badge: 'snag' },
-    { to: 'd/proj', t: 'Projects & BOQ', roles: ALL },
-    { to: 'd/snag', t: 'Snag list', roles: ['site_supervisor', 'production_incharge', 'factory_manager', 'finance'], badge: 'snagVerify' },
-    { to: 'd/vo', t: 'Variation orders', roles: ['factory_manager', 'production_incharge', 'finance'], badge: 'vo' },
-    { to: 'mrp', t: 'Material planning (MRP)', roles: ['purchase', 'stores', 'production_incharge', 'factory_manager'] },
-    { to: 'd/ins', t: 'Installation logs', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'finance', 'site_supervisor'] },
-    { to: 'd/dsp', t: 'Deliveries to site', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'site_supervisor'], badge: 'dsp' },
-    { sep: 'Progress & billing' },
-    ...['boqprog', 'unitprog', 'snags', 'projprod'].map(rep),
   ] },
   { g: 'HR', icon: 'users', items: [
     { to: 'd/emp', t: 'Employees', roles: ['hr_officer', 'finance'] },
