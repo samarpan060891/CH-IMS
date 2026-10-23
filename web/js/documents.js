@@ -218,6 +218,8 @@ const schedText = (c, l) => {
   const rows = (c.grids.sched || []).filter(s => (s._line || s.po_line_id) === lineKey(l)).sort((a, b) => String(a.delivery_date).localeCompare(String(b.delivery_date)));
   return rows.length ? 'Deliveries: ' + rows.map(s => `${qty(s.qty)} on ${dt(s.delivery_date)}`).join(' · ') : '';
 };
+// PO line qty not yet covered by its schedule rows (negative = scheduled too much)
+const schedBalance = (ctx, l) => num(l.qty) - (ctx.grids.sched || []).filter(s => s._line === lineKey(l)).reduce((t, s) => t + num(s.qty), 0);
 const poLineLabel = (ctx, l) => `${ctx.grids.lines.indexOf(l) + 1}. ${itemName(l.item_id) || 'item?'} — ${qty(l.qty)} ${itemUom(l.item_id)}`;
 async function loadPrLines(ctx, prId) {
   const lines = must(await sb.from('pr_lines').select('id,item_id,qty,ordered_qty,required_date,pr_id,project_id,boq_line_id,pr_line_boq(qty,boq_lines(boq_ref))').eq('pr_id', prId).order('line_no'));
@@ -321,14 +323,28 @@ export const po = {
     // optional: split a line into dated deliveries; the quantities of a line must add up to its PO quantity
     key: 'sched', title: 'Delivery schedule (optional — split a line into dated deliveries)', table: 'po_line_schedule', fk: 'po_id', order: 'delivery_date',
     saveKeys: ['po_line_id'],
-    newRow: ctx => { const l = ctx.grids.lines[ctx.grids.lines.length - 1]; return l ? { _line: lineKey(l), delivery_date: ctx.doc.delivery_date || null } : {}; },
+    // a new row continues the last scheduled line while it has a balance, otherwise the first line not fully scheduled; qty = that balance
+    newRow: ctx => {
+      const s = ctx.grids.sched || [], lines = ctx.grids.lines.filter(l => l.item_id && num(l.qty) > 0);
+      const last = s[s.length - 1], cur = last && lines.find(l => lineKey(l) === last._line);
+      const l = (cur && schedBalance(ctx, cur) > 0.0005 ? cur : null) || lines.find(x => schedBalance(ctx, x) > 0.0005) || lines[lines.length - 1];
+      if (!l) return {};
+      return { _line: lineKey(l), qty: Math.max(0, +schedBalance(ctx, l).toFixed(3)) || null, delivery_date: s.length ? null : ctx.doc.delivery_date || null };
+    },
     prepare: (r, ctx) => { const l = ctx.grids.lines.find(x => lineKey(x) === r._line); r.po_line_id = l?.id || null; },
     fields: [
       { k: '_line', label: 'PO line', type: 'ref', required: true, virtual: true, width: '320px',
-        refOptions: () => (poCur.ctx?.grids.lines || []).filter(l => l.item_id).map(l => ({ id: lineKey(l), label: poLineLabel(poCur.ctx, l) })) },
+        refOptions: () => (poCur.ctx?.grids.lines || []).filter(l => l.item_id).map(l => ({ id: lineKey(l), label: poLineLabel(poCur.ctx, l) })),
+        // picking (or changing) the line proposes its unscheduled balance
+        // (this row already counts towards the new line, so add its own qty back)
+        onChange: (r, v, ctx) => { const l = ctx.grids.lines.find(x => lineKey(x) === v); if (l) r.qty = Math.max(0, +(schedBalance(ctx, l) + num(r.qty)).toFixed(3)) || null; } },
       { k: 'delivery_date', label: 'Delivery date', type: 'date', required: true },
       { k: 'qty', label: 'Qty', type: 'number', required: true },
       { k: '_uom', label: 'UoM', type: 'ro', virtual: true, fmt: (v, r) => itemUom((poCur.ctx?.grids.lines || []).find(l => lineKey(l) === r._line)?.item_id) },
+      // live tally: what is still to schedule for this row's PO line (0 = fully scheduled)
+      { k: '_bal', label: 'Line balance to schedule', type: 'ro', virtual: true, fmt: (v, r) => {
+        const l = (poCur.ctx?.grids.lines || []).find(x => lineKey(x) === r._line); if (!l || !poCur.ctx) return '';
+        const b = schedBalance(poCur.ctx, l); return Math.abs(b) < 0.0005 ? '✓ 0 (matches PO)' : b > 0 ? `${qty(b)} still to schedule` : `${qty(-b)} too much`; } },
       { k: 'remarks', label: 'Remarks (e.g. Batch 1)', width: '180px' },
     ],
   }],
