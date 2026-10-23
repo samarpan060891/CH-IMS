@@ -2,8 +2,9 @@
 // job work → delivery notes → advance and tax invoices. A confirmed order collects its costs on a job (projects row of type SALES /
 // INTERNAL with the order number as code), so material requests, issues, deliveries and the margin report work as for projects.
 import { sb, state, must, run, rpc, hasRole, go, today, refRow, refLabel, money, qty, dt, label, num, toast } from './lib.js';
-import { ask, uomPick } from './components.js';
+import { ask, confirmBox, uomPick } from './components.js';
 import { makePdf } from './pdf.js';
+import { readBoqFile, boqTemplate } from './projects.js';
 
 const SALES_ROLES = ['sales', 'finance', 'factory_manager'];
 const isSales = () => hasRole(...SALES_ROLES);
@@ -49,6 +50,27 @@ function lineFields(priceShown = () => true) {
     { k: 'remarks', label: 'Remarks / drawing', width: '150px' },
   ];
 }
+// project quotations / orders: lines from the same BOQ Excel as the project screen (Made in-house / Bought-out / Service)
+const BOQ_TYPE = { MANUFACTURED: 'MADE', BOUGHT_OUT: 'STOCK', SERVICE: 'SERVICE' };
+const fils = v => Math.round(num(v) * 100) / 100;   // rates from Excel formulas carry many decimals
+async function importLines(c) {
+  const rows = await readBoqFile();
+  if (!rows) return;
+  const lines = rows.map(r => ({ boq_ref: r.boq_ref, line_type: BOQ_TYPE[r.category], item_id: r.item_id, description: r.description, qty: r.qty, uom: r.uom,
+    rate: fils(r.sell_rate), discount_pct: 0, est_unit_cost: fils(r.est_unit_cost || num(refRow('items', r.item_id)?.standard_cost)), unit_type: r.unit_type, unit_codes: r.unit_codes,
+    qty_per_unit: r.qty_per_unit, supply_mode: r.supply_mode, service_mode: r.service_mode, remarks: r.remarks }));
+  const cur = c.grids.lines.filter(l => l.id || l.item_id || l.description);   // an untouched starter row is dropped
+  if (cur.length && await confirmBox('Replace lines', `Replace the ${cur.length} existing line(s)? Choose Cancel to add the imported lines below them.`)) {
+    cur.forEach(l => { if (l.id) (c.removed.lines ||= []).push(l.id); });
+    c.grids.lines = lines;
+  } else c.grids.lines = [...cur, ...lines];
+  c.dirty = true;
+  const noRate = lines.filter(l => !num(l.rate)).length;
+  toast(`${lines.length} lines imported${noRate ? ` — ${noRate} without a sell rate: fill Rate AED` : ''}; Save to keep them`, noRate ? 'info' : 'ok', 7000);
+}
+const boqImporters = [{ label: '⬆ Import lines (Excel)', show: c => isProj(c.doc), run: importLines },
+  { label: 'Template', show: c => isProj(c.doc), run: () => boqTemplate() }];
+
 function lineCheck(lines, proj = false) {
   lines.forEach((r, i) => {
     if (proj && r.line_type === 'JOB_WORK') throw new Error(`Line ${i + 1}: job work is not part of a project BOQ — quote it on a normal sales quotation`);
@@ -120,7 +142,7 @@ export const qt = {
   ],
   headerNote: () => 'Line types: <b>Made in-house</b> (finished-goods product — becomes a production order), <b>From stock / trading</b>, <b>Service</b> (installation, delivery, design) and <b>Job work</b> (machine hours sold on a work centre). ' +
     'Est. unit cost is only for your margin check and is never printed. A missing product, customer or unit can be requested from the bottom of its drop-down.',
-  grids: [{ key: 'lines', title: 'Lines', table: 'quotation_lines', fk: 'qt_id', order: 'line_no', newRow: () => ({ line_type: 'MADE', qty: 1, rate: 0, discount_pct: 0, est_unit_cost: 0 }), fields: lineFields() }],
+  grids: [{ key: 'lines', title: 'Lines', table: 'quotation_lines', fk: 'qt_id', order: 'line_no', newRow: () => ({ line_type: 'MADE', qty: 1, rate: 0, discount_pct: 0, est_unit_cost: 0 }), fields: lineFields(), importers: boqImporters }],
   validate(ctx) { lineCheck(ctx.grids.lines, isProj(ctx.doc)); },
   totals: ctx => totals(ctx),
   actions: ctx => {
@@ -224,7 +246,7 @@ export const so = {
     : 'Confirming the order opens it for material requests, creates a <b>production order</b> for each made-in-house line (the Production In-charge picks the BOM and route), and lets Stores deliver stock lines. ' +
       'Finance raises the <b>advance invoice</b> and then <b>invoices</b> what has been delivered, services and job-work hours — the advance is recovered on each invoice.',
   grids: [{ key: 'lines', title: 'Order lines', table: 'sales_order_lines', fk: 'so_id', order: 'line_no', saveKeys: ['service_done_qty'],
-    newRow: ctx => ({ line_type: 'MADE', qty: 1, rate: 0, discount_pct: 0, est_unit_cost: 0 }), fields: lineFields(d => d.so_type !== 'INTERNAL') }],
+    newRow: ctx => ({ line_type: 'MADE', qty: 1, rate: 0, discount_pct: 0, est_unit_cost: 0 }), fields: lineFields(d => d.so_type !== 'INTERNAL'), importers: boqImporters }],
   validate(ctx) {
     const d = ctx.doc;
     if (d.so_type === 'INTERNAL') { d.customer_id = null; d.advance_pct = 0; ctx.grids.lines.forEach(l => { l.rate = 0; l.discount_pct = 0; }); }

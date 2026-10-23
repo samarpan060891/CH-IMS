@@ -66,7 +66,19 @@ async function importBoq(ctx) {
   }
   if (errs.length) throw new Error(errs.join(' · '));
   if (!rows.length && newUnits) { ctx.dirty = true; toast(`${newUnits} units imported — Save to keep them`, 'ok', 6000); return; }
+  const out = parseBoqRows(rows, byCode);
+  const cur = ctx.grids.boq;
+  if (cur.length && await confirmBox('Replace BOQ', `Replace the ${cur.length} existing BOQ line(s)? Choose Cancel to add the imported lines below them. Lines already used by orders cannot be deleted.`)) {
+    cur.forEach(r => { if (r.id) (ctx.removed.boq ||= []).push(r.id); });
+    ctx.grids.boq = out;
+  } else ctx.grids.boq = [...cur, ...out];
+  ctx.dirty = true;
+  toast(`${out.length} BOQ lines${newUnits ? ` and ${newUnits} units` : ''} imported — Save to allocate units`, 'ok', 6000);
+}
+// BOQ sheet rows → BOQ lines (item codes checked against the item master); throws the first errors found
+function parseBoqRows(rows, byCode) {
   if (!rows.length) throw new Error('The BOQ sheet is empty');
+  const errs = [];
   const k = Object.keys(rows[0]);
   const c = { ref: col(k, 'ref', 'boqref', 'item', 'itemno', 'no'), desc: col(k, 'description', 'desc'), cat: col(k, 'category', 'type', 'cat'),
     item: col(k, 'itemcode', 'code', 'productcode'), uom: col(k, 'uom', 'unit'), utype: col(k, 'unittype'), ucodes: col(k, 'unitcodes', 'units'),
@@ -92,14 +104,20 @@ async function importBoq(ctx) {
       remarks: str(r[c.rem]) || null });
   });
   if (errs.length) throw new Error(errs.slice(0, 8).join(' · ') + (errs.length > 8 ? ` · …and ${errs.length - 8} more` : ''));
-  const cur = ctx.grids.boq;
-  if (cur.length && await confirmBox('Replace BOQ', `Replace the ${cur.length} existing BOQ line(s)? Choose Cancel to add the imported lines below them. Lines already used by orders cannot be deleted.`)) {
-    cur.forEach(r => { if (r.id) (ctx.removed.boq ||= []).push(r.id); });
-    ctx.grids.boq = out;
-  } else ctx.grids.boq = [...cur, ...out];
-  ctx.dirty = true;
-  toast(`${out.length} BOQ lines${newUnits ? ` and ${newUnits} units` : ''} imported — Save to allocate units`, 'ok', 6000);
+  return out;
 }
+// the same BOQ file read for a project quotation / order's lines (sheet "BOQ" or the first sheet)
+export async function readBoqFile() {
+  const XLSX = await loadXlsx();
+  const f = await pickFile('.xlsx,.xls,.csv');
+  if (!f) return null;
+  await loadRefs(['items']);
+  const wb = XLSX.read(await f.arrayBuffer());
+  const sheetName = wb.SheetNames.find(n => norm(n) === 'boq') || wb.SheetNames[0];
+  const byCode = Object.fromEntries((state.refs.items || []).map(r => [r.code.toUpperCase(), r]));
+  return parseBoqRows(XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '' }), byCode);
+}
+export { boqTemplate };
 
 // ======================================================================
 // PROJECT WORKSPACE
