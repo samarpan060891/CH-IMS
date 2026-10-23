@@ -42,9 +42,10 @@ async function importBoq(ctx) {
   if (!f) return;
   await loadRefs(['items']);
   const wb = XLSX.read(await f.arrayBuffer());
-  const sheetName = wb.SheetNames.find(n => norm(n) === 'boq') || wb.SheetNames[0];
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '' });
   const unitSheet = wb.SheetNames.find(n => norm(n) === 'units');
+  // a file with only a Units sheet adds units to a project whose BOQ came from its order
+  const sheetName = wb.SheetNames.find(n => norm(n) === 'boq') || (unitSheet && wb.SheetNames.length === 1 ? null : wb.SheetNames[0]);
+  const rows = sheetName ? XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '' }) : [];
   const byCode = Object.fromEntries((state.refs.items || []).map(r => [r.code.toUpperCase(), r]));
   const errs = [];
   // units first, so BOQ lines can refer to them
@@ -63,6 +64,8 @@ async function importBoq(ctx) {
         sale_value: str(r[c.price]) === '' ? null : Number(r[c.price]), description: str(r[c.desc]) || null, status: 'NOT_STARTED' });
     });
   }
+  if (errs.length) throw new Error(errs.join(' · '));
+  if (!rows.length && newUnits) { ctx.dirty = true; toast(`${newUnits} units imported — Save to keep them`, 'ok', 6000); return; }
   if (!rows.length) throw new Error('The BOQ sheet is empty');
   const k = Object.keys(rows[0]);
   const c = { ref: col(k, 'ref', 'boqref', 'item', 'itemno', 'no'), desc: col(k, 'description', 'desc'), cat: col(k, 'category', 'type', 'cat'),
