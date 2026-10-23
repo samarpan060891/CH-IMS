@@ -411,6 +411,9 @@ export const po = {
         run: async c => { const r = await reason('Top management rejection'); if (r) return rpc('po_action', { p_po: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
       { label: '📤 Release to vendor', cls: 'primary', show: s === 'APPROVED' && hasRole('purchase'), done: 'PO released',
         confirm: 'Release this PO to the vendor? It can then be received against.', run: c => rpc('po_action', { p_po: c.doc.id, p_action: 'RELEASE' }) },
+      // straight to a GRN for this PO with the quantities still to receive
+      { label: '📦 Receive goods (GRN)', cls: 'primary', show: ['RELEASED', 'PARTIALLY_RECEIVED'].includes(s) && hasRole('stores', 'purchase'), reload: false,
+        run: c => go('d/grn/new/po/' + c.doc.id) },
       { label: 'Short close', show: ['RELEASED', 'PARTIALLY_RECEIVED'].includes(s) && hasRole('purchase', 'factory_manager'),
         confirm: 'Close this PO? Pending quantities will no longer be expected.', run: c => rpc('po_action', { p_po: c.doc.id, p_action: 'CLOSE' }) },
       { label: 'Cancel PO', cls: 'bad', show: !['CLOSED', 'CANCELLED', 'RECEIVED', 'PARTIALLY_RECEIVED'].includes(s) && hasRole('purchase', 'factory_manager'),
