@@ -136,10 +136,11 @@ const pr = {
   actions: ctx => [
     { label: 'Submit to Purchase', cls: 'primary', show: statusIs(ctx, 'DRAFT') && ctx.editable, done: 'Submitted',
       run: c => upd('purchase_requisitions', c.doc.id, { status: 'SUBMITTED' }) },
-    { label: '📨 Request quotations (RFQ)', show: statusIs(ctx, 'SUBMITTED', 'PARTIAL_PO') && hasRole('purchase'), reload: false,
-      run: async c => { const id = await rpc('rfq_from_pr', { p_pr: c.doc.id }); toast('RFQ created with the suppliers known for these items — add or remove suppliers, then send', 'ok', 7000); go('d/rfq/' + id); } },
-    { label: 'Create PO', cls: 'ok', show: statusIs(ctx, 'SUBMITTED', 'PARTIAL_PO') && hasRole('purchase'), reload: false,
+    // quotes are often collected offline: the PO can be raised straight away; the RFQ is optional
+    { label: '🧾 Create PO', cls: 'primary', show: statusIs(ctx, 'SUBMITTED', 'PARTIAL_PO') && hasRole('purchase'), reload: false,
       run: c => go(`d/po/new/pr/${c.doc.id}`) },
+    { label: '📨 RFQ in CitiCore (optional)', show: statusIs(ctx, 'SUBMITTED', 'PARTIAL_PO') && hasRole('purchase'), reload: false,
+      run: async c => { const id = await rpc('rfq_from_pr', { p_pr: c.doc.id }); toast('RFQ created with the suppliers known for these items — add or remove suppliers, then send', 'ok', 7000); go('d/rfq/' + id); } },
     { label: 'Open material request', show: !!ctx.doc.mr_id, reload: false, run: c => go(`d/mr/${c.doc.mr_id}`) },
     { label: 'Cancel', show: statusIs(ctx, 'DRAFT', 'SUBMITTED') && ctx.editable, confirm: 'Cancel this requisition?',
       run: c => upd('purchase_requisitions', c.doc.id, { status: 'CANCELLED' }) },
