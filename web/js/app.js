@@ -92,17 +92,18 @@ const MENU = [
     { to: 'assets', t: 'Tool crib & assets', roles: ['stores', 'factory_manager', 'finance', 'production_incharge'] },
     { to: 'd/disposal', t: 'Scrap disposals', roles: ['stores', 'factory_manager', 'finance'], badge: 'disposal' },
   ] },
-  { g: 'Shop floor', icon: 'hammer', items: [
+  // production planning and the shop floor's material in one menu
+  { g: 'Production', icon: 'building-factory', items: [
     { to: 'floorapp', t: '📱 Floor app (phone)', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager'] },
+    { to: 'floor', t: 'Stage board', roles: ['shop_floor', 'production_incharge', 'factory_manager'], badge: 'stages' },
+    { to: 'd/wo', t: 'Production orders', roles: ['production_incharge', 'factory_manager', 'shop_floor', 'stores', 'finance'], badge: 'wo' },
+    { to: 'qc', t: 'QC approvals', roles: ['factory_manager', 'production_incharge'], badge: 'qc' },
+    { sep: 'Shop floor material' },
     { to: 'd/mr', t: 'Material requests', roles: ALL, badge: 'mr' },
     { to: 'd/ack', t: 'Receive material', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager', 'site_supervisor'], badge: 'ack' },
     { to: 'd/ret', t: 'Return to store & offcuts', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager', 'site_supervisor'], badge: 'ret' },
     { to: 'd/scrap', t: 'Scrap notes', roles: ['stores', 'production_incharge', 'factory_manager', 'shop_floor'], badge: 'scrap' },
-  ] },
-  { g: 'Production', icon: 'building-factory', items: [
-    { to: 'floor', t: 'Stage board', roles: ['shop_floor', 'production_incharge', 'factory_manager'], badge: 'stages' },
-    { to: 'd/wo', t: 'Production orders', roles: ['production_incharge', 'factory_manager', 'shop_floor', 'stores', 'finance'], badge: 'wo' },
-    { to: 'qc', t: 'QC approvals', roles: ['factory_manager', 'production_incharge'], badge: 'qc' },
+    { sep: 'BOM & rates' },
     { to: 'd/bom', t: 'BOM templates', roles: ['production_incharge', 'factory_manager'] },
     { to: 'import/bom', t: '⬆ BOM & man-hours upload', roles: ['production_incharge', 'factory_manager'] },
     { to: 'm/labour_grades', t: 'Worker grades & rates', roles: ['factory_manager', 'finance'] },
