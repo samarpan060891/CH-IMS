@@ -3,7 +3,7 @@
 // INTERNAL with the order number as code), so material requests, issues, deliveries and the margin report work as for projects.
 import { sb, state, must, run, rpc, hasRole, go, today, refRow, refLabel, money, qty, dt, label, num, toast } from './lib.js';
 import { ask, confirmBox, uomPick } from './components.js';
-import { makePdf } from './pdf.js';
+import { makePdf, partyOf } from './pdf.js';
 import { readBoqFile, boqTemplate } from './projects.js';
 
 const SALES_ROLES = ['sales', 'finance', 'factory_manager'];
@@ -92,22 +92,30 @@ function salesPdf(c, kind) {
   const d = c.doc, cu = refRow('customers', d.customer_id) || {}, internal = d.so_type === 'INTERNAL';
   const meta = internal
     ? [['Cost centre', refLabel('cost_centers', d.cost_center_id)], ['Needed by', dt(d.delivery_date) || '-'], ['Requested by', refLabel('profiles', d.created_by) || '-']]
-    : [['Customer', cu.name || ''], ['TRN', cu.trn || '-'], ['Address', cu.address || '-'], ['Your ref', d.customer_ref || '-'],
-       kind === 'qt' ? ['Valid until', dt(d.valid_until)] : ['Delivery', dt(d.delivery_date) || '-'],
-       ['Payment', [num(d.advance_pct) ? num(d.advance_pct) + '% advance' : '', refLabel('payment_terms', d.payment_term_id)].filter(Boolean).join(' · ') || '-']];
+    : [['Your ref', d.customer_ref || ''],
+       kind === 'qt' ? ['Valid until', dt(d.valid_until)] : ['Delivery', dt(d.delivery_date) || ''],
+       ['Payment', [num(d.advance_pct) ? num(d.advance_pct) + '% advance' : '', refLabel('payment_terms', d.payment_term_id)].filter(Boolean).join(' · ') || '']];
   if (kind === 'qt' && d.delivery_weeks) meta.push(['Delivery time', `${d.delivery_weeks} weeks from order`]);
   if (isProj(d)) meta.push(['Site', d.site_address || d.delivery_address || '-'], ['Retention', num(d.retention_pct) + '% per progress claim'],
     ['Billing', d.billing_basis === 'UNIT' ? 'Per unit, by progress' : 'Per BOQ item, by installed quantity']);
   const cols = [{ h: isProj(d) ? 'Ref' : 'Sr. No.', k: r => isProj(d) ? (r.boq_ref || c.grids.lines.indexOf(r) + 1) : c.grids.lines.indexOf(r) + 1, w: 15 },
-    { h: 'Description', k: r => r.description + (r.unit_type ? ` (${r.unit_type}${num(r.qty_per_unit) ? ' × ' + qty(r.qty_per_unit) + ' per unit' : ''})` : '') + (r.remarks ? '\n' + r.remarks : '') },
+    { h: 'Description', strong: true, k: r => r.description + (r.unit_type ? ` (${r.unit_type}${num(r.qty_per_unit) ? ' × ' + qty(r.qty_per_unit) + ' per unit' : ''})` : '') + (r.remarks ? '\n' + r.remarks : '') },
     { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'UoM', k: r => r.uom || '' }];
   if (!internal) cols.push({ h: 'Rate', k: r => money(r.rate), align: 'right' }, { h: 'Disc.', k: r => num(r.discount_pct) ? num(r.discount_pct) + '%' : '', align: 'right' },
     { h: 'Amount AED', k: r => money(lineAmt(r)), align: 'right' });
   const t = totals(c).filter(x => !x.cost);
-  return makePdf({ title: kind === 'qt' ? (isProj(d) ? 'Quotation — Bill of Quantities' : 'Quotation') : internal ? 'Internal Order' : isProj(d) ? 'Project Order Confirmation' : 'Order Confirmation', no: kind === 'qt' ? d.qt_no : d.so_no,
-    date: kind === 'qt' ? d.qt_date : d.so_date, subtitle: d.title, meta, columns: cols, rows: c.grids.lines,
-    totals: internal ? [] : t.map(x => [x.l, money(x.v)]), notes: [d.terms, d.remarks].filter(Boolean).join('\n'),
-    signatures: kind === 'qt' ? ['Prepared by', 'Approved by', 'Accepted by customer (sign & stamp)'] : internal ? ['Requested by', 'Factory Manager'] : ['Sales', 'Finance', 'Customer acceptance'] });
+  const total = t.find(x => x.l === 'Total')?.v;
+  // quotation: authorised once sent; order: checked by the Factory Manager who confirmed it, authorised once confirmed
+  const done = kind === 'qt' ? !['DRAFT', 'CANCELLED'].includes(d.status) : ['CONFIRMED', 'CLOSED'].includes(d.status);
+  return makePdf({ title: kind === 'qt' ? (isProj(d) ? 'Quotation — Bill of Quantities' : 'Quotation') : internal ? 'Internal Order' : isProj(d) ? 'Project Order Confirmation' : 'Order Confirmation',
+    noLabel: kind === 'qt' ? 'Quotation No.' : 'Order No.', no: kind === 'qt' ? d.qt_no : d.so_no,
+    date: kind === 'qt' ? d.qt_date : d.so_date, party: internal ? null : partyOf(cu), subject: d.title || '', meta, columns: cols, rows: c.grids.lines,
+    totals: internal ? [] : t.map(x => [x.l, money(x.v)]), words: internal ? null : total,
+    terms: String(d.terms || '').split('\n').map(s => s.trim().replace(/^\d+[.)]\s*/, '')).filter(Boolean), notes: d.remarks || '',
+    deliveryAddress: isProj(d) ? '' : d.delivery_address || '',
+    sign: internal ? { prepared: d.created_by, checked: d.confirmed_by, approved: false, labels: ['Requested By', 'Confirmed By', 'Approved & Authorized Signatory'] }
+                   : { prepared: d.created_by, checked: kind === 'so' ? d.confirmed_by : null, approved: done },
+    acceptance: internal ? '' : cu.name || '' });
 }
 
 // ======================================================================

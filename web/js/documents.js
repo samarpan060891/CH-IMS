@@ -3,7 +3,7 @@
 import { reactive } from 'vue';
 import { sb, state, must, rpc, hasRole, canSeeCost, go, today, refRow, refLabel, money, qty, dt, label, num, loadRef, toast, stockSplit } from './lib.js';
 import { ask, namePick, CURRENCIES } from './components.js';
-import { makePdf } from './pdf.js';
+import { makePdf, partyOf } from './pdf.js';
 
 // shared dynamic option lists for ref fields ({id,label})
 export const opts = reactive({ pos: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [], lots: {}, mrLots: {}, snags: [] });
@@ -136,7 +136,7 @@ const pr = {
     { label: 'Cancel', show: statusIs(ctx, 'DRAFT', 'SUBMITTED') && ctx.editable, confirm: 'Cancel this requisition?',
       run: c => upd('purchase_requisitions', c.doc.id, { status: 'CANCELLED' }) },
     { label: '🖨 PDF', reload: false, run: c => makePdf({
-        title: 'Purchase Requisition', no: c.doc.pr_no, date: c.doc.pr_date,
+        title: 'Purchase Requisition', noLabel: 'PR No.', no: c.doc.pr_no, date: c.doc.pr_date,
         meta: [['Source', label(c.doc.source)], ['Project', refLabel('projects', c.doc.project_id)], ['Required by', dt(c.doc.required_date)], ['Status', label(c.doc.status)]],
         columns: [{ h: 'Sr. No.', k: (r) => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
                   { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'Required', k: r => dt(r.required_date) }, { h: 'Remarks', k: 'remarks' }],
@@ -181,7 +181,8 @@ export const po = {
   refs: ['items', 'vendors', 'payment_terms', 'locations', 'projects', 'boq_lines'],
   list: { select: '*, vendors(name)', columns: [{ k: r => r.vendors?.name, label: 'Vendor' }, { k: 'po_type', label: 'Type', fmt: 'label' }, { k: 'currency', label: 'Cur' },
           { k: 'total_amount', label: 'Total', fmt: 'money', cost: true }, { k: 'total_aed', label: 'Total AED', fmt: 'money', cost: true, sum: true }, { k: 'delivery_date', label: 'Delivery', fmt: 'date' }] },
-  defaults: () => ({ po_date: today(), po_type: 'LOCAL', currency: 'AED', exchange_rate: 1, delivery_location_id: locId('MS'), terms_conditions: state.company?.po_terms_conditions || '' }),
+  defaults: () => ({ po_date: today(), po_type: 'LOCAL', currency: 'AED', exchange_rate: 1, delivery_location_id: locId('MS'), terms_set: 'goods', quote_label: 'quotation',
+    terms_conditions: '', delivery_address: state.company?.address || '' }),
   async onNew(ctx, parts) { if (parts[0] === 'pr' && parts[1]) await loadPrLines(ctx, parts[1]); },
   header: [
     { k: 'vendor_id', label: 'Vendor', type: 'ref', ref: 'vendors', required: true, wide: true, filter: r => r.status === 'ACTIVE',
@@ -200,11 +201,19 @@ export const po = {
     { k: 'delivery_date', label: 'Delivery date', type: 'date' },
     { k: 'delivery_location_id', label: 'Deliver to', type: 'ref', ref: 'locations' },
     { k: 'project_id', label: 'Default project for new lines', type: 'ref', ref: 'projects', filter: r => r.status === 'OPEN' && r.project_type === 'PROJECT' },
-    { k: 'quotation_ref', label: 'Quotation ref' },
+    { k: 'quote_label', label: 'Supplier document', type: 'select', options: [{ v: 'quotation', l: 'Quotation' }, { v: 'final quotation', l: 'Final quotation' }, { v: 'Proforma Invoice', l: 'Proforma invoice' }, { v: 'offer', l: 'Offer' }] },
+    { k: 'quotation_ref', label: 'Supplier doc ref (e.g. No. 26-1032 dated 30 September 2026)', wide: true },
+    { k: 'quoted_total', label: 'Total on supplier document (cross-check)', type: 'number' },
     { k: 'incoterms', label: 'Incoterms', show: d => d.po_type === 'IMPORT' },
     { k: 'top_mgmt_ref_no', label: 'Top mgmt approval ref', type: 'ro', show: d => !!d.top_mgmt_ref_no },
     { k: 'top_mgmt_ref_date', label: 'Top mgmt approval date', type: 'ro', fmt: v => dt(v), show: d => !!d.top_mgmt_ref_no },
-    { k: 'terms_conditions', label: 'Terms & conditions', type: 'textarea', full: true },
+    { k: 'subject', label: 'Subject (printed, e.g. Supply of Foam & Dacron – Factory Project, UAQ)', required: true, full: true },
+    { k: 'award_text', label: 'Award of … (printed after "to formalize the award of")', full: true },
+    { k: 'terms_set', label: 'Standard terms', type: 'select', required: true, options: [{ v: 'goods', l: 'Goods (supply)' }, { v: 'works', l: 'Works (contractor / service)' }] },
+    { k: 'delivery_days', label: 'Delivery / completion (days)', type: 'number' },
+    { k: 'payment_type', label: 'Payment type', type: 'select', options: ['Cheque', 'Cash', 'Bank transfer'] },
+    { k: 'delivery_address', label: 'Delivery address (printed)', full: true },
+    { k: 'terms_conditions', label: 'Additional terms (one per line, printed after the standard terms)', type: 'textarea', full: true },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
   grids: [{
@@ -228,7 +237,26 @@ export const po = {
       roQty('received_qty', 'Received'),
       { k: 'required_date', label: 'Required', type: 'date' },
     ],
+  }, {
+    key: 'payment', title: 'Payment schedule (printed; must total 100%, {amt} prints the AED amount)', table: 'po_payment_lines', fk: 'po_id', order: 'line_no',
+    newRow: () => ({ pct: 100, text: 'payment on delivery ({amt}).' }),
+    fields: [
+      { k: 'pct', label: '%', type: 'number', required: true, width: '70px' },
+      { k: 'text', label: 'Payment term text (e.g. advance payment against PDC ({amt}).)', required: true, width: '520px' },
+    ],
   }],
+  validate(ctx) {
+    const pay = ctx.grids.payment || [];
+    if (pay.length) {
+      const pct = pay.reduce((s, p) => s + num(p.pct), 0);
+      if (Math.abs(pct - 100) > 0.001) throw new Error(`Payment schedule adds up to ${pct}% — it must total 100%`);
+    }
+    if (ctx.doc.quoted_total !== null && ctx.doc.quoted_total !== undefined && ctx.doc.quoted_total !== '') {
+      const t = po.totals(ctx)[2].v;
+      if (Math.abs(t - num(ctx.doc.quoted_total)) > 0.01)
+        throw new Error(`PO total ${money(t)} does not match the supplier document total ${money(ctx.doc.quoted_total)} — check quantities and rates`);
+    }
+  },
   totals: ctx => {
     const sub = ctx.grids.lines.reduce((s, r) => s + poLineAmount(r), 0);
     const vat = ctx.grids.lines.reduce((s, r) => s + poLineAmount(r) * num(r.vat_rate) / 100, 0);
@@ -268,21 +296,50 @@ export const po = {
     ];
   },
 };
-function pdfPO(c) {
-  const d = c.doc, v = refRow('vendors', d.vendor_id) || {};
-  const t = po.totals(c);
+// the PO as in the Citi Homes PO system: supplier block, subject, award paragraph, goods / works table, amount in words,
+// payment schedule, standard terms (goods or works) + additional terms, three signatures and the supplier's acceptance
+async function pdfPO(c) {
+  const d = c.doc, v = refRow('vendors', d.vendor_id) || {}, co = state.company || {};
+  const works = d.terms_set === 'works', role = works ? 'Contractor' : 'Supplier', cur = d.currency || 'AED';
+  const sub = c.grids.lines.reduce((s, r) => s + poLineAmount(r), 0);
+  const vat = c.grids.lines.reduce((s, r) => s + poLineAmount(r) * num(r.vat_rate) / 100, 0);
+  const rates = [...new Set(c.grids.lines.map(r => num(r.vat_rate)))];
+  const totals = vat ? [['Sub-total', money(sub)], [rates.length === 1 ? `VAT ${rates[0]}%` : 'VAT', money(vat)], ['Total Amount (incl. VAT)', money(sub + vat)]] : [['Total Amount', money(sub)]];
+  if (cur !== 'AED') totals.push([`Total in AED @ ${num(d.exchange_rate)}`, money((sub + vat) * num(d.exchange_rate))]);
+  const disc = c.grids.lines.some(r => num(r.discount_pct));
+  const company = co.company_name || 'Citi Homes';
+  const fill = t => String(t).replaceAll('{delivery_days}', d.delivery_days ?? '____').replaceAll('{company}', company);
+  const extra = d.terms_conditions && d.terms_conditions !== co.po_terms_conditions ? d.terms_conditions.split('\n').map(s => s.trim()).filter(Boolean) : [];
+  const fm = d.id ? must(await sb.from('po_approvals').select('acted_by').eq('po_id', d.id).eq('stage', 'FM').in('action', ['APPROVED', 'APPROVE']).order('acted_at', { ascending: false }).limit(1))[0] : null;
+  const aed = (sub + vat) * num(d.exchange_rate || 1);
   return makePdf({
-    title: 'Purchase Order', no: d.po_no, date: d.po_date, subtitle: label(d.status),
-    meta: [['Vendor', v.name], ['Vendor TRN', v.trn || '-'], ['Currency', d.currency + (d.currency !== 'AED' ? ` @ ${d.exchange_rate}` : '')], ['Payment terms', refLabel('payment_terms', d.payment_term_id)],
-           ['Delivery date', dt(d.delivery_date)], ['Deliver to', refLabel('locations', d.delivery_location_id)], ['Quotation ref', d.quotation_ref || '-'], ['Project', refLabel('projects', d.project_id) || '-']],
-    columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) + (r.description && r.description !== refRow('items', r.item_id)?.name ? '\n' + r.description : '') },
-              ...(c.grids.lines.some(r => r.project_id) ? [{ h: 'For project', k: r => r.project_id ? refRow('projects', r.project_id)?.code : 'Stock' }] : []),
-              { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' },
-              { h: 'Disc%', k: r => num(r.discount_pct) || '', align: 'right' }, { h: 'VAT%', k: r => num(r.vat_rate), align: 'right' }, { h: 'Amount', k: r => money(poLineAmount(r)), align: 'right' }],
-    rows: c.grids.lines,
-    totals: t.map(x => [x.l, money(x.v)]),
-    notes: [d.terms_conditions, d.top_mgmt_ref_no ? `Top management approval ref: ${d.top_mgmt_ref_no} dated ${dt(d.top_mgmt_ref_date)}` : ''].filter(Boolean).join('\n\n'),
-    signatures: [['Prepared by', 'Purchase'], ['Approved', 'Factory Manager'], ['Approved', 'Finance Manager'], ['Vendor acceptance', v.name || '']],
+    title: 'Purchase Order', noLabel: 'PO Number', no: d.po_no, date: d.po_date,
+    party: partyOf(v),
+    subject: d.subject || '',
+    intro: `This Purchase Order is hereby issued by ${company} ("Citi Homes" / "the Company") to ${v.name || ''} ("the ${role}") to formalize the award of ` +
+      `${d.award_text || (works ? 'the works' : 'the supply of the goods')} detailed below, in accordance with the ${role}'s ${d.quote_label || 'quotation'}` +
+      `${d.quotation_ref ? ' (' + d.quotation_ref + ')' : ''}.`,
+    scopeHeading: works ? 'Scope of Work & Contract Value:' : 'Order Details & Value:',
+    meta: [['Currency', cur !== 'AED' ? `${cur} @ ${num(d.exchange_rate)} AED` : ''], ['Project', refLabel('projects', d.project_id) || ''],
+           ['Delivery date', d.delivery_date ? dt(d.delivery_date) : ''], ['Payment', d.payment_type || ''],
+           ['Top management approval', d.top_mgmt_ref_no ? `${d.top_mgmt_ref_no} dated ${dt(d.top_mgmt_ref_date)}` : '']].filter(m => m[1]),
+    columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 },
+              { h: 'Description of ' + (works ? 'Works' : 'Goods'), strong: true, k: r => [r.description || itemName(r.item_id),
+                r.description && r.description !== refRow('items', r.item_id)?.name ? itemName(r.item_id) : '',
+                r.project_id ? 'For ' + (refRow('projects', r.project_id)?.code || 'project') : ''].filter(Boolean).join('\n') },
+              { h: works ? 'Estimated\nQuantity' : 'Quantity', k: r => `${qty(r.qty)} ${itemUom(r.item_id)}`.trim(), align: 'center', w: 26 },
+              { h: `Rate\n(${cur})`, k: r => money(r.rate), align: 'right', w: 24 },
+              ...(disc ? [{ h: 'Disc.\n%', k: r => num(r.discount_pct) || '', align: 'right', w: 14 }] : []),
+              { h: `Amount\n(${cur})`, k: r => money(poLineAmount(r)), align: 'right', w: 28 }],
+    rows: c.grids.lines, totals,
+    words: cur === 'AED' ? sub + vat : null,
+    paymentTerms: (c.grids.payment || []).map(p => ({ pct: p.pct, text: String(p.text || '').replace('{amt}', `AED ${money(aed * num(p.pct) / 100)}`) })),
+    terms: [...((works ? co.po_terms_works : co.po_terms_goods) || []).map(fill), ...extra],
+    deliveryAddress: d.delivery_address || refLabel('locations', d.delivery_location_id) || '',
+    notes: d.remarks || '',
+    sign: { prepared: d.created_by, checked: fm?.acted_by, approved: ['APPROVED', 'RELEASED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CLOSED'].includes(d.status) },
+    acceptance: v.name,
+    filename: `${d.po_no || 'PO'}_${String(v.name || '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40)}.pdf`,
   });
 }
 
@@ -438,10 +495,12 @@ export const grn = {
           { h: 'Remarks', k: 'rejection_reason' },
           { h: 'Lot / Batch', k: r => [r.lot_no, r.batch_no].filter(Boolean).join(' / ') }, { h: 'Expiry', k: r => dt(r.expiry_date) }];
         if (cost) cols.push({ h: 'Rate', k: r => money(r.rate), align: 'right' }, { h: 'Landed AED', k: r => money(r.unit_cost_aed), align: 'right' });
-        makePdf({ title: 'Goods Receipt Note', no: d.grn_no, date: d.grn_date, subtitle: label(d.status), landscape: true,
-          meta: [['Receipt type', label(d.receipt_type)], ['PO', opts.pos.find(p => p.id === d.po_id)?.label || '-'], ['Vendor', refLabel('vendors', d.vendor_id) || '-'], ['Location', refLabel('locations', d.location_id)],
-                 ['Delivery note', `${d.vendor_dn_no || '-'} ${d.vendor_dn_date ? '(' + dt(d.vendor_dn_date) + ')' : ''}`], ['Vendor invoice', d.vendor_invoice_no || '-'], ['Vehicle', d.vehicle_no || '-'], ['Project', refLabel('projects', d.project_id) || '-']],
-          columns: cols, rows: c.grids.lines, notes: d.remarks || '', signatures: ['Received by (Stores)', 'Quality check', 'Store In-charge'] });
+        return makePdf({ title: 'Goods Receipt Note', noLabel: 'GRN No.', no: d.grn_no, date: d.grn_date, subtitle: label(d.status), landscape: true,
+          party: partyOf(refRow('vendors', d.vendor_id)),
+          meta: [['Receipt type', label(d.receipt_type)], ['PO', opts.pos.find(p => p.id === d.po_id)?.label?.split(' — ')[0] || ''], ['Location', refLabel('locations', d.location_id)],
+                 ['Delivery note', d.vendor_dn_no ? `${d.vendor_dn_no}${d.vendor_dn_date ? ' (' + dt(d.vendor_dn_date) + ')' : ''}` : ''], ['Vendor invoice', d.vendor_invoice_no || ''], ['Vehicle', d.vehicle_no || ''], ['Project', refLabel('projects', d.project_id) || '']],
+          columns: cols, rows: c.grids.lines, notes: d.remarks || '',
+          sign: { prepared: d.created_by, checked: d.status === 'POSTED' ? d.posted_by : null, labels: ['Received By', 'Posted By', ''] } });
       } },
   ],
 };
@@ -627,12 +686,13 @@ export const mr = {
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'CANCEL' }) },
       { label: '🖨 PDF', reload: false, run: c => makePdf({
           title: 'Material Request', no: c.doc.mr_no, date: c.doc.mr_date, subtitle: label(c.doc.status),
-          meta: [['Purpose', label(c.doc.purpose)], ['Project / CC', refLabel('projects', c.doc.project_id) || refLabel('cost_centers', c.doc.cost_center_id)], ['Priority', c.doc.priority], ['Required by', dt(c.doc.required_date)],
-                 ['Requested by', refLabel('profiles', c.doc.requested_by)], ['Approved by', refLabel('profiles', c.doc.approved_by) || '-']],
+          noLabel: 'MR No.',
+          meta: [['Purpose', label(c.doc.purpose)], ['Project / CC', refLabel('projects', c.doc.project_id) || refLabel('cost_centers', c.doc.cost_center_id)], ['Priority', c.doc.priority], ['Required by', dt(c.doc.required_date)]],
+          sign: { prepared: c.doc.requested_by, checked: c.doc.approved_by, labels: ['Requested By', 'Approved By', ''] },
           columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 },
                     { h: 'Item', k: r => itemName(r.item_id) + (r.lot_id ? '\n' + ((opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.label || 'specific board') : '') }, { h: 'UoM', k: r => itemUom(r.item_id) },
                     { h: 'Requested', k: r => qty(r.requested_qty), align: 'right' }, { h: 'Approved', k: r => qty(r.approved_qty), align: 'right' }, { h: 'Issued', k: r => qty(r.issued_qty), align: 'right' }, { h: 'Remarks', k: 'remarks' }],
-          rows: c.grids.lines, notes: c.doc.remarks || '', signatures: ['Requested by', 'Production In-charge', 'Stores'] }) },
+          rows: c.grids.lines, notes: c.doc.remarks || '' }) },
     ];
   },
 };

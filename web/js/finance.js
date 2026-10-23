@@ -5,7 +5,7 @@
 import { reactive } from 'vue';
 import { sb, state, must, run, rpc, hasRole, go, today, refRow, refLabel, money, qty, dt, label, num, loadRefs, toast } from './lib.js';
 import { ask, confirmBox, Badge, DataTable, FieldInput, uomPick } from './components.js';
-import { makePdf } from './pdf.js';
+import { makePdf, partyOf } from './pdf.js';
 
 const isFin = () => hasRole('finance');
 const statusIs = (ctx, ...s) => s.includes(ctx.doc.status);
@@ -154,14 +154,14 @@ function siPdf(c) {
   const d = c.doc, cu = custOf(d.customer_id) || {}, p = refRow('projects', d.project_id), prog = PROGRESS.includes(d.inv_type), posted = d.status === 'POSTED';
   const cert = ['CERTIFIED', 'POSTED'].includes(d.status) && prog;
   const title = posted ? (d.inv_type === 'CREDIT_NOTE' ? 'Tax Credit Note' : 'Tax Invoice') : prog ? 'Interim Payment Application' : 'Proforma Invoice';
-  const meta = [['Customer', cu.name || ''], ['Customer TRN', cu.trn || '-'], ['Address', cu.address || '-'], ['Project', p ? `${p.code} — ${p.name}` : '-'],
-    ['Type', label(d.inv_type)], ['Client ref', d.customer_ref || '-'], ['Due date', dt(d.due_date)]];
+  const meta = [['Our TRN', state.company?.trn || ''], ['Project', p ? `${p.code} — ${p.name}` : ''],
+    ['Type', label(d.inv_type)], ['Client ref', d.customer_ref || ''], ['Due date', dt(d.due_date)]];
   if (prog) meta.push(['Claim no.', d.claim_no || '-'], ['Work up to', dt(d.period_to) || '-'], ['Payment certificate', d.cert_no ? `${d.cert_no} (${dt(d.cert_date)})` : 'pending']);
   const cols = prog
-    ? [{ h: 'Description', k: 'description' }, { h: 'UoM', k: 'uom' }, { h: 'Contract', k: r => qty(r.contract_qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' },
+    ? [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Description', k: 'description', strong: true }, { h: 'UoM', k: 'uom' }, { h: 'Contract', k: r => qty(r.contract_qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' },
        { h: 'Previous', k: r => qty(r.prev_qty), align: 'right' }, { h: 'Cumulative', k: r => qty(cert ? (r.cert_cum_qty ?? r.cum_qty) : r.cum_qty), align: 'right' },
        { h: 'This period AED', k: r => money(cert ? r.cert_amount : lineAmt(r)), align: 'right' }]
-    : [{ h: 'Description', k: 'description' }, { h: 'UoM', k: 'uom' }, { h: 'Qty', k: r => qty(r.cum_qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' },
+    : [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Description', k: 'description', strong: true }, { h: 'UoM', k: 'uom' }, { h: 'Qty', k: r => qty(r.cum_qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' },
        { h: 'Amount AED', k: r => money(lineAmt(r)), align: 'right' }];
   const base = d.certified_gross ?? d.gross_claimed;
   const totals = [[prog ? (cert ? 'Certified value this period' : 'Value claimed this period') : 'Subtotal', money(base)]];
@@ -169,9 +169,12 @@ function siPdf(c) {
   totals.push(['Taxable value', money(d.taxable_amount)], [`VAT ${num(d.vat_rate)}%`, money(d.vat_amount)], ['Total incl. VAT', money(num(d.taxable_amount) + num(d.vat_amount))]);
   if (num(d.retention_amount)) totals.push([`Less retention ${num(d.retention_pct)}%`, '-' + money(d.retention_amount)]);
   totals.push(['AMOUNT DUE (AED)', money(d.total_amount)]);
-  return makePdf({ title, no: d.inv_no, date: d.invoice_date, subtitle: posted ? '' : label(d.status), meta, columns: cols, rows: c.grids.lines, totals, landscape: prog,
+  return makePdf({ title, noLabel: posted ? (d.inv_type === 'CREDIT_NOTE' ? 'Credit Note No.' : 'Invoice No.') : 'Reference', no: d.inv_no, date: d.invoice_date,
+    subtitle: posted ? '' : label(d.status), party: partyOf(cu), meta, columns: cols, rows: c.grids.lines, totals, landscape: prog, words: d.total_amount,
     notes: [d.remarks, posted ? 'Please remit to the bank account on file quoting the invoice number.' : ''].filter(Boolean).join('\n'),
-    signatures: prog && !posted ? ['Prepared by', 'Project Manager', 'Client / Consultant certification'] : ['Prepared by', 'Finance Manager', 'Received by (customer)'] });
+    sign: { prepared: d.created_by, checked: d.certified_by || d.submitted_by, approved: posted,
+            labels: prog && !posted ? ['Prepared By', 'Submitted By', 'Approved & Authorized Signatory'] : undefined },
+    acceptance: prog && !posted ? '' : cu.name || '' });
 }
 
 // ======================================================================

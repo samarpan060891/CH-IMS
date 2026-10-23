@@ -2,7 +2,7 @@
 // → draft POs per supplier, linked to the requisition lines; the vendor price list keeps the winning prices.
 import { sb, state, must, run, rpc, hasRole, go, today, refRow, refLabel, money, qty, dt, label, num, toast } from './lib.js';
 import { CURRENCIES } from './components.js';
-import { makePdf } from './pdf.js';
+import { makePdf, partyOf } from './pdf.js';
 
 const isBuyer = () => hasRole('purchase');
 const itemName = id => { const r = refRow('items', id); return r ? `${r.code} — ${r.name}` : ''; };
@@ -11,16 +11,14 @@ const itemUom = id => refRow('items', id)?.uoms?.code || '';
 // the RFQ as sent to one supplier (or a general copy): items and quantities with blank rate / lead-time columns
 function rfqPdf(c, rv) {
   const d = c.doc, v = rv ? refRow('vendors', rv.vendor_id) || {} : null;
-  const meta = [...(v ? [['To', v.name], ['Contact', [v.contact_person, v.phone, v.email].filter(Boolean).join(' · ') || '-']] : []),
-    ['Quote by', dt(d.quote_due_date) || '-'], ['Required on site / store', dt(d.required_date) || '-'], ['Deliver to', refLabel('locations', d.delivery_location_id) || 'Our factory store'],
-    ['Our reference', d.rfq_no]];
-  return makePdf({ title: 'Request for Quotation', no: d.rfq_no, date: d.rfq_date, subtitle: d.title, meta,
-    columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) + (r.description && r.description !== refRow('items', r.item_id)?.name ? '\n' + r.description : '') },
+  const meta = [['Quote by', dt(d.quote_due_date) || ''], ['Required on site / store', dt(d.required_date) || ''], ['Deliver to', refLabel('locations', d.delivery_location_id) || 'Our factory store']];
+  return makePdf({ title: 'Request for Quotation', noLabel: 'RFQ No.', no: d.rfq_no, date: d.rfq_date, subject: d.title || '', meta, party: v ? partyOf(v) : null,
+    columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', strong: true, k: r => itemName(r.item_id) + (r.description && r.description !== refRow('items', r.item_id)?.name ? '\n' + r.description : '') },
       { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Needed by', k: r => dt(r.required_date || d.required_date) },
       { h: 'Unit rate (excl. VAT)', k: () => '' }, { h: 'Lead time (days)', k: () => '' }],
     rows: c.grids.lines,
     notes: [d.terms, 'Please quote unit rates excluding VAT, your delivery lead time, payment terms and the validity of your offer. Mention our reference ' + d.rfq_no + '.'].filter(Boolean).join('\n'),
-    signatures: ['Purchase department', 'Supplier stamp & signature'], filename: `${d.rfq_no.replace(/[\/\\]/g, '-')}${v ? '-' + v.name.replace(/[^\w]+/g, '-') : ''}.pdf` });
+    sign: { prepared: d.created_by, labels: ['Prepared By', '', ''] }, signatures: [], filename: `${d.rfq_no.replace(/[\/\\]/g, '-')}${v ? '-' + v.name.replace(/[^\w]+/g, '-') : ''}.pdf` });
 }
 
 // quotes entry and comparison: one row per item, one column per supplier

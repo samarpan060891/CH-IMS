@@ -792,10 +792,106 @@ export const Assets = {
 };
 
 // ======================================================================
+// SIGNATURES — one image per user, printed on documents once that person's step is done
+// ======================================================================
+// trims the white / transparent margin and scales to at most 600 x 200, returned as a PNG data URL
+function cleanSignature(src) {
+  const W = src.width, H = src.height, px = src.getContext('2d').getImageData(0, 0, W, H).data;
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4;
+    if (px[i + 3] > 20 && (px[i] < 200 || px[i + 1] < 200 || px[i + 2] < 200)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 < 0) throw new Error('The signature is empty');
+  const w = x1 - x0 + 1, h = y1 - y0 + 1, s = Math.min(1, 600 / w, 200 / h);
+  const out = document.createElement('canvas'); out.width = Math.round(w * s); out.height = Math.round(h * s);
+  const g = out.getContext('2d');
+  g.drawImage(src, x0, y0, w, h, 0, 0, out.width, out.height);
+  // white paper → transparent, so the signature sits cleanly on the printed page
+  const d = g.getImageData(0, 0, out.width, out.height);
+  for (let i = 0; i < d.data.length; i += 4) if (d.data[i] > 220 && d.data[i + 1] > 220 && d.data[i + 2] > 220) d.data[i + 3] = 0;
+  g.putImageData(d, 0, 0);
+  return out.toDataURL('image/png');
+}
+export const SignatureBox = {
+  props: { userId: { type: String, required: true } },
+  data: () => ({ image: null, drawing: false, mode: 'view', busy: false }),
+  async mounted() { await this.load(); },
+  methods: {
+    async load() { await run(async () => { this.image = must(await sb.from('user_signatures').select('image').eq('user_id', this.userId).maybeSingle())?.image || null; }); },
+    startDraw() {
+      this.mode = 'draw';
+      this.$nextTick(() => { const c = this.$refs.pad, g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.lineWidth = 2.6; g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = '#0b2a6b'; });
+    },
+    pos(e) { const r = this.$refs.pad.getBoundingClientRect(); return [(e.clientX - r.left) * this.$refs.pad.width / r.width, (e.clientY - r.top) * this.$refs.pad.height / r.height]; },
+    down(e) { this.drawing = true; this.$refs.pad.setPointerCapture(e.pointerId); const g = this.$refs.pad.getContext('2d'); g.beginPath(); g.moveTo(...this.pos(e)); },
+    move(e) { if (!this.drawing) return; const g = this.$refs.pad.getContext('2d'); g.lineTo(...this.pos(e)); g.stroke(); },
+    up() { this.drawing = false; },
+    clearPad() { this.startDraw(); },
+    async saveDrawn() { await this.store(() => cleanSignature(this.$refs.pad)); },
+    async upload(e) {
+      const f = e.target.files[0]; e.target.value = '';
+      if (!f) return;
+      await this.store(async () => {
+        const img = new Image(); img.src = URL.createObjectURL(f);
+        await img.decode().catch(() => { throw new Error('Choose a PNG or JPG image of the signature'); });
+        const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0);
+        return cleanSignature(c);
+      });
+    },
+    async store(make) {
+      this.busy = true;
+      const ok = await run(async () => {
+        const image = await make();
+        must(await sb.from('user_signatures').upsert({ user_id: this.userId, image, updated_at: new Date().toISOString() }));
+        this.image = image;
+      }, 'Signature saved');
+      this.busy = false;
+      if (ok) this.mode = 'view';
+    },
+    async remove() {
+      if (!await ask({ title: 'Remove signature?', message: 'Documents will print a blank signature line until a new one is stored.', fields: [], okText: 'Remove', danger: true })) return;
+      if (await run(async () => must(await sb.from('user_signatures').delete().eq('user_id', this.userId)), 'Signature removed')) this.image = null;
+    },
+  },
+  template: `<div>
+    <div v-if="mode==='view'" class="row" style="align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="width:240px;height:84px;border:1px dashed var(--line);border-radius:6px;display:flex;align-items:center;justify-content:center;background:#fff">
+        <img v-if="image" :src="image" alt="Stored signature" style="max-width:228px;max-height:76px">
+        <span v-else class="small muted">No signature stored</span>
+      </div>
+      <button class="btn sm" @click="startDraw">✍ Draw</button>
+      <label class="btn sm" style="cursor:pointer">⬆ Upload image<input type="file" accept="image/png,image/jpeg" style="display:none" @change="upload"></label>
+      <button class="btn sm bad" v-if="image" @click="remove">Remove</button>
+    </div>
+    <div v-else>
+      <canvas ref="pad" width="720" height="240" style="width:100%;max-width:480px;aspect-ratio:3/1;border:1px solid var(--line);border-radius:6px;background:#fff;touch-action:none;cursor:crosshair"
+        @pointerdown="down" @pointermove="move" @pointerup="up" @pointerleave="up"></canvas>
+      <div class="row" style="margin-top:6px;gap:8px"><span class="small muted">Sign inside the box with the mouse, a finger or a stylus.</span><span class="spacer"></span>
+        <button class="btn sm" @click="clearPad">Clear</button><button class="btn sm" @click="mode='view'">Cancel</button><button class="btn sm primary" :disabled="busy" @click="saveDrawn">Save signature</button></div>
+    </div>
+  </div>`,
+};
+// every user: their own signature (printed on the documents they prepare, check or authorise)
+export const MySignature = {
+  components: { SignatureBox },
+  computed: { me: () => state.profile },
+  template: `<div class="card" style="max-width:640px">
+    <h3 style="margin-top:0">My signature</h3>
+    <p class="small muted" style="margin-top:0">Stored once and printed on the documents you prepare, check or authorise — only after your step is done.
+      Draw it here or upload a scan / photo of your signature on white paper (the background is removed automatically).</p>
+    <SignatureBox :user-id="me.id" />
+    <p class="small" style="margin-bottom:0">Printed as: <b>{{ me.full_name || me.email }}</b> · {{ me.job_title || $root.ROLES[me.role] }}
+      <span class="muted">(the job title is set by the administrator in Users &amp; roles)</span></p>
+  </div>`,
+};
+
+// ======================================================================
 // USERS (admin)
 // ======================================================================
 export const Users = {
-  components: { DataTable, Modal },
+  components: { DataTable, Modal, SignatureBox },
   data: () => ({ rows: [], loading: true, edit: null, nu: null, busy: false }),
   computed: {
     roles() { return Object.entries(ROLES).map(([v, l]) => ({ v, l })); },
@@ -812,7 +908,7 @@ export const Users = {
     async save() {
       const e = this.edit;
       const dashboards = e._dash.length ? this.dashKeys.filter(k => e._dash.includes(k)) : null;
-      const ok = await run(async () => must(await sb.from('profiles').update({ full_name: e.full_name, role: e.role, is_active: e.is_active, employee_code: e.employee_code, dashboards }).eq('id', e.id)), 'User updated');
+      const ok = await run(async () => must(await sb.from('profiles').update({ full_name: e.full_name, job_title: e.job_title || null, role: e.role, is_active: e.is_active, employee_code: e.employee_code, dashboards }).eq('id', e.id)), 'User updated');
       if (ok) {
         if (e.id === state.profile?.id) state.profile.dashboards = dashboards;
         this.edit = null; this.load(); loadRef('profiles', true);
@@ -848,6 +944,7 @@ export const Users = {
     <Modal v-if="edit" :title="'User — ' + edit.email" small @close="edit=null">
       <div class="grid">
         <label class="f full">Full name<input v-model="edit.full_name"></label>
+        <label class="f full">Job title (printed under the signature; blank = role name)<input v-model="edit.job_title" placeholder="e.g. Procurement Associate"></label>
         <label class="f">Role<select v-model="edit.role"><option v-for="r in roles" :value="r.v">{{ r.l }}</option></select></label>
         <label class="f">Employee code<input v-model="edit.employee_code"></label>
         <label class="f">Active<span class="row"><input type="checkbox" v-model="edit.is_active"> can log in</span></label>
@@ -857,6 +954,7 @@ export const Users = {
           </div>
           <span class="small muted">None ticked = the role's default ({{ defaultDash(edit.role) }}). With more than one, the user gets a Dashboards menu; the first ticked (in this order) opens at sign-in.</span>
         </div>
+        <div class="f full"><span>Signature (printed on documents)</span><SignatureBox :user-id="edit.id" :key="edit.id" /></div>
       </div>
       <template #footer><button class="btn" @click="resetPw(edit)">Reset password</button><span class="spacer"></span><button class="btn" @click="edit=null">Close</button><button class="btn primary" @click="save">Save</button></template>
     </Modal>
@@ -904,14 +1002,25 @@ export const Settings = {
         { k: 'overhead_pct', label: 'Production: overhead % on labour + machine', type: 'number' },
         { k: 'board_waste_pct', label: 'Production: board waste % (cut list)', type: 'number' },
         { k: 'edge_waste_pct', label: 'Production: edge band waste %', type: 'number' },
-        { k: 'po_terms_conditions', label: 'Default PO terms & conditions', type: 'textarea', full: true },
+        // printed documents (house style)
+        { k: 'doc_company_code', label: 'Document numbers: company code (PO-CH26-10-001)', required: true },
+        { k: 'auth_sign_name', label: 'Approved & Authorized Signatory — name', required: true },
+        { k: 'auth_sign_title', label: 'Authorized Signatory — title', required: true },
+        { k: 'auth_sign_user_id', label: 'Authorized Signatory — CitiCore user (their stored signature prints)', type: 'select',
+          options: [{ v: '', l: '— none (blank signature line) —' }, ...(state.refs.profiles || []).map(p => ({ v: p.id, l: p.full_name || p.email }))] },
+        { k: '_terms_goods', label: 'PO standard terms — Goods (one per line; {delivery_days} and {company} are filled in)', type: 'textarea', full: true },
+        { k: '_terms_works', label: 'PO standard terms — Works / contractor (one per line)', type: 'textarea', full: true },
       ];
     },
   },
-  mounted() { this.c = { ...state.company }; },
+  mounted() { const c = state.company || {}; this.c = { ...c, auth_sign_user_id: c.auth_sign_user_id || '', _terms_goods: (c.po_terms_goods || []).join('\n'), _terms_works: (c.po_terms_works || []).join('\n') }; },
   methods: {
     async save() {
-      const row = {}; this.fields.forEach(f => { row[f.k] = this.c[f.k]; });
+      const row = {}; this.fields.filter(f => !f.k.startsWith('_')).forEach(f => { row[f.k] = this.c[f.k]; });
+      const lines = t => String(t || '').split('\n').map(s => s.trim()).filter(Boolean);
+      row.po_terms_goods = lines(this.c._terms_goods); row.po_terms_works = lines(this.c._terms_works);
+      row.auth_sign_user_id = row.auth_sign_user_id || null;
+      row.doc_company_code = String(row.doc_company_code || '').trim().toUpperCase();
       row.vat_quarter_start_month = Number(row.vat_quarter_start_month) || 1;
       const ok = await run(async () => must(await sb.from('company_settings').update(row).eq('id', 1)), 'Settings saved');
       if (ok) await loadCompany();

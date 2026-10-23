@@ -6,7 +6,7 @@ import { DocList, DocEditor } from './docengine.js';
 import { DOCS } from './documents.js';
 import { MASTERS, MasterPage } from './masters.js';
 import { Dashboard, DASHBOARDS, userDashboards, homeDashboard } from './dashboards.js';
-import { Reports, REPORTS, Replenishment, Assets, Users, Settings, BufferReview, ConsolidatePR, Holds } from './pages.js';
+import { Reports, REPORTS, Replenishment, Assets, Users, Settings, BufferReview, ConsolidatePR, Holds, MySignature } from './pages.js';
 import { CONFIG } from './config.js';
 import { Importer } from './importer.js';
 import { Logo } from './logo.js';
@@ -235,7 +235,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions, MachineRates, CashForecast, PdfPanel },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions, MachineRates, CashForecast, PdfPanel, MySignature },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null, newVersion: false }),
   watch: {
     // opening a page expands its menu group
@@ -286,7 +286,7 @@ const App = {
       if (a === 'receiveapp' || (a === 'dashboard' && !b && homeDashboard() === 'receiving')) return { comp: 'ReceiveApp', props: {}, title: 'Receive goods' };
       if (a === 'countapp' || (a === 'dashboard' && !b && homeDashboard() === 'counting')) return { comp: 'CountApp', props: { id: a === 'countapp' ? b || null : null }, title: 'Stock count' };
       if (a === 'dashboard') return { comp: 'Dashboard', props: { kind: b || null }, title: 'Dashboard' };
-      const simple = { replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'] };
+      const simple = { replenish: ['Replenishment', 'Replenishment'], buffers: ['BufferReview', 'Buffer review'], consolidate: ['ConsolidatePR', 'Consolidate requisitions'], holds: ['Holds', 'Quarantine & exceptions'], assets: ['Assets', 'Tool crib & assets'], users: ['Users', 'Users & roles'], settings: ['Settings', 'Settings'], signature: ['MySignature', 'My signature'] };
       if (simple[a]) return { comp: simple[a][0], props: {}, title: simple[a][1] };
       return { comp: 'Dashboard', props: {}, title: 'Dashboard' };
     },
@@ -402,7 +402,7 @@ const App = {
             </div>
           </div>
         </div>
-        <div class="who" style="margin-left:0"><span>{{ state.profile.full_name || state.profile.email }} · <b>{{ ROLES[state.profile.role] }}</b></span><button class="btn sm" @click="logout">Sign out</button></div>
+        <div class="who" style="margin-left:0"><span>{{ state.profile.full_name || state.profile.email }} · <b>{{ ROLES[state.profile.role] }}</b></span><button class="btn sm" @click="nav('signature')" title="Store your signature for printed documents">✍<span class="hide-sm"> My signature</span></button><button class="btn sm" @click="logout">Sign out</button></div>
       </div>
       <div class="content"><component :is="view.comp" v-bind="view.props" :key="viewKey" /></div>
     </div>

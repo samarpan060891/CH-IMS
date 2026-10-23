@@ -721,14 +721,16 @@ export const dsp = {
         run: async c => { const v = await ask({ title: 'Delivered at site', fields: [{ k: 'n', label: 'Received by (name / site engineer)', required: true }], okText: 'Confirm' });
           if (v) return rpc('dispatch_delivered', { p_id: c.doc.id, p_received_by: v.n }); } },
       { label: '🖨 Delivery note', cls: 'primary', show: s !== 'CANCELLED', reload: false, run: c => makePdf({
-          title: 'Delivery Note', no: c.doc.dispatch_no, date: c.doc.dispatch_date, subtitle: label(c.doc.status),
-          meta: [['Project / site', refLabel('projects', c.doc.project_id)], ['Delivery address', c.doc.delivery_address || '-'], ['From', refLabel('locations', c.doc.from_location_id)],
-                 ['Vehicle', c.doc.vehicle_no || '-'], ['Driver', [c.doc.driver_name, c.doc.driver_phone].filter(Boolean).join(' · ') || '-'], ['Remarks', c.doc.remarks || '-']],
-          columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Product', k: r => itemCode(r.item_id) }, { h: 'Description', k: r => refRow('items', r.item_id)?.name },
+          title: 'Delivery Note', noLabel: 'DN No.', no: c.doc.dispatch_no, date: c.doc.dispatch_date, subtitle: label(c.doc.status),
+          meta: [['Project / site', refLabel('projects', c.doc.project_id)], ['From', refLabel('locations', c.doc.from_location_id)],
+                 ['Vehicle', c.doc.vehicle_no || ''], ['Driver', [c.doc.driver_name, c.doc.driver_phone].filter(Boolean).join(' · ') || '']],
+          deliveryAddress: c.doc.delivery_address || '', notes: [c.doc.remarks, c.doc.received_by_name ? `Received at site by ${c.doc.received_by_name} on ${dt(c.doc.delivered_at)}` : ''].filter(Boolean).join('\n'),
+          columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Product', k: r => itemCode(r.item_id) }, { h: 'Description', strong: true, k: r => refRow('items', r.item_id)?.name },
                     { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty', k: r => qty(r.qty), align: 'right' }, { h: 'Packages', k: r => r.packages ?? '', align: 'right' },
                     { h: 'Order', k: r => popts.wos.find(w => w.id === r.production_order_id)?.label || '' }, { h: 'Remarks', k: 'remarks' }],
-          rows: c.grids.lines, notes: c.doc.received_by_name ? `Received at site by ${c.doc.received_by_name} on ${dt(c.doc.delivered_at)}` : 'Received the above in good condition.',
-          signatures: [['Dispatched by', 'Stores'], ['Driver', c.doc.driver_name || ''], ['Received by', 'Site']] }) },
+          rows: c.grids.lines,
+          sign: { prepared: c.doc.created_by, checked: c.doc.status !== 'DRAFT' ? c.doc.posted_by : null, labels: ['Prepared By', 'Dispatched By', ''] },
+          acceptance: refRow('projects', c.doc.project_id)?.customer || 'the customer' }) },
     ];
   },
 };
