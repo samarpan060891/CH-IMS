@@ -254,6 +254,7 @@ export const proj = {
     const open = ctx.doc.status === 'OPEN';
     return [
       { label: '🏭 Production orders from BOQ', show: open && planner(), run: c => boqToWos(c) },
+      { label: '➕ One production order', show: open && planner(), reload: false, run: c => go('d/wo/new/proj/' + c.doc.id) },
       { label: '🔧 Installation log', show: open && hasRole('shop_floor', 'production_incharge', 'factory_manager', 'site_supervisor'), reload: false, run: c => go('d/ins/new/proj/' + c.doc.id) },
       { label: '🏠 Unit status / handover', show: open && hasRole('production_incharge', 'factory_manager', 'site_supervisor') && ctx.grids.units.length > 0, run: c => unitStatus(c) },
       { label: '🔒 Lock BOQ baseline', show: open && !ctx.doc.boq_locked && hasRole('factory_manager') && ctx.grids.boq.length > 0,

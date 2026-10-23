@@ -201,6 +201,19 @@ export const bom = {
 // ======================================================================
 // PRODUCTION ORDER (custom project or MTS)
 // ======================================================================
+// the project's made in-house BOQ products with the quantity not yet on production orders (this order excluded)
+const woBoq = reactive({ project: null, lines: [] });
+async function loadWoBoq(projectId, selfId = null) {
+  woBoq.project = projectId; woBoq.lines = [];
+  if (!projectId) return;
+  const [lines, wos] = await Promise.all([
+    sb.from('boq_lines').select('id,boq_ref,line_no,description,item_id,qty,template_id').eq('project_id', projectId).eq('category', 'MANUFACTURED').order('line_no'),
+    sb.from('production_orders').select('id,boq_line_id,qty').eq('project_id', projectId).neq('status', 'CANCELLED').not('boq_line_id', 'is', null)]);
+  const planned = {};
+  for (const w of must(wos)) if (w.id !== selfId) planned[w.boq_line_id] = (planned[w.boq_line_id] || 0) + num(w.qty);
+  woBoq.lines = must(lines).map(b => ({ ...b, left: Math.max(0, num(b.qty) - (planned[b.id] || 0)) }));
+}
+const woBoqLabel = b => `${b.boq_ref || b.line_no} — ${b.description} · ${itemCode(b.item_id) || 'no product set'} · ${qty(b.left)} of ${qty(b.qty)} still to plan`;
 export const wo = {
   key: 'wo', title: 'Production Orders', single: 'Production Order', table: 'production_orders', noField: 'wo_no', dateField: 'wo_date',
   statuses: ['DRAFT', 'RELEASED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'], createRoles: ['production_incharge', 'factory_manager'],
@@ -213,14 +226,28 @@ export const wo = {
   defaults: () => ({ wo_date: today(), priority: 'NORMAL', qty: 1 }),
   async onNew(ctx, parts) {
     await loadRef('bom_templates', true);
+    await loadWoBoq(null);
+    // from a project: d/wo/new/proj/<project id>
+    if (parts[0] === 'proj' && parts[1]) { ctx.doc.project_id = parts[1]; await loadWoBoq(parts[1]); }
     if (parts[0] === 'tpl' && parts[1]) {
       const t = refRow('bom_templates', parts[1]);
       if (t) Object.assign(ctx.doc, { item_id: t.item_id, template_id: t.id });
     }
   },
   header: [
-    { k: 'project_id', label: 'Project / MTS order', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN' },
-    { k: 'item_id', label: 'Product', type: 'ref', ref: 'items', required: true, wide: true, filter: isFG },
+    { k: 'project_id', label: 'Project / MTS order', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN',
+      onChange: (d, v) => { d.boq_line_id = null; return loadWoBoq(v); } },
+    // picking a made in-house BOQ line fills the product, the quantity still to plan, the description and its BOM template
+    { k: 'boq_line_id', label: 'In-house product from the project BOQ', type: 'ref', wide: true,
+      show: d => !!d.project_id && (woBoq.lines.length > 0 || !!d.boq_line_id),
+      refOptions: d => woBoq.lines.filter(b => b.left > 0.0005 || b.id === d.boq_line_id).map(b => ({ id: b.id, label: woBoqLabel(b) })),
+      onChange: (d, v) => {
+        const b = woBoq.lines.find(x => x.id === v); if (!b) return;
+        if (!b.item_id) toast('Set the product (FG item) on this BOQ line in the project first', 'error');
+        const tpl = b.template_id || (state.refs.bom_templates || []).filter(t => t.item_id === b.item_id && t.is_active).sort((x, y) => num(y.version) - num(x.version))[0]?.id || null;
+        Object.assign(d, { item_id: b.item_id, qty: b.left || d.qty, description: `${b.boq_ref ? b.boq_ref + ' — ' : ''}${b.description}`, template_id: tpl });
+      } },
+    { k: 'item_id', label: 'Product', type: 'ref', ref: 'items', required: true, wide: true, filter: isFG, ro: d => !!d.boq_line_id },
     { k: 'description', label: 'Description (unit / type / drawing)', wide: true },
     { k: 'qty', label: 'Quantity', type: 'number', required: true },
     { k: 'wo_date', label: 'Order date', type: 'date', required: true },
@@ -266,6 +293,7 @@ export const wo = {
   async afterLoad(ctx) {
     await loadRef('bom_templates', true);
     const id = ctx.doc.id;
+    await loadWoBoq(ctx.doc.project_id, id);
     ctx.extra.cost = must(await sb.from('v_wo_cost').select('*').eq('wo_id', id).maybeSingle());
     ctx.extra.logs = must(await sb.from('wo_time_logs').select('*, wo_operations(seq, work_centers(name)), profiles:logged_by(full_name), wo_time_log_crew(workers,hours,ot_hours,labour_grades(name))')
       .eq('wo_id', id).order('log_date').order('logged_at'));
