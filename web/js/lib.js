@@ -74,7 +74,7 @@ export async function rpc(name, args) {
 export const REF = {
   items: {
     table: 'items', order: 'code',
-    select: 'id,code,name,class_id,category_id,uom_id,vat_rate,is_active,avg_cost,last_purchase_rate,standard_cost,moq,has_expiry,shelf_life_days,batch_controlled,calibration_interval_days,length_mm,width_mm,thickness_mm,default_location_id,item_classes(code,name,tracking,is_returnable,is_scrap,cost_centre_issue),uoms(code)',
+    select: 'id,code,name,class_id,category_id,uom_id,vat_rate,is_active,avg_cost,last_purchase_rate,standard_cost,moq,has_expiry,shelf_life_days,batch_controlled,calibration_interval_days,length_mm,width_mm,thickness_mm,default_location_id,dim_tracking,item_classes(code,name,tracking,is_returnable,is_scrap,cost_centre_issue),uoms(code)',
     label: r => `${r.code} — ${r.name}`,
   },
   vendors: { table: 'vendors', order: 'name', select: 'id,code,name,currency,payment_term_id,vendor_type,status,trn,vat_registered,address,emirate,country,contact_person', label: r => `${r.name} (${r.code})` },

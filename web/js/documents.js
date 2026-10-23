@@ -501,6 +501,33 @@ async function loadPoIntoGrn(ctx, poId) {
   if (ctx.doc._due) applyDue(ctx, ctx.doc._due);
   ctx.dirty = true;
 }
+// ---- timber received in pieces: section (thickness × width) × length × pieces = CBM ----
+const grnCur = { ctx: null };
+const isDim = r => !!refRow('items', r.item_id)?.dim_tracking;
+const trimNum = v => String(+num(v));
+const isCbm = r => itemUom(r.item_id) === 'CBM';
+const pcCbm = r => num(r.thickness_mm) * num(r.width_mm) * num(r.length_mm) / 1e9;
+// size + pieces entered → received qty in CBM (rounded to 3 decimals); DN qty follows when it was not typed separately
+function dimCalc(r) {
+  if (!isDim(r) || !isCbm(r) || !(pcCbm(r) > 0) || !(num(r.pcs) > 0)) return;
+  const q = +(pcCbm(r) * num(r.pcs)).toFixed(3);
+  if (r.dn_qty == null || num(r.dn_qty) === num(r.received_qty)) r.dn_qty = q;
+  r.received_qty = q;
+}
+const dimF = (k, label) => ({ k, label, type: 'number', width: '90px', ro: r => !isDim(r), onChange: r => dimCalc(r),
+  show: () => (grnCur.ctx?.grids.lines || []).some(isDim) });
+// receive one PO line in several sizes: a second GRN line for the same PO line
+async function grnAnotherSize(ctx) {
+  const rows = ctx.grids.lines.filter(r => r.po_line_id && isDim(r));
+  if (!rows.length) throw new Error('No timber (piece-size) lines on this GRN');
+  const v = await ask({ title: 'Another size for a line', message: 'Adds a second line for the same PO line, to enter a batch of a different section or length.',
+    fields: [{ k: 'r', label: 'Line', type: 'select', required: true, options: rows.map(r => ({ v: ctx.grids.lines.indexOf(r), l: `${ctx.grids.lines.indexOf(r) + 1}. ${itemName(r.item_id)}` })) }], okText: 'Add line' });
+  if (!v) return;
+  const s = ctx.grids.lines[Number(v.r)];
+  ctx.grids.lines.splice(Number(v.r) + 1, 0, { po_line_id: s.po_line_id, item_id: s.item_id, project_id: s.project_id, _bal: s._bal, rate: s.rate, vat_rate: s.vat_rate,
+    location_id: s.location_id, dn_qty: null, received_qty: 0, damaged_qty: 0 });
+  ctx.dirty = true;
+}
 // the item's default store location (zone / rack / bin) as its put-away, when it is a stock location
 const putAwayDefault = itemId => { const loc = refRow('locations', refRow('items', itemId)?.default_location_id); return loc?.is_stock && loc.is_active ? loc.id : null; };
 // ---- PO delivery schedule on the GRN (received fills the earliest deliveries first, so extra counts against the next one) ----
@@ -533,7 +560,10 @@ const isSerial = r => refRow('items', r.item_id)?.item_classes?.tracking === 'SE
 // preview of what posting will do: good = received - damaged; to stock = good up to PO balance; rest = excess
 function grnSplit(r) {
   const good = Math.max(num(r.received_qty) - num(r.damaged_qty), 0);
-  const acc = r.po_line_id && r._bal !== undefined ? Math.min(good, Math.max(num(r._bal), 0)) : good;
+  // several GRN lines on one PO line (sizes): earlier lines use up the PO balance first
+  const before = r.po_line_id ? (grnCur.ctx?.grids.lines || []).slice(0, (grnCur.ctx?.grids.lines || []).indexOf(r)).filter(x => x.po_line_id === r.po_line_id)
+    .reduce((t, x) => t + Math.max(num(x.received_qty) - num(x.damaged_qty), 0), 0) : 0;
+  const acc = r.po_line_id && r._bal !== undefined ? Math.min(good, Math.max(num(r._bal) - before, 0)) : good;
   return { good, acc, exc: good - acc };
 }
 export const grn = {
@@ -544,8 +574,9 @@ export const grn = {
           { k: r => r.vendors?.name, label: 'Vendor' }, { k: 'vendor_dn_no', label: 'DN no.' }, { k: 'vendor_invoice_no', label: 'Invoice no.' }] },
   // the site supervisor receives only direct-to-site deliveries into a site store
   defaults: () => ({ grn_date: today(), receipt_type: 'PO', currency: 'AED', exchange_rate: 1, location_id: siteOnly() ? null : locId('MS') }),
-  async onNew(ctx, parts) { await loadOpenPos(); if (parts[0] === 'po' && parts[1]) { ctx.doc.po_id = parts[1]; await loadPoIntoGrn(ctx, parts[1]); } },
+  async onNew(ctx, parts) { grnCur.ctx = ctx; await loadOpenPos(); if (parts[0] === 'po' && parts[1]) { ctx.doc.po_id = parts[1]; await loadPoIntoGrn(ctx, parts[1]); } },
   async afterLoad(ctx) {
+    grnCur.ctx = ctx;
     await loadOpenPos(ctx.doc.po_id);
     await loadPoSched(ctx.doc.po_id);
     if (ctx.doc.status === 'DRAFT' && ctx.doc.po_id) {
@@ -582,6 +613,7 @@ export const grn = {
   grids: [
     { key: 'lines', title: 'Items received', table: 'grn_lines', fk: 'grn_id', order: 'line_no', saveKeys: ['po_line_id'],
       newRow: () => ({ vat_rate: 5, received_qty: null, damaged_qty: 0 }),
+      importers: [{ label: '⧉ Another size for a line (timber)', show: c => c.grids.lines.some(r => r.po_line_id && isDim(r)), run: c => grnAnotherSize(c) }],
       fields: [
         itemF({ ro: r => !!r.po_line_id, filter: r => r.is_active, onChange: (r, v, ctx) => { const it = refRow('items', r.item_id); if (it) { r.vat_rate = it.vat_rate; if (!r.rate) r.rate = it.last_purchase_rate || it.standard_cost || 0; if (!r.location_id) r.location_id = putAwayDefault(it.id); fillExpiry(r, ctx.doc); } } }), uomF,
         { k: '_bal', label: 'PO balance', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.receipt_type === 'PO' && d.status === 'DRAFT' },
@@ -591,6 +623,10 @@ export const grn = {
         // where this line is stored (zone / rack / bin); blank = the GRN's receiving location. Damaged / excess still go to Quarantine.
         { k: 'location_id', label: 'Put-away location (blank = receiving location)', type: 'ref', ref: 'locations', width: '200px',
           filter: r => r.is_stock && r.is_active && !['QUARANTINE', 'SCRAP_YARD'].includes(r.loc_type) && (!siteOnly() || r.loc_type === 'SITE') },
+        // timber batch size and pieces (items received in pieces only); for CBM items the received qty is worked out from them
+        dimF('thickness_mm', 'Thk mm'), dimF('width_mm', 'Width mm'), dimF('length_mm', 'Length mm'), dimF('pcs', 'Pieces'),
+        { k: '_pc', label: 'CBM / piece', type: 'ro', virtual: true, fmt: (v, r) => isDim(r) && pcCbm(r) > 0 ? pcCbm(r).toFixed(5) : '',
+          show: () => (grnCur.ctx?.grids.lines || []).some(isDim) },
         { k: 'dn_qty', label: 'DN qty', type: 'number', show: d => !['OPENING'].includes(d.receipt_type) },
         { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true },
         { k: 'damaged_qty', label: 'Damaged', type: 'number' },
@@ -627,6 +663,15 @@ export const grn = {
   ],
   validate(ctx) {
     for (const r of ctx.grids.lines) {
+      if (num(r.received_qty) > 0 && isDim(r)) {
+        if (!(num(r.thickness_mm) > 0 && num(r.width_mm) > 0 && num(r.length_mm) > 0 && num(r.pcs) > 0))
+          throw new Error(`${itemName(r.item_id)}: enter thickness, width, length (mm) and the number of pieces for this batch`);
+        if (isCbm(r)) {
+          const q = pcCbm(r) * num(r.pcs);
+          if (Math.abs(q - num(r.received_qty)) > Math.max(0.001, q * 0.001))
+            throw new Error(`${itemName(r.item_id)}: ${qty(r.pcs)} pcs of ${r.thickness_mm}×${r.width_mm}×${r.length_mm} mm = ${q.toFixed(3)} CBM, but received is ${qty(r.received_qty)} — correct the size or pieces`);
+        }
+      }
       if (num(r.received_qty) > 0) {
         fillExpiry(r, ctx.doc);
         if (needsBatch(r) && !String(r.batch_no || '').trim()) throw new Error(`${itemName(r.item_id)}: batch no. is required (batch-controlled item)`);
@@ -662,7 +707,9 @@ export const grn = {
     { label: 'Book vendor invoice', show: statusIs(ctx, 'POSTED') && hasRole('finance') && ctx.doc.receipt_type === 'PO', reload: false, run: c => go(`d/inv/new/grn/${c.doc.id}`) },
     { label: '🖨 GRN PDF', reload: false, run: c => {
         const d = c.doc; const cost = canSeeCost();
-        const cols = [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item', k: r => itemName(r.item_id) }, { h: 'UoM', k: r => itemUom(r.item_id) },
+        const cols = [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 },
+          { h: 'Item', k: r => itemName(r.item_id) + (num(r.pcs) > 0 ? `\n${trimNum(r.thickness_mm)} × ${trimNum(r.width_mm)} × ${trimNum(r.length_mm)} mm · ${qty(r.pcs)} pcs` : '') },
+          { h: 'UoM', k: r => itemUom(r.item_id) },
           { h: 'DN qty', k: r => qty(r.dn_qty), align: 'right' }, { h: 'Received', k: r => qty(r.received_qty), align: 'right' },
           { h: 'Damaged', k: r => num(r.damaged_qty) ? qty(r.damaged_qty) : '', align: 'right' }, { h: 'Accepted', k: r => qty(r.accepted_qty), align: 'right' },
           { h: 'Excess', k: r => num(r.excess_qty) ? qty(r.excess_qty) : '', align: 'right' }, { h: 'Short', k: r => num(r.short_qty) ? qty(r.short_qty) : '', align: 'right' },
