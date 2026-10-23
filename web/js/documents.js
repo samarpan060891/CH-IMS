@@ -27,7 +27,7 @@ async function loadLotOpts(ctx) {
     (opts.lots[l.item_id] ||= []).push({ id: l.id, qty: num(l.qty_on_hand), offcut: l.is_offcut, ppu: num(l.pcs_per_unit) || null,
       label: l.is_offcut
         ? `✂ OFFCUT ${qty(l.length_mm)}${l.width_mm ? ' × ' + qty(l.width_mm) : ''} mm · ${l.lot_no} · ${qty(l.qty_on_hand)}`
-        : l.pcs_per_unit ? `${lotSize(l)} · ${qty(pcsOf(l.qty_on_hand, l.pcs_per_unit))} pcs (${qty(l.qty_on_hand)}) · ${l.lot_no}${l.project_id ? ' (reserved)' : ''}`
+        : l.pcs_per_unit ? `${l.thickness_mm ? lotSize(l) : `${+num(l.pcs_per_unit).toFixed(2)} pcs/${itemUom(l.item_id)}`} · ${qty(pcsOf(l.qty_on_hand, l.pcs_per_unit))} pcs (${qty(l.qty_on_hand)}) · ${l.lot_no}${l.project_id ? ' (reserved)' : ''}`
         : `${l.batch_no || l.lot_no}${l.expiry_date ? ' · exp ' + dt(l.expiry_date) : ''} · rcvd ${dt(l.received_date)} · ${qty(l.qty_on_hand)}${l.project_id ? ' (reserved)' : ''}` });
   });
 }
@@ -630,7 +630,9 @@ export const grn = {
           filter: r => r.is_stock && r.is_active && !['QUARANTINE', 'SCRAP_YARD'].includes(r.loc_type) && (!siteOnly() || r.loc_type === 'SITE') },
         // timber batch size and pieces (items received in pieces only); for CBM items the received qty is worked out from them
         dimF('thickness_mm', 'Thk mm'), dimF('width_mm', 'Width mm'), dimF('length_mm', 'Length mm'), dimF('pcs', 'Pieces'),
-        { k: '_pc', label: 'CBM / piece', type: 'ro', virtual: true, fmt: (v, r) => isDim(r) && pcCbm(r) > 0 ? pcCbm(r).toFixed(5) : '',
+        { k: '_pc', label: 'CBM / piece · pcs / unit', type: 'ro', virtual: true,
+          fmt: (v, r) => !isDim(r) ? '' : isCbm(r) ? (pcCbm(r) > 0 ? pcCbm(r).toFixed(5) + ' CBM/pc' : '')
+            : num(r.pcs) > 0 && num(r.received_qty) > 0 ? `${+(num(r.pcs) / num(r.received_qty)).toFixed(2)} pcs/${itemUom(r.item_id)}` : '',
           show: () => (grnCur.ctx?.grids.lines || []).some(isDim) },
         { k: 'dn_qty', label: 'DN qty', type: 'number', show: d => !['OPENING'].includes(d.receipt_type) },
         { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true },
@@ -669,8 +671,10 @@ export const grn = {
   validate(ctx) {
     for (const r of ctx.grids.lines) {
       if (num(r.received_qty) > 0 && isDim(r)) {
-        if (!(num(r.thickness_mm) > 0 && num(r.width_mm) > 0 && num(r.length_mm) > 0 && num(r.pcs) > 0))
-          throw new Error(`${itemName(r.item_id)}: enter thickness, width, length (mm) and the number of pieces for this batch`);
+        // CBM timber: size + pieces (the CBM comes from them); other units (e.g. bundles): pieces only, size optional
+        if (!(num(r.pcs) > 0)) throw new Error(`${itemName(r.item_id)}: enter the number of pieces in this batch`);
+        if (isCbm(r) && !(num(r.thickness_mm) > 0 && num(r.width_mm) > 0 && num(r.length_mm) > 0))
+          throw new Error(`${itemName(r.item_id)}: enter thickness, width and length (mm) for this batch`);
         if (isCbm(r)) {
           const q = pcCbm(r) * num(r.pcs);
           if (Math.abs(q - num(r.received_qty)) > Math.max(0.001, q * 0.001))
@@ -713,7 +717,7 @@ export const grn = {
     { label: '🖨 GRN PDF', reload: false, run: c => {
         const d = c.doc; const cost = canSeeCost();
         const cols = [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 },
-          { h: 'Item', k: r => itemName(r.item_id) + (num(r.pcs) > 0 ? `\n${trimNum(r.thickness_mm)} × ${trimNum(r.width_mm)} × ${trimNum(r.length_mm)} mm · ${qty(r.pcs)} pcs` : '') },
+          { h: 'Item', k: r => itemName(r.item_id) + (num(r.pcs) > 0 ? `\n${num(r.thickness_mm) > 0 ? `${trimNum(r.thickness_mm)} × ${trimNum(r.width_mm)} × ${trimNum(r.length_mm)} mm · ` : ''}${qty(r.pcs)} pcs` : '') },
           { h: 'UoM', k: r => itemUom(r.item_id) },
           { h: 'DN qty', k: r => qty(r.dn_qty), align: 'right' }, { h: 'Received', k: r => qty(r.received_qty), align: 'right' },
           { h: 'Damaged', k: r => num(r.damaged_qty) ? qty(r.damaged_qty) : '', align: 'right' }, { h: 'Accepted', k: r => qty(r.accepted_qty), align: 'right' },
