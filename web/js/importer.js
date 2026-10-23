@@ -1,6 +1,6 @@
 // Excel import: download template -> fill -> upload -> validate -> import
 // Items and vendors are upserted by code; opening stock becomes a DRAFT opening-stock GRN
-import { sb, state, must, run, hasRole, loadRefs, loadRef, toast, go, today, num, qty } from './lib.js';
+import { sb, state, must, run, rpc, hasRole, loadRefs, loadRef, toast, go, today, num, qty } from './lib.js';
 import { DataTable } from './components.js';
 
 const XLSX_URL = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
@@ -204,6 +204,117 @@ const TEMPLATES = {
     lists: () => ({ Items: (state.refs.items || []).map(r => ({ item_code: r.code, name: r.name, uom: r.uoms?.code, class: r.item_classes?.code })),
                     Locations: (state.refs.locations || []).filter(l => l.is_stock).map(r => ({ location_code: r.code, name: r.name })) }),
   },
+
+  // BOM & man-hours: two sheets; each product in the file becomes a new active BOM version (bom_import)
+  bom: {
+    title: 'BOM & man-hours', roles: ['production_incharge', 'factory_manager'],
+    help: 'Sheet "Materials": one row per material of a product, quantity per piece. Sheet "Stages": one row per production stage — work centre, labour and machine hours per piece. ' +
+      'Each product in the file gets a new BOM version that becomes the active one; the previous version is kept for history. A product listed on only one sheet keeps the other part ' +
+      '(and its cut list) from its current BOM, so hours can be updated on their own. The download contains your current BOMs, ready to edit.',
+    sheets: [
+      { name: 'Materials', cols: ['product_code', 'material_code', 'qty_per_piece', 'notes'], required: ['product_code', 'material_code', 'qty_per_piece'], example: ['FG-0001', 'RM-0003', 0.38, ''] },
+      { name: 'Stages', cols: ['product_code', 'seq', 'work_center_code', 'labour_hours', 'machine_hours', 'instructions'], required: ['product_code', 'work_center_code'],
+        example: ['FG-0001', 10, 'CNC-NCG2812', 1.5, 1.5, 'Cutting / CNC'] },
+    ],
+    refs: ['items', 'work_centers', 'item_classes'],
+    async prefill() {
+      const ts = must(await sb.from('bom_templates').select('id, items(code), bom_template_materials(line_no, qty, notes, items(code)), bom_template_routing(seq, std_labour_hours, std_machine_hours, instructions, work_centers(code))').eq('is_active', true));
+      const byProd = [...ts].sort((a, b) => str(a.items?.code).localeCompare(str(b.items?.code)));
+      return {
+        Materials: byProd.flatMap(t => [...t.bom_template_materials].sort((a, b) => a.line_no - b.line_no).map(m => [t.items?.code, m.items?.code, Number(m.qty), m.notes || ''])),
+        Stages: byProd.flatMap(t => [...t.bom_template_routing].sort((a, b) => a.seq - b.seq).map(r => [t.items?.code, r.seq, r.work_centers?.code, Number(r.std_labour_hours), Number(r.std_machine_hours), r.instructions || ''])),
+      };
+    },
+    async validate(rows) {
+      const items = byCode('items'), wcs = byCode('work_centers');
+      const out = rows.map((r, i) => {
+        const e = [], m = r.__sheet === 'Materials';
+        const p = items[str(r.product_code).toUpperCase()];
+        if (!p) e.push(`product "${r.product_code}" not in the item master`); else if (p.item_classes?.code !== 'FG') e.push(`"${r.product_code}" is not a finished-goods item`);
+        const row = { sheet: m ? 'M' : 'S', product: p?.code || str(r.product_code), ord: i + 1, notes: str(m ? r.notes : r.instructions) };
+        if (m) {
+          const it = items[str(r.material_code).toUpperCase()];
+          if (!it) e.push(`material "${r.material_code}" not in the item master`);
+          else if (['SRV'].includes(it.item_classes?.code) || it.item_classes?.tracking === 'SERIAL') e.push(`"${r.material_code}" is a service or asset, not a material`);
+          const q = numOrNull(r.qty_per_piece); if (!(q > 0)) e.push('qty_per_piece must be more than 0');
+          Object.assign(row, { material: it?.code || str(r.material_code), qty: q });
+        } else {
+          const w = wcs[str(r.work_center_code).toUpperCase()];
+          if (!w) e.push(`work centre "${r.work_center_code}" not found`); else if (w.kind === 'UTILITY') e.push(`"${r.work_center_code}" is a utility, not a production stage`);
+          const s = numOrNull(r.seq), l = numOrNull(r.labour_hours), h = numOrNull(r.machine_hours);
+          if (Number.isNaN(s) || (s !== null && !Number.isInteger(s))) e.push('seq must be a whole number');
+          if (Number.isNaN(l) || l < 0) e.push('labour_hours must be 0 or more');
+          if (Number.isNaN(h) || h < 0) e.push('machine_hours must be 0 or more');
+          if (w && w.kind !== 'MACHINE' && h > 0) e.push('machine hours only on a machine work centre');
+          Object.assign(row, { wc: w?.code || str(r.work_center_code), seq: s, labour: l ?? 0, machine: h ?? 0 });
+        }
+        return { row, _errors: e };
+      });
+      // a product is loaded whole or not at all
+      const bad = new Set(out.filter(o => o._errors.length).map(o => o.row.product));
+      out.forEach(o => { if (!o._errors.length && bad.has(o.row.product)) o._errors.push('another row of this product has a problem — fix it to load this product'); });
+      const ver = {};
+      (await sb.from('bom_templates').select('item_id, version')).data?.forEach(t => { ver[t.item_id] = Math.max(ver[t.item_id] || 0, t.version || 1); });
+      out.forEach(o => { const it = items[o.row.product.toUpperCase()]; o._action = 'NEW VERSION v' + ((ver[it?.id] || 0) + 1); });
+      return out;
+    },
+    preview: [{ k: '_sheet', label: 'Sheet' }, { k: r => r.row.product, label: 'Product' }, { k: r => r.row.sheet === 'M' ? r.row.material : r.row.wc, label: 'Material / work centre' },
+      { k: r => r.row.sheet === 'M' ? qty(r.row.qty) : `${qty(r.row.labour)} h labour · ${qty(r.row.machine)} h machine`, label: 'Qty / hours per piece' }],
+    async save(valid, file) {
+      const res = await rpc('bom_import', { p_rows: valid.map(v => v.row), p_file: file || null });
+      await loadRef('items', true);
+      return `${res.length} BOM${res.length === 1 ? '' : 's'} saved as new versions: ` + res.map(r => `${r.product} v${r.version}`).join(', ');
+    },
+    lists: () => ({ 'Product list': (state.refs.items || []).filter(r => r.item_classes?.code === 'FG' && r.is_active).map(r => ({ product_code: r.code, name: r.name })),
+                    'Material list': (state.refs.items || []).filter(r => r.is_active && !['FG', 'SRV'].includes(r.item_classes?.code) && r.item_classes?.tracking !== 'SERIAL').map(r => ({ material_code: r.code, name: r.name, uom: r.uoms?.code })),
+                    'Work centre list': (state.refs.work_centers || []).filter(w => w.is_active && w.kind !== 'UTILITY').map(w => ({ work_center_code: w.code, name: w.name, kind: w.kind })) }),
+  },
+
+  // machine rates & calculator inputs per work centre (work_center_import → machine_rate_apply for rate changes)
+  machines: {
+    title: 'Machine rates', roles: ['factory_manager', 'finance'],
+    help: 'One row per work centre (existing codes only). Blank cells keep the current value. A machine rate that differs from today\'s is applied and recorded in the machine-rate history ' +
+      'as a manual rate with this file\'s name. Rates apply to machines only; manual stages use the worker grade or the labour-rate override. The download contains every work centre with its current values.',
+    cols: ['work_center_code', 'name', 'kind', 'machine_rate_per_hour', 'hours_per_day', 'power_kw', 'load_factor_pct', 'tooling_cost_per_year', 'working_days_per_year', 'utilisation_pct',
+           'default_grade_code', 'labour_rate_per_hour', 'notes'],
+    required: ['work_center_code'],
+    example: ['CNC-NCG2812', 'NCG2812E CNC router', 'MACHINE', 45, 9, 24, 70, 12000, 312, 85, 'CNC', '', 'Supplier quote Oct-26'],
+    refs: ['work_centers', 'labour_grades'],
+    async prefill() {
+      const ws = must(await sb.from('work_centers').select('code,name,kind,machine_rate_per_hour,hours_per_day,power_kw,load_factor_pct,tooling_cost_per_year,working_days_per_year,utilisation_pct,labour_rate_per_hour,labour_grades(code)').order('sort_order'));
+      return { [this.title.replace(/\s/g, '')]: ws.map(w => [w.code, w.name, w.kind, w.kind === 'MACHINE' ? Number(w.machine_rate_per_hour) : '', Number(w.hours_per_day), Number(w.power_kw), Number(w.load_factor_pct),
+        Number(w.tooling_cost_per_year), w.working_days_per_year, Number(w.utilisation_pct), w.labour_grades?.code || '', w.labour_rate_per_hour ?? '', '']) };
+    },
+    async validate(rows) {
+      const wcs = byCode('work_centers'), grades = byCode('labour_grades');
+      return rows.map(r => {
+        const e = [], w = wcs[str(r.work_center_code).toUpperCase()];
+        if (!w) e.push(`work centre "${r.work_center_code}" not found — add it in Masters → Work centres first`);
+        const row = { code: w?.code || str(r.work_center_code), name: w?.name || str(r.name) };
+        for (const k of ['machine_rate_per_hour', 'hours_per_day', 'power_kw', 'load_factor_pct', 'tooling_cost_per_year', 'working_days_per_year', 'utilisation_pct', 'labour_rate_per_hour']) {
+          const v = numOrNull(r[k]);
+          if (Number.isNaN(v) || v < 0) { e.push(`${k} must be a number, 0 or more`); continue; }
+          if (v !== null) row[k === 'machine_rate_per_hour' ? 'rate' : k] = v;
+        }
+        if (row.hours_per_day > 24 && w?.kind === 'MACHINE') e.push('hours_per_day over 24 for a single machine');
+        for (const k of ['load_factor_pct', 'utilisation_pct']) if (row[k] > 100) e.push(`${k} over 100`);
+        if (row.working_days_per_year > 366) e.push('working_days_per_year over 366');
+        if (row.rate !== undefined && w && w.kind !== 'MACHINE' && row.rate > 0) e.push('a machine rate only applies to a machine work centre');
+        if (row.rate !== undefined && w && w.kind !== 'MACHINE') delete row.rate;
+        const g = str(r.default_grade_code);
+        if (g && !grades[g.toUpperCase()]) e.push(`grade "${g}" not found`); else if (g) row.grade = grades[g.toUpperCase()].code;
+        if (str(r.notes)) row.notes = str(r.notes);
+        const rateChange = row.rate !== undefined && Math.round(row.rate * 100) !== Math.round(num(w?.machine_rate_per_hour) * 100);
+        return { row, _action: rateChange ? 'RATE ' + num(w?.machine_rate_per_hour) + ' → ' + row.rate : 'UPDATE', _errors: e };
+      });
+    },
+    async save(valid, file) {
+      const n = await rpc('work_center_import', { p_rows: valid.map(v => v.row), p_file: file || null });
+      await loadRef('work_centers', true);
+      return `${n} work centres updated; changed machine rates are in the machine-rate history`;
+    },
+    lists: () => ({ 'Grade list': (state.refs.labour_grades || []).map(g => ({ default_grade_code: g.code, name: g.name, rate_per_hour: g.rate_per_hour })) }),
+  },
 };
 
 export const Importer = {
@@ -216,7 +327,11 @@ export const Importer = {
     allowed() { return hasRole(...this.t.roles); },
     valid() { return (this.result || []).filter(r => !r._errors.length); },
     invalid() { return (this.result || []).filter(r => r._errors.length); },
+    // a template is one sheet (cols / required / example) or several named sheets
+    sheetDefs() { return this.t.sheets || [{ name: null, cols: this.t.cols, required: this.t.required, example: this.t.example }]; },
     previewCols() {
+      if (this.t.preview) return [{ k: '_line', label: 'Row', n: true }, ...this.t.preview, { k: '_action', label: 'Action', fmt: 'badge' },
+        { k: r => r._errors.length ? 'ERROR' : 'OK', label: 'Check', fmt: 'badge' }, { k: r => r._errors.join('; '), label: 'Problems' }];
       const base = this.tkey === 'opening'
         ? [{ k: r => r._src.item_code, label: 'Item' }, { k: r => r._src.location_code, label: 'Location' }, { k: r => r.row.received_qty, label: 'Qty', fmt: 'qty' }, { k: r => r.row.rate, label: 'Unit cost', fmt: 'money' }, { k: r => r.row.original_receipt_date, label: 'Receipt date', fmt: 'date' }]
         : [{ k: r => r.row.code, label: 'Code' }, { k: r => r.row.name, label: 'Name' }];
@@ -224,16 +339,25 @@ export const Importer = {
     },
   },
   watch: { tkey() { this.result = null; this.fileName = ''; } },
-  async mounted() { await loadRefs(['item_classes', 'item_categories', 'uoms', 'locations', 'items', 'vendors', 'payment_terms']); },
+  async mounted() { await loadRefs(['item_classes', 'item_categories', 'uoms', 'locations', 'items', 'vendors', 'payment_terms', 'work_centers', 'labour_grades']); },
   methods: {
     async template() {
       await run(async () => {
         const X = await loadXlsx();
+        await loadRefs(this.t.refs || [], true);
         const wb = X.utils.book_new();
-        const ws = X.utils.aoa_to_sheet([this.t.cols, this.t.example]);
-        ws['!cols'] = this.t.cols.map(c => ({ wch: Math.max(12, c.length + 2) }));
-        X.utils.book_append_sheet(wb, ws, this.t.title.replace(/\s/g, ''));
-        const help = [['How to fill'], [this.t.help], [''], ['Required columns: ' + this.t.required.join(', ')], ['Yes/No columns: Y or N'], ['Dates: dd/mm/yyyy'], ['Delete the example row before uploading.']];
+        // templates that edit existing data come pre-filled with it (current BOMs, work centres)
+        const pre = this.t.prefill ? await this.t.prefill() : null;
+        for (const d of this.sheetDefs) {
+          const name = d.name || this.t.title.replace(/\s/g, '');
+          const rows = pre?.[name]?.length ? pre[name] : [d.example];
+          const ws = X.utils.aoa_to_sheet([d.cols, ...rows]);
+          ws['!cols'] = d.cols.map(c => ({ wch: Math.max(12, c.length + 2) }));
+          X.utils.book_append_sheet(wb, ws, name);
+        }
+        const req = this.sheetDefs.map(d => (d.name ? d.name + ': ' : '') + d.required.join(', '));
+        const help = [['How to fill'], [this.t.help], [''], ['Required columns — ' + req.join(' · ')], ['Yes/No columns: Y or N'], ['Dates: dd/mm/yyyy'],
+          [pre ? 'The rows are your current data: change what you need and upload.' : 'Delete the example row before uploading.']];
         X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(help), 'Instructions');
         for (const [name, rows] of Object.entries(this.t.lists())) if (rows.length) X.utils.book_append_sheet(wb, X.utils.json_to_sheet(rows), name);
         X.writeFile(wb, `CitiHomes_${this.tkey}_template.xlsx`);
@@ -247,16 +371,25 @@ export const Importer = {
         await loadRefs(this.t.refs, true);
         const X = await loadXlsx();
         const wb = X.read(await f.arrayBuffer(), { cellDates: true });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const raw = X.utils.sheet_to_json(ws, { defval: '', raw: true });
-        if (!raw.length) throw new Error('The first sheet has no data rows');
-        const norm = raw.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.trim().toLowerCase().replace(/\s+/g, '_').replace(/\*$/, ''), v])));
-        const missing = this.t.required.filter(c => !(c in norm[0]));
-        if (missing.length) throw new Error('Missing columns: ' + missing.join(', ') + '. Download the template to see the expected headings.');
-        const rows = norm.filter(r => Object.values(r).some(v => str(v) !== ''));
-        rows.forEach(r => { for (const c of this.t.required) if (str(r[c]) === '') r.__missing = [...(r.__missing || []), c]; });
+        const rows = [];
+        for (const d of this.sheetDefs) {
+          const sn = d.name ? wb.SheetNames.find(n => n.trim().toLowerCase() === d.name.toLowerCase()) : wb.SheetNames[0];
+          if (!sn) continue;
+          const raw = X.utils.sheet_to_json(wb.Sheets[sn], { defval: '', raw: true, blankrows: true });
+          const norm = raw.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.trim().toLowerCase().replace(/\s+/g, '_').replace(/\*$/, ''), v])));
+          const filled = norm.map((r, i) => ({ r, line: i + 2 })).filter(x => Object.values(x.r).some(v => str(v) !== ''));
+          if (!filled.length) continue;
+          const missing = d.required.filter(c => !(c in filled[0].r));
+          if (missing.length) throw new Error(`${d.name ? 'Sheet "' + d.name + '": m' : 'M'}issing columns: ${missing.join(', ')}. Download the template to see the expected headings.`);
+          filled.forEach(({ r, line }) => {
+            r.__sheet = d.name; r.__line = line;
+            for (const c of d.required) if (str(r[c]) === '') r.__missing = [...(r.__missing || []), c];
+            rows.push(r);
+          });
+        }
+        if (!rows.length) throw new Error(this.t.sheets ? `No rows found on the ${this.t.sheets.map(d => '"' + d.name + '"').join(' / ')} sheet(s)` : 'The first sheet has no data rows');
         const out = await this.t.validate(rows);
-        out.forEach((o, i) => { o._line = i + 2; o._src = rows[i]; if (rows[i].__missing) o._errors.unshift('missing ' + rows[i].__missing.join(', ')); });
+        out.forEach((o, i) => { o._line = rows[i].__line; o._sheet = rows[i].__sheet; o._src = rows[i]; if (rows[i].__missing) o._errors.unshift('missing ' + rows[i].__missing.join(', ')); });
         this.result = out;
       });
       this.busy = false;
@@ -264,7 +397,7 @@ export const Importer = {
     async doImport() {
       if (!this.valid.length) return;
       this.busy = true;
-      const msg = await run(() => this.t.save(this.valid));
+      const msg = await run(() => this.t.save(this.valid, this.fileName));
       this.busy = false;
       if (msg) { toast(msg, 'ok', 8000); this.result = null; this.fileName = ''; }
     },
