@@ -108,7 +108,7 @@ async function reason(title, required = true) {
 // ======================================================================
 const pr = {
   key: 'pr', title: 'Purchase Requisitions', single: 'Requisition', table: 'purchase_requisitions', noField: 'pr_no', dateField: 'pr_date',
-  statuses: ['DRAFT', 'SUBMITTED', 'PARTIAL_PO', 'PO_CREATED', 'CANCELLED'],
+  statuses: ['DRAFT', 'SUBMITTED', 'PARTIAL_PO', 'PO_CREATED', 'CLOSED', 'CANCELLED'],
   createRoles: ['stores', 'purchase', 'production_incharge', 'factory_manager'], editStatuses: ['DRAFT', 'SUBMITTED'],
   refs: ['items', 'projects', 'boq_lines'],
   list: { select: '*, projects(code), material_requests(mr_no)', columns: [{ k: 'source', label: 'Source', fmt: 'label' }, { k: r => r.projects?.code || 'Stock', label: 'For' },
@@ -149,6 +149,9 @@ const pr = {
       run: c => go(`d/po/new/pr/${c.doc.id}`) },
     { label: '📨 RFQ in CitiCore (optional)', show: statusIs(ctx, 'SUBMITTED', 'PARTIAL_PO') && hasRole('purchase'), reload: false,
       run: async c => { const id = await rpc('rfq_from_pr', { p_pr: c.doc.id }); toast('RFQ created with the suppliers known for these items — add or remove suppliers, then send', 'ok', 7000); go('d/rfq/' + id); } },
+    // part ordered and the rest not needed: closing frees the balance, so material planning shows any real need again
+    { label: '✂ Close unordered balance', show: statusIs(ctx, 'PARTIAL_PO') && hasRole('purchase', 'factory_manager'), done: 'Requisition closed',
+      run: async c => { const r = await reason('Close the unordered balance of ' + c.doc.pr_no); if (r) return rpc('pr_close_balance', { p_pr: c.doc.id, p_reason: r }); } },
     { label: 'Open material request', show: !!ctx.doc.mr_id, reload: false, run: c => go(`d/mr/${c.doc.mr_id}`) },
     { label: 'Cancel', show: statusIs(ctx, 'DRAFT', 'SUBMITTED') && ctx.editable, confirm: 'Cancel this requisition?',
       run: c => upd('purchase_requisitions', c.doc.id, { status: 'CANCELLED' }) },
