@@ -512,14 +512,26 @@ const isDim = r => !!refRow('items', r.item_id)?.dim_tracking;
 const trimNum = v => String(+num(v));
 const isCbm = r => itemUom(r.item_id) === 'CBM';
 const pcCbm = r => num(r.thickness_mm) * num(r.width_mm) * num(r.length_mm) / 1e9;
-// size + pieces entered → received qty in CBM (rounded to 3 decimals); DN qty follows when it was not typed separately
-function dimCalc(r) {
-  if (!isDim(r) || !isCbm(r) || !(pcCbm(r) > 0) || !(num(r.pcs) > 0)) return;
+// CBM timber with its size known:
+//  · pieces typed → received CBM = pieces × CBM per piece (DN qty follows when it was not typed separately)
+//  · CBM already there (from the PO / schedule, or typed) and pieces not typed → pieces = CBM ÷ CBM per piece, rounded
+//    to whole pieces, and the received CBM set to exactly those pieces (the supplier's DN qty is left as it is)
+function dimCalc(r, edited) {
+  if (!isDim(r) || !isCbm(r) || !(pcCbm(r) > 0)) return;
+  if (edited === 'pcs') r._pcsAuto = false;
+  else if (edited === 'received_qty' || !(num(r.pcs) > 0)) r._pcsAuto = true;
+  if (r._pcsAuto) {
+    if (!(num(r.received_qty) > 0)) return;
+    r.pcs = Math.max(1, Math.round(num(r.received_qty) / pcCbm(r)));
+    r.received_qty = +(pcCbm(r) * r.pcs).toFixed(3);
+    return;
+  }
+  if (!(num(r.pcs) > 0)) return;
   const q = +(pcCbm(r) * num(r.pcs)).toFixed(3);
   if (r.dn_qty == null || num(r.dn_qty) === num(r.received_qty)) r.dn_qty = q;
   r.received_qty = q;
 }
-const dimF = (k, label) => ({ k, label, type: 'number', width: '90px', ro: r => !isDim(r), onChange: r => dimCalc(r),
+const dimF = (k, label) => ({ k, label, type: 'number', width: '90px', ro: r => !isDim(r), onChange: r => dimCalc(r, k),
   show: () => (grnCur.ctx?.grids.lines || []).some(isDim) });
 // receive one PO line in several sizes: a second GRN line for the same PO line
 async function grnAnotherSize(ctx) {
@@ -635,7 +647,7 @@ export const grn = {
             : num(r.pcs) > 0 && num(r.received_qty) > 0 ? `${+(num(r.pcs) / num(r.received_qty)).toFixed(2)} pcs/${itemUom(r.item_id)}` : '',
           show: () => (grnCur.ctx?.grids.lines || []).some(isDim) },
         { k: 'dn_qty', label: 'DN qty', type: 'number', show: d => !['OPENING'].includes(d.receipt_type) },
-        { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true },
+        { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true, onChange: r => dimCalc(r, 'received_qty') },
         { k: 'damaged_qty', label: 'Damaged', type: 'number' },
         { k: '_acc', label: 'To stock', type: 'ro', virtual: true, show: d => d.status === 'DRAFT', fmt: (v, r) => qty(grnSplit(r).acc) },
         { k: '_exc', label: 'Excess', type: 'ro', virtual: true, show: d => d.status === 'DRAFT', fmt: (v, r) => { const x = grnSplit(r).exc; return x > 0 ? '⚠ ' + qty(x) : ''; } },
