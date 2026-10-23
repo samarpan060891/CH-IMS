@@ -126,17 +126,20 @@ export function amountInWords(v) {
 // a vendor / customer row as the counter-party block (name, address, emirate & country, Attn, TRN)
 export const partyOf = r => r?.name ? { name: r.name, lines: [r.address, [r.emirate, r.country].filter(Boolean).join(', ')].filter(Boolean), attn: r.contact_person, trn: r.trn } : null;
 
-// prepared / checked / authorised signatories with their stored signature images
+// prepared / checked / authorised signatories with their stored signature images.
+// sign.checks [{label, user}] gives several checkers (e.g. Factory Manager then Finance Manager); otherwise sign.checked is the one checker
 async function loadSigners(sign) {
   const c = state.company || {};
-  const ids = [sign.prepared, sign.checked, sign.approved && c.auth_sign_user_id].filter(Boolean);
+  const labels = sign.labels || ['Prepared By', 'Checked By', 'Approved & Authorized Signatory'];
+  const checks = sign.checks || [{ label: labels[1], user: sign.checked }];
+  const ids = [sign.prepared, ...checks.map(k => k.user), sign.approved && c.auth_sign_user_id].filter(Boolean);
   const [{ data: profs }, { data: sigs }] = ids.length
     ? await Promise.all([sb.from('profiles').select('id,full_name,email,role,job_title').in('id', ids), sb.from('user_signatures').select('user_id,image').in('user_id', ids)])
     : [{ data: [] }, { data: [] }];
   const person = id => { const p = (profs || []).find(x => x.id === id); return p ? { name: p.full_name || p.email, title: p.job_title || ROLES[p.role] || '', image: (sigs || []).find(s => s.user_id === id)?.image || null } : null; };
-  const labels = sign.labels || ['Prepared By', 'Checked By', 'Approved & Authorized Signatory'];
   const auth = { name: c.auth_sign_name || '', title: c.auth_sign_title || '', image: sign.approved && c.auth_sign_user_id ? person(c.auth_sign_user_id)?.image : null };
-  return [{ label: labels[0], ...(person(sign.prepared) || {}) }, { label: labels[1], ...(person(sign.checked) || {}) }, { label: labels[2], ...auth }];
+  return [{ label: labels[0], ...(person(sign.prepared) || {}) }, ...checks.map(k => ({ label: k.label, ...(person(k.user) || {}) })),
+          { label: labels[labels.length - 1], ...auth }];
 }
 
 /**
@@ -264,14 +267,16 @@ export async function makePdf({ title, no, date, meta = [], columns, rows, total
   if (sigs.length) {
     const blockH = 42 + (acceptance ? 48 : 0);
     if (y + blockH > H - BOTTOM) { doc.addPage(); y = TOP; } else y += 6;
-    const cw = CW / Math.max(sigs.length, 3);
+    const cw = CW / Math.max(sigs.length, 3), fs = sigs.length > 3 ? 8.5 : 9.5, tw = cw - 5;
     sigs.forEach((s, i) => {
       const x = LM + i * cw;
-      font('bold', 9.5); doc.text(s.label || '', x, y);
-      if (s.image) { try { const p = doc.getImageProperties(s.image), sc = Math.min(39 / p.width, 18 / p.height); doc.addImage(s.image, x, y + 20 - p.height * sc, p.width * sc, p.height * sc); } catch (e) { console.warn('signature', e); } }
-      doc.setDrawColor(60); doc.setLineWidth(0.2); doc.line(x, y + 22, x + cw - 8, y + 22);
-      if (s.name) { font('bold', 9.5); doc.text(s.name, x, y + 27); }
-      if (s.title) { font('italic', 9.5); doc.text(s.title, x, y + 31.5); }
+      font('bold', fs); doc.text(s.label || '', x, y);
+      if (s.image) { try { const p = doc.getImageProperties(s.image), sc = Math.min((tw - 2) / p.width, 18 / p.height); doc.addImage(s.image, x, y + 20 - p.height * sc, p.width * sc, p.height * sc); } catch (e) { console.warn('signature', e); } }
+      doc.setDrawColor(60); doc.setLineWidth(0.2); doc.line(x, y + 22, x + cw - 6, y + 22);
+      // narrow columns (4 signers): long names / titles wrap onto a second line
+      let ty = y + 27;
+      if (s.name) { font('bold', fs); doc.splitTextToSize(s.name, tw).slice(0, 2).forEach(t => { doc.text(t, x, ty); ty += lh(fs); }); }
+      if (s.title) { font('italic', fs); doc.splitTextToSize(s.title, tw).slice(0, 2).forEach(t => { doc.text(t, x, ty); ty += lh(fs); }); }
     });
     y += 42;
   }

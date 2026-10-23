@@ -433,7 +433,9 @@ async function pdfPO(c) {
   const company = co.company_name || 'Citi Homes';
   const fill = t => String(t).replaceAll('{delivery_days}', d.delivery_days ?? '____').replaceAll('{company}', company);
   const extra = d.terms_conditions && d.terms_conditions !== co.po_terms_conditions ? d.terms_conditions.split('\n').map(s => s.trim()).filter(Boolean) : [];
-  const fm = d.id ? must(await sb.from('po_approvals').select('acted_by').eq('po_id', d.id).eq('stage', 'FM').in('action', ['APPROVED', 'APPROVE']).order('acted_at', { ascending: false }).limit(1))[0] : null;
+  // checkers = whoever approved at each stage (latest approval counts, e.g. after a rejection and resubmit)
+  const aps = d.id ? must(await sb.from('po_approvals').select('stage,acted_by,acted_at').eq('po_id', d.id).in('stage', ['FM', 'FINANCE']).in('action', ['APPROVED', 'APPROVE']).order('acted_at')) : [];
+  const approver = stage => aps.filter(a => a.stage === stage).pop()?.acted_by || null;
   const aed = (sub + vat) * num(d.exchange_rate || 1);
   return makePdf({
     title: 'Purchase Order', noLabel: 'PO Number', no: d.po_no, date: d.po_date,
@@ -461,7 +463,9 @@ async function pdfPO(c) {
     terms: [...((works ? co.po_terms_works : co.po_terms_goods) || []).map(fill), ...extra],
     deliveryAddress: d.delivery_address || refLabel('locations', d.delivery_location_id) || '',
     notes: d.remarks || '',
-    sign: { prepared: d.created_by, checked: fm?.acted_by, approved: ['APPROVED', 'RELEASED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CLOSED'].includes(d.status) },
+    // Prepared (Purchase) → Checked (Factory Manager) → Checked (Finance Manager) → Approved & Authorized Signatory (COO, Settings)
+    sign: { prepared: d.created_by, checks: [{ label: 'Checked By', user: approver('FM') }, { label: 'Checked By', user: approver('FINANCE') }],
+            approved: ['APPROVED', 'RELEASED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CLOSED'].includes(d.status) },
     acceptance: v.name,
     filename: `${d.po_no || 'PO'}_${String(v.name || '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40)}.pdf`,
   });
