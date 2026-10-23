@@ -131,6 +131,8 @@ export const FieldInput = {
   emits: ['changed'],
   computed: {
     ro() { return this.disabled || this.f.type === 'ro' || (typeof this.f.ro === 'function' ? this.f.ro(this.doc) : !!this.f.ro); },
+    // f.altText(row): when it returns text, that text is shown read-only in place of the input (e.g. a split over several BOQ lines)
+    altText() { return this.f.altText ? this.f.altText(this.doc) || '' : ''; },
     opts() {
       const o = typeof this.f.options === 'function' ? this.f.options(this.doc) : this.f.options;
       return (o || []).map(x => typeof x === 'string' ? { v: x, l: label(x) } : x);
@@ -175,7 +177,7 @@ export const FieldInput = {
   template: `
   <label v-if="!bare" class="f" :class="{wide: f.wide, full: f.full}">
     <span>{{ f.label }} <span v-if="f.required" class="req">*</span></span>
-    <template v-if="f.type==='ro'"><input :value="roText" readonly></template>
+    <template v-if="f.type==='ro' || altText"><input :value="altText || roText" readonly :title="altText || roText"></template>
     <RefSelect v-else-if="f.type==='ref'" :modelValue="doc[f.k]" :refName="f.ref" :options="refOpts" :filter="refFilter" :disabled="ro" :request="f.request" :context="f.label" @update:modelValue="set" />
     <RefSelect v-else-if="f.type==='lookup'" :modelValue="doc[f.k]" refName="lookups" :options="lookupOpts" :disabled="ro" :request="lookupReq" :context="f.label" placeholder="Select…" @update:modelValue="set" />
     <select v-else-if="f.type==='select'" :value="doc[f.k] ?? ''" @change="set($event.target.value)" :disabled="ro">
@@ -191,7 +193,7 @@ export const FieldInput = {
     <input v-else :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro" :placeholder="f.placeholder || ''">
   </label>
   <template v-else>
-    <input v-if="f.type==='ro'" :value="roText" readonly>
+    <input v-if="f.type==='ro' || altText" :value="altText || roText" readonly :title="altText || roText">
     <RefSelect v-else-if="f.type==='ref'" :modelValue="doc[f.k]" :refName="f.ref" :options="refOpts" :filter="refFilter" :disabled="ro" :request="f.request" :context="f.label" @update:modelValue="set" />
     <RefSelect v-else-if="f.type==='lookup'" :modelValue="doc[f.k]" refName="lookups" :options="lookupOpts" :disabled="ro" :request="lookupReq" :context="f.label" placeholder="Select…" @update:modelValue="set" />
     <select v-else-if="f.type==='select'" :value="doc[f.k] ?? ''" @change="set($event.target.value)" :disabled="ro">

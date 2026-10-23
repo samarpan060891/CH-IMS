@@ -86,7 +86,9 @@ const boqF = (extra = {}) => ({ k: 'boq_line_id', label: 'BOQ line', type: 'ref'
 // the BOQ lines material planning split a requisition line over ("AV-05 1.237 · AV-06 19.941 …")
 const boqSplitText = split => (split || []).slice().sort((a, b) => String(a.boq_lines?.boq_ref).localeCompare(String(b.boq_lines?.boq_ref), undefined, { numeric: true }))
   .map(s => `${s.boq_lines?.boq_ref || '?'} ${qty(s.qty)}`).join(' · ');
-const boqSplitF = (get, label) => ({ k: '_boqs', label, type: 'ro', virtual: true, width: '220px', fmt: (v, r) => boqSplitText(get(r)) });
+// one "BOQ line(s)" column: the split when planning spread the material over several BOQ lines, otherwise the single-line picker
+// (a bought-out item or service belongs to one BOQ line; GRNs against it count as delivered / certified for that line)
+const boqColF = get => boqF({ label: 'BOQ line(s)', width: '240px', altText: r => (get(r) || []).length > 1 ? boqSplitText(get(r)) : '' });
 
 function approvalsInfo(rows) {
   return {
@@ -135,8 +137,8 @@ const pr = {
     newRow: ctx => ({ project_id: ctx.doc.project_id || null }),
     importers: [{ label: '⇩ Traded items from project / order', run: ctx => tradedIntoPr(ctx) }],
     fields: [itemF({ filter: r => r.is_active }), uomF, { k: 'qty', label: 'Qty', type: 'number', required: true },
-             lineProjectF({ filter: r => r.status === 'OPEN' && ['PROJECT', 'SALES'].includes(r.project_type) }), boqF(),
-             boqSplitF(r => r.pr_line_boq, 'For BOQ lines (from planning)'), roQty('ordered_qty', 'Ordered'),
+             lineProjectF({ filter: r => r.status === 'OPEN' && ['PROJECT', 'SALES'].includes(r.project_type) }),
+             boqColF(r => r.pr_line_boq), roQty('ordered_qty', 'Ordered'),
              { k: 'required_date', label: 'Required', type: 'date' }, { k: 'remarks', label: 'Remarks' }],
   }],
   actions: ctx => [
@@ -296,7 +298,7 @@ export const po = {
     fields: [
       itemF({ filter: r => r.is_active, onChange: (r, v, ctx) => poItemDefaults(r, ctx) }), uomF,
       { k: 'description', label: 'Description', width: '180px' },
-      lineProjectF(), boqF(), boqSplitF(r => r.pr_lines?.pr_line_boq || r._split, 'For BOQ lines (requisition)'),
+      lineProjectF(), boqColF(r => r.pr_lines?.pr_line_boq || r._split),
       { k: 'qty', label: 'Qty', type: 'number', required: true },
       { k: 'rate', label: 'Rate', type: 'number', required: true },
       { k: 'discount_pct', label: 'Disc %', type: 'number' },
