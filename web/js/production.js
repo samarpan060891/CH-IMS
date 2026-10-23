@@ -118,10 +118,13 @@ async function importCutList(ctx, gridKey) {
   toast(`${rows.length} parts imported — Save, then Calculate materials`, 'ok', 6000);
 }
 
+// utilities (compressors, dust collector) are maintained like machines but are never a production stage
+const stageWc = w => w.is_active && w.kind !== 'UTILITY';
+
 // add stages to a route grid from the work-centre master
 async function addRoute(ctx, gridKey) {
   await loadRef('work_centers', true);
-  const wcs = (state.refs.work_centers || []).filter(w => w.is_active);
+  const wcs = (state.refs.work_centers || []).filter(stageWc);
   const have = new Set(ctx.grids[gridKey].map(r => r.work_center_id));
   const v = await ask({ title: 'Add production stages', message: 'Tick the stages this product goes through. They are added in the standard route order; adjust Seq to change it.',
     fields: wcs.map(w => ({ k: w.id, label: `${w.name}${w.kind === 'MANUAL' ? ' (manual)' : ''}`, type: 'check', default: false, hint: have.has(w.id) ? 'already in route' : 'Include' })), okText: 'Add' });
@@ -173,7 +176,7 @@ export const bom = {
       newRow: c => ({ seq: Math.max(0, ...c.grids.routing.map(r => num(r.seq))) + 10 }),
       importers: [{ label: '+ Add stages', run: c => addRoute(c, 'routing') }],
       fields: [{ k: 'seq', label: 'Seq', type: 'number', required: true, width: '60px' },
-        { k: 'work_center_id', label: 'Work centre', type: 'ref', ref: 'work_centers', required: true, width: '220px', filter: r => r.is_active },
+        { k: 'work_center_id', label: 'Work centre', type: 'ref', ref: 'work_centers', required: true, width: '220px', filter: stageWc },
         { k: 'std_labour_hours', label: 'Man-hours / unit', type: 'number' }, { k: 'std_machine_hours', label: 'Machine hours / unit', type: 'number' },
         { k: 'instructions', label: 'Instructions', width: '220px' }] },
   ],
@@ -254,7 +257,7 @@ export const wo = {
       newRow: c => ({ seq: Math.max(0, ...c.grids.ops.map(r => num(r.seq))) + 10, planned_labour_hours: 0, planned_machine_hours: 0 }),
       importers: [{ label: '+ Add stages', run: c => addRoute(c, 'ops') }],
       fields: [{ k: 'seq', label: 'Seq', type: 'number', required: true, width: '60px' },
-        { k: 'work_center_id', label: 'Work centre', type: 'ref', ref: 'work_centers', required: true, width: '220px', filter: r => r.is_active },
+        { k: 'work_center_id', label: 'Work centre', type: 'ref', ref: 'work_centers', required: true, width: '220px', filter: stageWc },
         { k: 'planned_labour_hours', label: 'Planned man-hours', type: 'number' }, { k: 'planned_machine_hours', label: 'Planned machine hours', type: 'number' },
         { k: 'instructions', label: 'Instructions', width: '200px' },
         { k: 'status', label: 'Status', type: 'ro', fmt: v => label(v || 'PENDING'), show: d => d.status !== 'DRAFT' },

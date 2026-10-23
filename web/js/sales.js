@@ -31,7 +31,7 @@ function lineFields(priceShown = () => true) {
       onChange: r => { r.item_id = null; r.work_center_id = null; if (r.line_type === 'JOB_WORK') r.uom = 'HR'; } },
     { k: 'item_id', label: 'Product / item / service', type: 'ref', ref: 'items', width: '230px', filter: itemFits, ro: r => r.line_type === 'JOB_WORK',
       onChange: (r, v) => { const it = refRow('items', v); if (!it) return; r.description ||= it.name; r.uom = it.uoms?.code || r.uom; if (!num(r.est_unit_cost)) r.est_unit_cost = num(it.standard_cost) || num(it.avg_cost) || num(it.last_purchase_rate); } },
-    { k: 'work_center_id', label: 'Work centre (job work)', type: 'ref', ref: 'work_centers', width: '170px', filter: r => r.is_active, ro: r => r.line_type !== 'JOB_WORK', show: d => !isProj(d),
+    { k: 'work_center_id', label: 'Work centre (job work)', type: 'ref', ref: 'work_centers', width: '170px', filter: r => r.is_active && r.kind !== 'UTILITY', ro: r => r.line_type !== 'JOB_WORK', show: d => !isProj(d),
       onChange: (r, v) => { const w = refRow('work_centers', v); if (!w) return; r.description ||= 'Job work — ' + w.name; r.uom = 'HR'; if (!num(r.est_unit_cost)) r.est_unit_cost = num(w.machine_rate_per_hour); } },
     { k: 'description', label: 'Description (printed)', required: true, width: '220px' },
     { k: 'qty', label: 'Qty', type: 'number', required: true },
