@@ -108,6 +108,12 @@ const pr = {
   list: { select: '*, projects(code), material_requests(mr_no)', columns: [{ k: 'source', label: 'Source', fmt: 'label' }, { k: r => r.projects?.code || 'Stock', label: 'For' },
           { k: r => r.material_requests?.mr_no, label: 'From request' }, { k: 'required_date', label: 'Required', fmt: 'date' }, { k: 'remarks', label: 'Remarks' }] },
   defaults: () => ({ pr_date: today(), source: 'MANUAL' }),
+  // from a project / sales order: d/pr/new/proj/<project id> opens with its traded items to pick
+  async onNew(ctx, parts) {
+    if (parts[0] !== 'proj' || !parts[1]) return;
+    ctx.doc.project_id = parts[1];
+    setTimeout(() => tradedIntoPr(ctx).catch(e => toast(e.message, 'error')), 0);   // after the screen has rendered
+  },
   async afterLoad(ctx) {
     if (ctx.doc.mr_id) ctx.doc._mr_no = must(await sb.from('material_requests').select('mr_no').eq('id', ctx.doc.mr_id).single()).mr_no;
   },
@@ -122,7 +128,9 @@ const pr = {
   grids: [{
     key: 'lines', title: 'Items required', table: 'pr_lines', fk: 'pr_id', order: 'line_no',
     newRow: ctx => ({ project_id: ctx.doc.project_id || null }),
-    fields: [itemF({ filter: r => r.is_active }), uomF, { k: 'qty', label: 'Qty', type: 'number', required: true }, lineProjectF(), boqF(), roQty('ordered_qty', 'Ordered'),
+    importers: [{ label: '⇩ Traded items from project / order', run: ctx => tradedIntoPr(ctx) }],
+    fields: [itemF({ filter: r => r.is_active }), uomF, { k: 'qty', label: 'Qty', type: 'number', required: true },
+             lineProjectF({ filter: r => r.status === 'OPEN' && ['PROJECT', 'SALES'].includes(r.project_type) }), boqF(), roQty('ordered_qty', 'Ordered'),
              { k: 'required_date', label: 'Required', type: 'date' }, { k: 'remarks', label: 'Remarks' }],
   }],
   actions: ctx => [
@@ -143,6 +151,48 @@ const pr = {
         rows: c.grids.lines, notes: c.doc.remarks || '', signatures: ['Requested by', 'Store In-charge', 'Purchase'] }) },
   ],
 };
+
+// traded (bought-out) items of a customer project's BOQ or a sales order's stock lines, with the quantity not yet requisitioned
+async function tradedIntoPr(ctx) {
+  const jobs = (state.refs.projects || []).filter(p => p.status === 'OPEN' && ['PROJECT', 'SALES'].includes(p.project_type));
+  let pid = ctx.doc.project_id;
+  if (!pid) {
+    const v = await ask({ title: 'Traded items for which project / order?', fields: [{ k: 'p', label: 'Project or sales order', type: 'select', required: true,
+      options: jobs.map(p => ({ v: p.id, l: `${p.code} — ${p.name}` })) }], okText: 'Next' });
+    if (!v) return;
+    pid = v.p;
+  }
+  const job = refRow('projects', pid);
+  if (!job) throw new Error('Choose an open project or sales order');
+  // what the customer bought from us that we buy in: BOQ bought-out lines (project) or stock lines (sales order)
+  let need;
+  if (job.project_type === 'PROJECT') {
+    need = must(await sb.from('boq_lines').select('id,boq_ref,line_no,description,item_id,qty,supply_mode').eq('project_id', pid).eq('category', 'BOUGHT_OUT').order('line_no'))
+      .map(b => ({ key: b.id, boq_line_id: b.id, item_id: b.item_id, qty: num(b.qty), text: `${b.boq_ref || b.line_no} ${b.description}${b.supply_mode === 'DIRECT_TO_SITE' ? ' (direct to site)' : ''}` }));
+  } else {
+    need = must(await sb.from('sales_order_lines').select('id,line_no,description,item_id,qty,sales_orders!inner(project_id)').eq('sales_orders.project_id', pid).eq('line_type', 'STOCK').order('line_no'))
+      .map(l => ({ key: l.id, boq_line_id: null, item_id: l.item_id, qty: num(l.qty), text: l.description || itemName(l.item_id) }));
+  }
+  if (!need.length) throw new Error(`${job.code} has no traded (bought-out) items`);
+  // already requisitioned (other open requisitions, plus lines already on this one)
+  const prior = must(await sb.from('pr_lines').select('item_id,qty,boq_line_id,pr_id,purchase_requisitions!inner(status)').eq('project_id', pid).neq('purchase_requisitions.status', 'CANCELLED'))
+    .filter(l => l.pr_id !== ctx.doc.id);
+  const here = ctx.grids.lines.filter(l => l.project_id === pid);
+  const taken = n => [...prior, ...here].filter(l => n.boq_line_id ? l.boq_line_id === n.boq_line_id : !l.boq_line_id && l.item_id === n.item_id).reduce((s, l) => s + num(l.qty), 0);
+  need.forEach(n => { n.left = Math.max(0, n.qty - taken(n)); });
+  const noItem = need.filter(n => !n.item_id);
+  const rows = need.filter(n => n.item_id && n.left > 0.0005);
+  if (!rows.length) throw new Error(noItem.length ? `Everything is requisitioned, except ${noItem.length} BOQ line(s) without an item — set the item on the project BOQ first` : `All traded items of ${job.code} are already requisitioned`);
+  const v = await ask({ title: `Traded items — ${job.code}`, message: 'Quantity still to requisition for each item (BOQ / order quantity less open requisitions). Set 0 to skip.' +
+      (noItem.length ? ` ${noItem.length} BOQ line(s) have no item set and are not listed.` : ''),
+    fields: rows.map(n => ({ k: n.key, label: `${n.text} — ${itemName(n.item_id)} · ${qty(n.left)} of ${qty(n.qty)} ${itemUom(n.item_id)}`, type: 'number', default: n.left })), okText: 'Add lines' });
+  if (!v) return;
+  if (!ctx.doc.project_id) ctx.doc.project_id = pid;
+  let n = 0;
+  for (const r of rows) if (num(v[r.key]) > 0) { ctx.grids.lines.push({ item_id: r.item_id, qty: num(v[r.key]), project_id: pid, boq_line_id: r.boq_line_id, required_date: ctx.doc.required_date || null }); n++; }
+  ctx.dirty = true;
+  toast(`${n} line(s) added — save the requisition`, 'ok');
+}
 
 // ======================================================================
 // PURCHASE ORDER
