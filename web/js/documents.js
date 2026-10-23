@@ -83,6 +83,10 @@ function fillExpiry(r, doc) {
 // BOQ line of the line's project (links purchases and services to the project scope)
 const boqF = (extra = {}) => ({ k: 'boq_line_id', label: 'BOQ line', type: 'ref', ref: 'boq_lines', width: '180px',
   filter: (r, row) => !!row.project_id && r.project_id === row.project_id, ro: row => !row.project_id, ...extra });
+// the BOQ lines material planning split a requisition line over ("AV-05 1.237 · AV-06 19.941 …")
+const boqSplitText = split => (split || []).slice().sort((a, b) => String(a.boq_lines?.boq_ref).localeCompare(String(b.boq_lines?.boq_ref), undefined, { numeric: true }))
+  .map(s => `${s.boq_lines?.boq_ref || '?'} ${qty(s.qty)}`).join(' · ');
+const boqSplitF = (get, label) => ({ k: '_boqs', label, type: 'ro', virtual: true, width: '220px', fmt: (v, r) => boqSplitText(get(r)) });
 
 function approvalsInfo(rows) {
   return {
@@ -127,10 +131,12 @@ const pr = {
   ],
   grids: [{
     key: 'lines', title: 'Items required', table: 'pr_lines', fk: 'pr_id', order: 'line_no',
+    select: '*, pr_line_boq(qty, boq_lines(boq_ref))',
     newRow: ctx => ({ project_id: ctx.doc.project_id || null }),
     importers: [{ label: '⇩ Traded items from project / order', run: ctx => tradedIntoPr(ctx) }],
     fields: [itemF({ filter: r => r.is_active }), uomF, { k: 'qty', label: 'Qty', type: 'number', required: true },
-             lineProjectF({ filter: r => r.status === 'OPEN' && ['PROJECT', 'SALES'].includes(r.project_type) }), boqF(), roQty('ordered_qty', 'Ordered'),
+             lineProjectF({ filter: r => r.status === 'OPEN' && ['PROJECT', 'SALES'].includes(r.project_type) }), boqF(),
+             boqSplitF(r => r.pr_line_boq, 'For BOQ lines (from planning)'), roQty('ordered_qty', 'Ordered'),
              { k: 'required_date', label: 'Required', type: 'date' }, { k: 'remarks', label: 'Remarks' }],
   }],
   actions: ctx => [
@@ -209,12 +215,12 @@ const schedText = (c, l) => {
 };
 const poLineLabel = (ctx, l) => `${ctx.grids.lines.indexOf(l) + 1}. ${itemName(l.item_id) || 'item?'} — ${qty(l.qty)} ${itemUom(l.item_id)}`;
 async function loadPrLines(ctx, prId) {
-  const lines = must(await sb.from('pr_lines').select('id,item_id,qty,ordered_qty,required_date,pr_id,project_id,boq_line_id').eq('pr_id', prId).order('line_no'));
+  const lines = must(await sb.from('pr_lines').select('id,item_id,qty,ordered_qty,required_date,pr_id,project_id,boq_line_id,pr_line_boq(qty,boq_lines(boq_ref))').eq('pr_id', prId).order('line_no'));
   for (const l of lines) {
     const bal = num(l.qty) - num(l.ordered_qty);
     if (bal <= 0) continue;
     if (ctx.grids.lines.some(x => x.pr_line_id === l.id)) continue;
-    const row = { item_id: l.item_id, qty: bal, pr_line_id: l.id, required_date: l.required_date, discount_pct: 0, project_id: l.project_id, boq_line_id: l.boq_line_id };
+    const row = { item_id: l.item_id, qty: bal, pr_line_id: l.id, required_date: l.required_date, discount_pct: 0, project_id: l.project_id, boq_line_id: l.boq_line_id, _split: l.pr_line_boq };
     await poItemDefaults(row, ctx);
     ctx.grids.lines.push(row);
   }
@@ -279,6 +285,7 @@ export const po = {
   ],
   grids: [{
     key: 'lines', title: 'PO lines', table: 'po_lines', fk: 'po_id', order: 'line_no', saveKeys: ['pr_line_id'],
+    select: '*, pr_lines(pr_line_boq(qty, boq_lines(boq_ref)))',
     newRow: ctx => ({ discount_pct: 0, vat_rate: 5, project_id: ctx.doc.project_id || null }),
     importers: [{ label: '⇩ From requisition', run: async ctx => {
       const prs = must(await sb.from('purchase_requisitions').select('id,pr_no,pr_date').in('status', ['SUBMITTED', 'PARTIAL_PO']).order('pr_date'));
@@ -289,7 +296,7 @@ export const po = {
     fields: [
       itemF({ filter: r => r.is_active, onChange: (r, v, ctx) => poItemDefaults(r, ctx) }), uomF,
       { k: 'description', label: 'Description', width: '180px' },
-      lineProjectF(), boqF(),
+      lineProjectF(), boqF(), boqSplitF(r => r.pr_lines?.pr_line_boq || r._split, 'For BOQ lines (requisition)'),
       { k: 'qty', label: 'Qty', type: 'number', required: true },
       { k: 'rate', label: 'Rate', type: 'number', required: true },
       { k: 'discount_pct', label: 'Disc %', type: 'number' },
