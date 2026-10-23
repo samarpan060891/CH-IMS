@@ -105,7 +105,7 @@ export const FloorApp = {
       await run(async () => {
         const me = state.profile?.id;
         const jobs = [
-          sb.from('material_requests').select('id,mr_no,mr_date,status,priority,required_date,approval_comments,projects(code),cost_centers(code),production_orders!material_requests_production_order_id_fkey(wo_no),mr_lines(id,item_id,requested_qty,approved_qty,issued_qty,lot_id,remarks)')
+          sb.from('material_requests').select('id,mr_no,mr_date,status,priority,required_date,approval_comments,projects(code),cost_centers(code),production_orders!material_requests_production_order_id_fkey(wo_no),mr_lines(id,item_id,requested_qty,approved_qty,issued_qty,lot_id,pcs,remarks)')
             .eq('requested_by', me).order('created_at', { ascending: false }).limit(40),
           sb.from('material_issues').select('id,issue_no,issue_date,ack_status,projects(code),cost_centers(code),material_requests(mr_no),issue_lines(id,item_id,qty)')
             .eq('status', 'POSTED').eq('ack_status', 'PENDING').order('issue_date', { ascending: false }).limit(40)];
@@ -114,7 +114,7 @@ export const FloorApp = {
         jobs.push(sb.from('material_returns').select(ret).eq('requested_by', me).order('created_at', { ascending: false }).limit(30));
         jobs.push(this.isPI ? sb.from('material_returns').select(ret).eq('status', 'PENDING_PI').order('created_at') : Promise.resolve({ data: [] }));
         jobs.push(this.isFM ? sb.from('material_returns').select(ret).eq('status', 'PENDING_FM').order('created_at') : Promise.resolve({ data: [] }));
-        if (this.isPI) jobs.push(sb.from('material_requests').select('id,mr_no,mr_date,status,priority,required_date,profiles:requested_by(full_name),projects(code),cost_centers(code),production_orders!material_requests_production_order_id_fkey(wo_no),mr_lines(id,item_id,requested_qty,approved_qty,lot_id,remarks)')
+        if (this.isPI) jobs.push(sb.from('material_requests').select('id,mr_no,mr_date,status,priority,required_date,profiles:requested_by(full_name),projects(code),cost_centers(code),production_orders!material_requests_production_order_id_fkey(wo_no),mr_lines(id,item_id,requested_qty,approved_qty,lot_id,pcs,remarks)')
           .eq('status', 'PENDING_APPROVAL').order('created_at'));
         const [m, r, mr, pi, fm, p] = await Promise.all(jobs);
         this.mine = must(m); this.receive = must(r); this.myReturns = must(mr); this.pending = p ? must(p) : [];
@@ -129,6 +129,23 @@ export const FloorApp = {
     forText(m) { return m.production_orders?.wo_no || m.projects?.code || m.cost_centers?.code || ''; },
     // ---------- new request ----------
     async addItem(i, lot = null) {
+      // timber received in pieces: choose the size (batch), then request pieces — the CBM follows
+      if (!lot && i.dim_tracking) {
+        const sizes = must(await sb.from('v_lot_values').select('lot_id,lot_no,size_text,qty_on_hand,pcs_on_hand,location_code,project_id,loc_type')
+          .eq('item_id', i.id).eq('lot_status', 'AVAILABLE').not('loc_type', 'in', '(QUARANTINE,SCRAP_YARD)').not('pcs_on_hand', 'is', null).order('received_date'))
+          .filter(l => !l.project_id || l.project_id === this.job?.id);
+        if (sizes.length) {
+          const v = await ask({ title: `${i.code} — which size?`, message: 'Timber is requested in pieces of a size; the CBM is worked out.',
+            fields: [{ k: 'l', label: 'Size (in stock)', type: 'select', required: true, options: sizes.map(l => ({ v: l.lot_id, l: `${l.size_text} · ${qty(l.pcs_on_hand)} pcs · ${l.location_code}` })) }], okText: 'Add' });
+          if (!v) return;
+          const s = sizes.find(l => l.lot_id === v.l), ppu = num(s.pcs_on_hand) / num(s.qty_on_hand);
+          if (this.f.lines.some(l => l.lot_id === s.lot_id)) return toast('That size is already on the request', 'info');
+          this.f.lines.push({ item_id: i.id, lot_id: s.lot_id, lot: `${s.size_text} · ${s.location_code}`, ppu, pcs: 1, qty: +(1 / ppu).toFixed(3) });
+          this.q = '';
+          return this.loadSplit();
+        }
+        toast('No sized timber in stock — requesting in CBM', 'info');
+      }
       if (lot) {
         if (this.f.lines.some(l => l.lot_id === lot.id)) return toast('That piece is already on the request', 'info');
         this.f.lines.push({ item_id: i.id, qty: num(lot.qty_on_hand), lot_id: lot.id, lot: lot.is_offcut ? `✂ ${qty(lot.length_mm)}${lot.width_mm ? ' × ' + qty(lot.width_mm) : ''} mm · ${lot.lot_no}` : `Lot ${lot.lot_no}`, offcut: lot.is_offcut });
@@ -148,7 +165,12 @@ export const FloorApp = {
       this.split = { ...this.split, ...add };
     },
     stockOf(id) { return splitText(this.split[id], this.ownWord); },
-    step(l, d) { if (l.offcut) return; l.qty = Math.max(0, Math.round((num(l.qty) + d) * 1000) / 1000); },
+    step(l, d) {
+      if (l.offcut) return;
+      if (l.ppu) { l.pcs = Math.max(0, num(l.pcs) + d); return this.pcsChanged(l); }
+      l.qty = Math.max(0, Math.round((num(l.qty) + d) * 1000) / 1000);
+    },
+    pcsChanged(l) { l.qty = +(num(l.pcs) / l.ppu).toFixed(3); },
     async onScan(code) {
       this.scanning = false;
       const c = parseCode(code);
@@ -196,7 +218,7 @@ export const FloorApp = {
       const ok = await run(async () => {
         const m = must(await sb.from('material_requests').insert(hdr).select('id,mr_no').single());
         try {
-          must(await sb.from('mr_lines').insert(lines.map((l, i) => ({ mr_id: m.id, line_no: i + 1, item_id: l.item_id, requested_qty: num(l.qty), lot_id: l.lot_id || null, remarks: l.note || null,
+          must(await sb.from('mr_lines').insert(lines.map((l, i) => ({ mr_id: m.id, line_no: i + 1, item_id: l.item_id, requested_qty: num(l.qty), lot_id: l.lot_id || null, pcs: l.ppu ? num(l.pcs) : null, remarks: l.note || null,
             work_center_id: f.target.startsWith('cc:') ? l.machine || null : null }))));
           await rpc('mr_action', { p_mr: m.id, p_action: 'SUBMIT' });
         } catch (e) { await sb.from('material_requests').delete().eq('id', m.id); throw e; }   // don't leave a half-made draft
@@ -386,9 +408,11 @@ export const FloorApp = {
           <button class="btn sm bad" @click="f.lines.splice(i, 1)">✕</button></div>
         <div class="row floor-qty">
           <button class="btn" @click="step(l, -1)" :disabled="l.offcut">−</button>
-          <input type="number" step="any" min="0" v-model.number="l.qty" :readonly="l.offcut">
+          <input v-if="l.ppu" type="number" step="1" min="0" v-model.number="l.pcs" @input="pcsChanged(l)">
+          <input v-else type="number" step="any" min="0" v-model.number="l.qty" :readonly="l.offcut">
           <button class="btn" @click="step(l, 1)" :disabled="l.offcut">+</button>
-          <span class="muted">{{ uom(l.item_id) }}</span>
+          <span class="muted" v-if="l.ppu">pcs = <b>{{ qty(l.qty) }}</b> {{ uom(l.item_id) }}</span>
+          <span class="muted" v-else>{{ uom(l.item_id) }}</span>
           <input v-model="l.note" placeholder="drawing / note" class="floor-note">
           <select v-if="kind==='CC'" v-model="l.machine" class="floor-note" style="padding:8px" title="Spares for a machine count in that machine's rate">
             <option :value="undefined">For machine… (optional)</option>
@@ -425,7 +449,7 @@ export const FloorApp = {
         <template v-if="openId===m.id">
           <div v-for="l in m.mr_lines" :key="l.id" class="row small" style="margin-top:4px">
             <span style="flex:1">{{ itemName(l.item_id) }}{{ l.lot_id ? ' (named piece)' : '' }}</span>
-            <span>{{ qty(l.issued_qty) }} / {{ qty(l.approved_qty ?? l.requested_qty) }} {{ uom(l.item_id) }}</span>
+            <span>{{ qty(l.issued_qty) }} / {{ qty(l.approved_qty ?? l.requested_qty) }} {{ uom(l.item_id) }}<template v-if="l.pcs"> · {{ qty(l.pcs) }} pcs asked</template></span>
           </div>
           <div class="site-actions" style="margin-top:6px" @click.stop>
             <button class="btn sm" @click="go('d/mr/' + m.id)">Open full screen</button>
@@ -465,7 +489,7 @@ export const FloorApp = {
       <div v-for="m in pending" :key="m.id" class="site-card" style="cursor:default">
         <div class="row"><b>{{ m.mr_no }}</b>&nbsp;<span class="muted small">{{ forText(m) }} · {{ m.profiles?.full_name }}</span><span class="spacer"></span><Badge v-if="m.priority==='URGENT'" v="URGENT" /></div>
         <div v-for="l in m.mr_lines" :key="l.id" class="row small" style="margin-top:4px">
-          <span style="flex:1">{{ itemName(l.item_id) }}{{ l.lot_id ? ' (named piece)' : '' }}{{ l.remarks ? ' · ' + l.remarks : '' }}</span><b>{{ qty(l.requested_qty) }} {{ uom(l.item_id) }}</b>
+          <span style="flex:1">{{ itemName(l.item_id) }}{{ l.lot_id ? ' (named piece)' : '' }}{{ l.remarks ? ' · ' + l.remarks : '' }}</span><b>{{ l.pcs ? qty(l.pcs) + ' pcs = ' : '' }}{{ qty(l.requested_qty) }} {{ uom(l.item_id) }}</b>
         </div>
         <div class="site-actions" style="margin-top:8px">
           <button class="btn ok" @click="approve(m)">✔ Approve</button>

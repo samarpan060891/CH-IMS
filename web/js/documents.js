@@ -19,17 +19,22 @@ async function loadLotOpts(ctx) {
   const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
   opts.lots = {};
   if (!ids.length || !ctx.doc.from_location_id) return;
-  const rows = must(await sb.from('stock_lots').select('id,item_id,lot_no,batch_no,expiry_date,received_date,qty_on_hand,project_id,status,is_offcut,length_mm,width_mm')
+  const rows = must(await sb.from('stock_lots').select('id,item_id,lot_no,batch_no,expiry_date,received_date,qty_on_hand,project_id,status,is_offcut,length_mm,width_mm,thickness_mm,pcs_per_unit')
     .in('item_id', ids).eq('location_id', ctx.doc.from_location_id).eq('status', 'AVAILABLE').gt('qty_on_hand', 0)
     .order('expiry_date', { nullsFirst: false }).order('received_date'));
   // offcut pieces are listed first (use them before cutting a new sheet); they are only issued when chosen, and whole
   rows.filter(l => !l.project_id || l.project_id === ctx.doc.project_id).sort((a, b) => (b.is_offcut ? 1 : 0) - (a.is_offcut ? 1 : 0)).forEach(l => {
-    (opts.lots[l.item_id] ||= []).push({ id: l.id, qty: num(l.qty_on_hand), offcut: l.is_offcut,
+    (opts.lots[l.item_id] ||= []).push({ id: l.id, qty: num(l.qty_on_hand), offcut: l.is_offcut, ppu: num(l.pcs_per_unit) || null,
       label: l.is_offcut
         ? `✂ OFFCUT ${qty(l.length_mm)}${l.width_mm ? ' × ' + qty(l.width_mm) : ''} mm · ${l.lot_no} · ${qty(l.qty_on_hand)}`
+        : l.pcs_per_unit ? `${lotSize(l)} · ${qty(pcsOf(l.qty_on_hand, l.pcs_per_unit))} pcs (${qty(l.qty_on_hand)}) · ${l.lot_no}${l.project_id ? ' (reserved)' : ''}`
         : `${l.batch_no || l.lot_no}${l.expiry_date ? ' · exp ' + dt(l.expiry_date) : ''} · rcvd ${dt(l.received_date)} · ${qty(l.qty_on_hand)}${l.project_id ? ' (reserved)' : ''}` });
   });
 }
+// timber batches: size text, pieces ↔ CBM through the batch's pieces per unit (ppu)
+const lotSize = l => `${+num(l.thickness_mm)} × ${+num(l.width_mm)} × ${+num(l.length_mm)} mm`;
+const pcsOf = (q, ppu) => ppu ? Math.round(num(q) * num(ppu) * 10) / 10 : null;
+const cbmOf = (pcs, ppu) => ppu ? +(num(pcs) / num(ppu)).toFixed(3) : null;
 const offcutCount = () => Object.values(opts.lots).flat().filter(l => l.offcut).length;
 
 // ---------- common field builders ----------
@@ -785,16 +790,23 @@ async function loadMrLots(ctx) {
   const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
   opts.mrLots = {};
   if (!ids.length) return;
-  const rows = must(await sb.from('v_lot_values').select('lot_id,item_id,lot_no,batch_no,received_date,qty_on_hand,project_id,location_id,location_code,loc_type,is_offcut,length_mm,width_mm')
+  const rows = must(await sb.from('v_lot_values').select('lot_id,item_id,lot_no,batch_no,received_date,qty_on_hand,project_id,location_id,location_code,loc_type,is_offcut,length_mm,width_mm,thickness_mm,pcs_on_hand,size_text')
     .in('item_id', ids).eq('lot_status', 'AVAILABLE').not('loc_type', 'in', '(QUARANTINE,SCRAP_YARD)').order('received_date'));
   const taken = await requestedOffcuts(ctx.doc.id);
   rows.filter(l => (!l.project_id || l.project_id === ctx.doc.project_id) && !(l.is_offcut && taken[l.lot_id]))
     .sort((a, b) => (b.is_offcut ? 1 : 0) - (a.is_offcut ? 1 : 0)).forEach(l => {
-      (opts.mrLots[l.item_id] ||= []).push({ id: l.lot_id, qty: num(l.qty_on_hand), offcut: l.is_offcut, location_id: l.location_id,
+      const ppu = l.pcs_on_hand != null && num(l.qty_on_hand) > 0 ? num(l.pcs_on_hand) / num(l.qty_on_hand) : null;
+      (opts.mrLots[l.item_id] ||= []).push({ id: l.lot_id, qty: num(l.qty_on_hand), offcut: l.is_offcut, location_id: l.location_id, ppu,
         label: l.is_offcut ? `✂ OFFCUT ${qty(l.length_mm)}${l.width_mm ? ' × ' + qty(l.width_mm) : ''} mm · ${l.lot_no} · ${l.location_code}`
-                           : `Board lot ${l.batch_no || l.lot_no} · ${l.location_code} · ${qty(l.qty_on_hand)} in stock` });
+             : ppu ? `${l.size_text} · ${qty(l.pcs_on_hand)} pcs (${qty(l.qty_on_hand)}) · ${l.location_code}`
+             : `Board lot ${l.batch_no || l.lot_no} · ${l.location_code} · ${qty(l.qty_on_hand)} in stock` });
     });
+  // sizes of batches already on the lines (they may be issued out completely by now)
+  const named = ctx.grids.lines.map(r => r.lot_id).filter(Boolean);
+  opts.lotPpu = named.length ? Object.fromEntries(must(await sb.from('stock_lots').select('id,pcs_per_unit').in('id', named)).map(l => [l.id, num(l.pcs_per_unit) || null])) : {};
 }
+const mrCur = { ctx: null };
+const mrLotPpu = r => r.lot_id ? ((opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.ppu || opts.lotPpu?.[r.lot_id] || null) : null;
 // offcut pieces already on another open request (keyed by lot)
 async function requestedOffcuts(mrId) {
   const rows = must(await sb.from('mr_lines').select('lot_id,mr_id,issued_qty,requested_qty,approved_qty,material_requests!inner(mr_no,status)').not('lot_id', 'is', null)
@@ -840,11 +852,22 @@ export const mr = {
   defaults: () => ({ mr_date: today(), purpose: 'PROJECT', priority: 'NORMAL' }),
   // from a sales / internal order or a project: d/mr/new/so/<job id>
   onNew(ctx, parts) {
+    mrCur.ctx = ctx;
     Object.assign(mrBrowse, { cls: null, cat: null, sub: null, ccOnly: false });
     const p = parts[0] === 'so' && refRow('projects', parts[1]);
     if (p) Object.assign(ctx.doc, { purpose: purposeOf(p), project_id: p.id, cost_center_id: p.project_type === 'INTERNAL' ? p.cost_center_id : null });
   },
+  // timber in pieces needs its size (batch); the pieces and the CBM must agree
+  validate(ctx) {
+    for (const r of ctx.grids.lines) {
+      if (!isDim(r) || !(num(r.pcs) > 0)) continue;
+      const p = mrLotPpu(r);
+      if (!p) throw new Error(`${itemName(r.item_id)}: choose the timber size (batch) for the ${qty(r.pcs)} pieces`);
+      r.requested_qty = cbmOf(r.pcs, p);
+    }
+  },
   async afterLoad(ctx) {
+    mrCur.ctx = ctx;
     Object.assign(mrBrowse, { cls: null, cat: null, sub: null, ccOnly: ctx.doc.purpose === 'COST_CENTER' });
     await fillSplit(ctx);
     await loadMrLots(ctx);
@@ -879,11 +902,18 @@ export const mr = {
     fields: [
       itemF({ filter: r => isLotItem(r) && browseOk(r), lockSaved: false, onChange: async (r, v, ctx) => { r.lot_id = null; await fillSplit(ctx); await loadMrLots(ctx); } }), uomF, splitF,
       machineF,
-      { k: 'lot_id', label: 'Board / offcut (optional)', type: 'ref', width: '270px', refOptions: r => opts.mrLots?.[r.item_id] || [],
-        onChange: (r, v) => { const l = (opts.mrLots?.[r.item_id] || []).find(x => x.id === v); if (l?.offcut) { r.requested_qty = l.qty; if (r.approved_qty != null) r.approved_qty = l.qty; } } },
-      { k: 'requested_qty', label: 'Requested', type: 'number', required: true, ro: r => !!(opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.offcut },
+      { k: 'lot_id', label: 'Board / offcut / timber size (optional; required for timber in pieces)', type: 'ref', width: '300px', refOptions: r => opts.mrLots?.[r.item_id] || [],
+        onChange: (r, v) => { const l = (opts.mrLots?.[r.item_id] || []).find(x => x.id === v); if (l?.offcut) { r.requested_qty = l.qty; if (r.approved_qty != null) r.approved_qty = l.qty; }
+          if (l?.ppu) { if (num(r.pcs) > 0) r.requested_qty = cbmOf(r.pcs, l.ppu); else if (num(r.requested_qty) > 0) r.pcs = pcsOf(r.requested_qty, l.ppu); } } },
+      // timber: request in pieces of the chosen size; the CBM follows (or type the CBM and the pieces follow)
+      { k: 'pcs', label: 'Pieces', type: 'number', width: '90px', ro: r => !isDim(r), show: () => (mrCur.ctx?.grids.lines || []).some(isDim),
+        onChange: r => { const p = mrLotPpu(r); if (p) r.requested_qty = cbmOf(r.pcs, p); } },
+      { k: 'requested_qty', label: 'Requested', type: 'number', required: true, ro: r => !!(opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.offcut,
+        onChange: r => { const p = mrLotPpu(r); if (p) r.pcs = pcsOf(r.requested_qty, p); } },
       { k: 'approved_qty', label: 'Approved qty', type: 'number', show: d => d.status !== 'DRAFT' },
       roQty('issued_qty', 'Issued', { show: d => !['DRAFT', 'PENDING_APPROVAL'].includes(d.status) }),
+      { k: '_pcsAI', label: 'Pieces approved / issued', type: 'ro', virtual: true, show: d => d.status !== 'DRAFT' && (mrCur.ctx?.grids.lines || []).some(isDim),
+        fmt: (v, r) => { const p = mrLotPpu(r); return p ? `${qty(pcsOf(r.approved_qty ?? r.requested_qty, p))} / ${qty(pcsOf(r.issued_qty, p))} pcs` : ''; } },
       { k: '_onord', label: 'On order / requisitioned', type: 'ro', virtual: true, fmt: v => v ? qty(v) : '', show: d => ['APPROVED', 'PARTIALLY_ISSUED'].includes(d.status) },
       { k: '_short', label: 'Shortage', type: 'ro', virtual: true, fmt: v => v ? '⚠ ' + qty(v) : '—', show: d => ['APPROVED', 'PARTIALLY_ISSUED'].includes(d.status) },
       { k: 'remarks', label: 'Remarks / drawing ref', width: '180px' },
@@ -913,7 +943,9 @@ export const mr = {
           sign: { prepared: c.doc.requested_by, checked: c.doc.approved_by, labels: ['Requested By', 'Approved By', ''] },
           columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 },
                     { h: 'Item', k: r => itemName(r.item_id) + (r.lot_id ? '\n' + ((opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.label || 'specific board') : '') }, { h: 'UoM', k: r => itemUom(r.item_id) },
-                    { h: 'Requested', k: r => qty(r.requested_qty), align: 'right' }, { h: 'Approved', k: r => qty(r.approved_qty), align: 'right' }, { h: 'Issued', k: r => qty(r.issued_qty), align: 'right' }, { h: 'Remarks', k: 'remarks' }],
+                    { h: 'Requested', k: r => qty(r.requested_qty) + (num(r.pcs) > 0 ? `\n${qty(r.pcs)} pcs` : ''), align: 'right' },
+                    { h: 'Approved', k: r => qty(r.approved_qty) + (mrLotPpu(r) && r.approved_qty != null ? `\n${qty(pcsOf(r.approved_qty, mrLotPpu(r)))} pcs` : ''), align: 'right' },
+                    { h: 'Issued', k: r => qty(r.issued_qty) + (mrLotPpu(r) && num(r.issued_qty) ? `\n${qty(pcsOf(r.issued_qty, mrLotPpu(r)))} pcs` : ''), align: 'right' }, { h: 'Remarks', k: 'remarks' }],
           rows: c.grids.lines, notes: c.doc.remarks || '' }) },
     ];
   },
@@ -944,8 +976,11 @@ async function loadMrIntoIssue(ctx, mrId) {
   }
   await fillAvail(ctx, 'lines', ctx.doc.from_location_id);
   await loadLotOpts(ctx);
+  ctx.grids.lines.forEach(r => { const p = issueLotPpu(r); if (p) r.pcs = pcsOf(r.qty, p); });
   ctx.dirty = true;
 }
+const issueCur = { ctx: null };
+const issueLotPpu = r => r.lot_id ? (opts.lots[r.item_id] || []).find(l => l.id === r.lot_id)?.ppu || null : null;
 export const issue = {
   key: 'issue', title: 'Material Issues', single: 'Issue Slip', table: 'material_issues', noField: 'issue_no', dateField: 'issue_date',
   statuses: ['DRAFT', 'POSTED'], createRoles: ['stores'], saveKeys: ['received_by_name'],
@@ -955,8 +990,9 @@ export const issue = {
     { k: r => r.material_requests?.mr_no, label: 'Request' }, { k: 'received_by_name', label: 'Received by' }, { k: 'total_value', label: 'Value', fmt: 'money', cost: true, sum: true },
     { k: 'ack_status', label: 'Receipt', fmt: 'badge' }] },
   defaults: () => ({ issue_date: today(), purpose: 'PROJECT', from_location_id: locId('MS') }),
-  async onNew(ctx, parts) { await loadApprovedMrs(); await loadOpenSnags(); if (parts[0] === 'mr' && parts[1]) await loadMrIntoIssue(ctx, parts[1]); },
+  async onNew(ctx, parts) { issueCur.ctx = ctx; await loadApprovedMrs(); await loadOpenSnags(); if (parts[0] === 'mr' && parts[1]) await loadMrIntoIssue(ctx, parts[1]); },
   async afterLoad(ctx) {
+    issueCur.ctx = ctx;
     await loadApprovedMrs(ctx.doc.mr_id);
     await loadOpenSnags(ctx.doc.snag_id);
     if (ctx.doc.status === 'DRAFT') { await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); }
@@ -1002,9 +1038,13 @@ export const issue = {
       itemF({ filter: isLotItem, ro: r => !!r.mr_line_id, onChange: async (r, v, ctx) => { r.lot_id = null; await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); } }), uomF,
       machineF,
       { ...availF, show: d => d.status === 'DRAFT' },
-      { k: 'lot_id', label: 'Batch / offcut (blank = oldest / earliest expiry first)', type: 'ref', width: '280px', refOptions: r => opts.lots[r.item_id] || [],
-        show: d => d.status === 'DRAFT', ro: r => !!r._mrLot, onChange: (r, v) => { const l = (opts.lots[r.item_id] || []).find(x => x.id === v); if (l?.offcut) r.qty = l.qty; } },
-      { k: 'qty', label: 'Issue qty', type: 'number', required: true },
+      { k: 'lot_id', label: 'Batch / offcut / timber size (blank = oldest / earliest expiry first)', type: 'ref', width: '300px', refOptions: r => opts.lots[r.item_id] || [],
+        show: d => d.status === 'DRAFT', ro: r => !!r._mrLot,
+        onChange: (r, v) => { const l = (opts.lots[r.item_id] || []).find(x => x.id === v); if (l?.offcut) r.qty = l.qty; if (l?.ppu && num(r.pcs) > 0) r.qty = cbmOf(r.pcs, l.ppu); else if (l?.ppu) r.pcs = pcsOf(r.qty, l.ppu); } },
+      // timber: pieces of the chosen size; the issue qty (CBM) follows, and vice versa
+      { k: 'pcs', label: 'Pieces', type: 'number', width: '90px', ro: r => !issueLotPpu(r),
+        show: () => (issueCur.ctx?.grids.lines || []).some(isDim), onChange: r => { const p = issueLotPpu(r); if (p) r.qty = cbmOf(r.pcs, p); } },
+      { k: 'qty', label: 'Issue qty', type: 'number', required: true, onChange: r => { const p = issueLotPpu(r); if (p) r.pcs = pcsOf(r.qty, p); } },
       roMoney('value', 'Value', { show: d => d.status === 'POSTED' }),
       { k: 'received_qty', label: 'Received good', type: 'ro', fmt: (v, r) => v == null ? '' : (num(v) + num(r.damaged_qty) === num(r.qty) ? qty(v) : '⚠ ' + qty(v)), show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
       { k: 'damaged_qty', label: 'Damaged', type: 'ro', fmt: v => num(v) ? '⚠ ' + qty(v) : '', show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
@@ -1018,6 +1058,8 @@ export const issue = {
       const lot = r.lot_id && (opts.lots[r.item_id] || []).find(l => l.id === r.lot_id);
       if (lot?.offcut && Math.abs(num(r.qty) - lot.qty) > 0.0005) throw new Error(`${itemName(r.item_id)}: an offcut is issued as a whole piece — qty ${qty(lot.qty)}; add another line for full sheets`);
       if (lot && num(r.qty) > lot.qty) throw new Error(`${itemName(r.item_id)}: the chosen batch has only ${qty(lot.qty)} — split the line or leave the batch blank`);
+      // timber is issued from a named size so the pieces are known
+      if (num(r.qty) > 0 && isDim(r) && ctx.doc.status === 'DRAFT' && !lot?.ppu) throw new Error(`${itemName(r.item_id)}: choose the timber size (batch) to issue from`);
     }
   },
   async loadInfo(ctx) {
@@ -1076,7 +1118,7 @@ function pdfIssue(c) {
   const lots = c.extra.lots || [];
   const lotText = l => lots.filter(x => x.issue_lines.item_id === l.item_id).map(x => `${x.stock_lots?.lot_no} (${qty(x.qty)})`).join(', ');
   const cols = [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item code', k: r => refRow('items', r.item_id)?.code }, { h: 'Description', k: r => refRow('items', r.item_id)?.name },
-    { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty issued', k: r => qty(r.qty), align: 'right' }, { h: 'Lots (FIFO)', k: lotText }];
+    { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty issued', k: r => qty(r.qty) + (num(r.pcs) > 0 ? `\n${qty(r.pcs)} pcs` : ''), align: 'right' }, { h: 'Lots (FIFO)', k: lotText }];
   if (cost) cols.push({ h: 'Value AED', k: r => money(r.value), align: 'right' });
   return makePdf({
     title: 'Material Issue Slip', no: d.issue_no, date: d.issue_date,
