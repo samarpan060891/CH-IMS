@@ -57,12 +57,19 @@ async function importBoq(ctx) {
                 price: col(k, 'unitprice', 'price', 'salevalue', 'value'), desc: col(k, 'description', 'remarks') };
     if (ur.length && !c.code) errs.push('Units sheet: column "Unit code" not found');
     const have = new Set(ctx.grids.units.map(u => str(u.unit_code).toUpperCase()));
+    // unit type matched to the Unit type list ignoring spaces and case ("1BR" → "1 BR"); unknown types are refused
+    const squash = s => str(s).replace(/\s+/g, '').toUpperCase();
+    const types = Object.fromEntries((state.refs.lookups || []).filter(l => l.list_key === 'UNIT_TYPE' && l.is_active).map(l => [squash(l.value), l.value]));
+    const badTypes = new Set(), adds = [];
     ur.forEach(r => {
       const code = str(r[c.code]); if (!code || have.has(code.toUpperCase())) return;
-      have.add(code.toUpperCase()); newUnits++;
-      ctx.grids.units.push({ unit_code: code, unit_type: str(r[c.type]) || null, building: str(r[c.bld]) || null, floor: str(r[c.fl]) || null,
+      const t = str(r[c.type]); if (t && !types[squash(t)]) { badTypes.add(t); return; }
+      have.add(code.toUpperCase());
+      adds.push({ unit_code: code, unit_type: t ? types[squash(t)] : null, building: str(r[c.bld]) || null, floor: str(r[c.fl]) || null,
         sale_value: str(r[c.price]) === '' ? null : Number(r[c.price]), description: str(r[c.desc]) || null, status: 'NOT_STARTED' });
     });
+    if (badTypes.size) errs.push(`Unit type(s) not in the Unit type list: ${[...badTypes].join(', ')} — add them in Masters → Lists or correct the file`);
+    else { ctx.grids.units.push(...adds); newUnits = adds.length; }
   }
   if (errs.length) throw new Error(errs.join(' · '));
   if (!rows.length && newUnits) { ctx.dirty = true; toast(`${newUnits} units imported — Save to keep them`, 'ok', 6000); return; }
@@ -162,6 +169,13 @@ export const proj = {
     '<b>Qty per unit</b> — the total qty is calculated on Save. Lines without units are billed as flat BOQ items.',
   grids: [
     { key: 'units', title: 'Units (apartments / villas)', table: 'project_units', fk: 'project_id', order: 'unit_code', lineNo: false,
+      // grouped by building / batch: click a group to open its units
+      groupBy: r => r.building, groupNoun: 'units',
+      groupSummary: rows => {
+        const c = {}; rows.forEach(r => { const t = r.unit_type || 'no type'; c[t] = (c[t] || 0) + 1; });
+        const done = rows.filter(r => r.status === 'HANDED_OVER').length;
+        return Object.entries(c).map(([t, n]) => `${n} ${t}`).join(', ') + (done ? ` · ${done} handed over` : '');
+      },
       newRow: () => ({ status: 'NOT_STARTED' }),
       fields: [{ k: 'unit_code', label: 'Unit code', required: true, width: '100px' }, { k: 'unit_type', label: 'Unit type', type: 'lookup', list: 'UNIT_TYPE', width: '110px' },
         { k: 'building', label: 'Building', width: '100px' }, { k: 'floor', label: 'Floor', width: '60px' },

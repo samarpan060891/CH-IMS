@@ -89,7 +89,7 @@ DocList.methods.create = function () { go(`d/${this.cfg.key}/new`); };
 export const DocEditor = {
   components: { FieldInput, DataTable, Badge },
   props: { cfg: Object, id: String },
-  data: () => ({ doc: null, grids: {}, removed: {}, extra: {}, info: [], busy: false, dirty: false }),
+  data: () => ({ doc: null, grids: {}, removed: {}, extra: {}, info: [], busy: false, dirty: false, grpOpen: {} }),
   computed: {
     isNew() { return this.id === 'new'; },
     headerEditable() { return this.editable && (!this.cfg.headerEditable || this.cfg.headerEditable(this)); },
@@ -147,7 +147,26 @@ export const DocEditor = {
     impShow(imp) { return !imp.show || imp.show(this); },
     runImp(imp) { return this.act({ ...imp, saveFirst: false, reload: false }); },
     headerNote() { return this.cfg.headerNote(this); },
-    addRow(g) { this.grids[g.key].push({ ...(g.newRow ? g.newRow(this) : {}) }); this.dirty = true; },
+    addRow(g) {
+      const row = { ...(g.newRow ? g.newRow(this) : {}) };
+      this.grids[g.key].push(row); this.dirty = true;
+      if (g.groupBy) this.grpOpen[g.key + ':' + this.grpName(g, row)] = true;   // keep the new line visible
+    },
+    // grouped grids (groupBy): collapsible group rows, each opened / closed on its own or all at once
+    grpName(g, r) { return String(g.groupBy(r) ?? '').trim() || '(none)'; },
+    gridView(g) {
+      const rows = this.grids[g.key] || [];
+      if (!g.groupBy) return rows.map((r, i) => ({ r, i }));
+      const groups = new Map();
+      rows.forEach((r, i) => { const n = this.grpName(g, r); if (!groups.has(n)) groups.set(n, []); groups.get(n).push({ r, i }); });
+      const names = [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      return names.flatMap(n => {
+        const items = groups.get(n), open = !!this.grpOpen[g.key + ':' + n];
+        return [{ grp: n, n: items.length, open, sum: g.groupSummary ? g.groupSummary(items.map(x => x.r)) : '' }, ...(open ? items : [])];
+      });
+    },
+    toggleGrp(g, n) { const k = g.key + ':' + n; this.grpOpen[k] = !this.grpOpen[k]; },
+    setAllGrps(g, open) { for (const r of this.grids[g.key] || []) this.grpOpen[g.key + ':' + this.grpName(g, r)] = open; },
     removeRow(g, i) {
       const r = this.grids[g.key][i];
       if (r.id) (this.removed[g.key] ||= []).push(r.id);
@@ -245,6 +264,10 @@ export const DocEditor = {
       <div class="hd">
         <h3>{{ g.title }}</h3>
         <span class="spacer"></span>
+        <template v-if="g.groupBy && (grids[g.key] || []).length">
+          <button class="btn sm" @click="setAllGrps(g, true)">⊞ Expand all</button>
+          <button class="btn sm" @click="setAllGrps(g, false)">⊟ Collapse all</button>
+        </template>
         <template v-if="gridEditable(g)">
           <button v-for="imp in (g.importers || [])" class="btn sm" @click="runImp(imp)" v-show="impShow(imp)">{{ imp.label }}</button>
           <button v-if="g.addable !== false" class="btn sm" @click="addRow(g)">+ Add line</button>
@@ -255,11 +278,19 @@ export const DocEditor = {
           <thead><tr><th style="width:64px">Sr. No.</th><th v-for="f in gridFields(g)" :style="f.width ? 'min-width:'+f.width : ''">{{ f.label }}</th><th v-if="gridEditable(g)"></th></tr></thead>
           <tbody>
             <tr v-if="!(grids[g.key] || []).length"><td :colspan="gridFields(g).length + 2" class="empty">No lines</td></tr>
-            <tr v-for="(r, i) in (grids[g.key] || [])" :key="r.id || i">
-              <td class="muted">{{ i + 1 }}</td>
-              <td v-for="f in gridFields(g)"><FieldInput bare :f="f" :doc="r" :disabled="!gridEditable(g) || (f.lockSaved && !!r.id)" @changed="lineChanged(g, f, r)" /></td>
-              <td v-if="gridEditable(g)"><button class="btn sm bad" @click="removeRow(g, i)">✕</button></td>
-            </tr>
+            <template v-for="v in gridView(g)" :key="v.grp !== undefined ? 'g:' + v.grp : (v.r.id || 'n' + v.i)">
+              <tr v-if="v.grp !== undefined" class="grp-row" @click="toggleGrp(g, v.grp)" :aria-expanded="v.open">
+                <td :colspan="gridFields(g).length + (gridEditable(g) ? 2 : 1)">
+                  <span class="grp-chev">{{ v.open ? '▾' : '▸' }}</span> <b>{{ v.grp }}</b>
+                  <span class="muted small"> · {{ v.n }} {{ g.groupNoun || 'lines' }}<template v-if="v.sum"> · {{ v.sum }}</template></span>
+                </td>
+              </tr>
+              <tr v-else>
+                <td class="muted">{{ v.i + 1 }}</td>
+                <td v-for="f in gridFields(g)"><FieldInput bare :f="f" :doc="v.r" :disabled="!gridEditable(g) || (f.lockSaved && !!v.r.id)" @changed="lineChanged(g, f, v.r)" /></td>
+                <td v-if="gridEditable(g)"><button class="btn sm bad" @click="removeRow(g, v.i)">✕</button></td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>

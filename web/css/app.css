@@ -133,6 +133,10 @@ table.t.fin tr.g td { font-weight: 700; background: var(--brand-soft); font-size
 table.t.fin td:first-child { padding-left: 18px; }
 table.t.fin tr.h td:first-child, table.t.fin tr.g td:first-child { padding-left: 10px; }
 table.lines td { padding: 4px 6px; }
+/* collapsible group rows in grouped grids (e.g. units by batch) */
+table.lines tr.grp-row td { background: var(--soft, #f1f4f9); cursor: pointer; padding: 8px 10px; user-select: none; }
+table.lines tr.grp-row:hover td { filter: brightness(0.97); }
+.grp-chev { display: inline-block; width: 14px; color: var(--muted, #667); }
 table.lines input, table.lines select { padding: 5px 6px; min-width: 70px; }
 .empty { text-align: center; color: var(--muted); padding: 24px; }
 
