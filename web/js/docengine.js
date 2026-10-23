@@ -1,5 +1,5 @@
 // Generic document list + editor driven by per-document configuration (see documents.js)
-import { sb, state, must, run, hasRole, canSeeCost, go, route, loadRefs, label, money, toast, refreshPending } from './lib.js';
+import { sb, state, must, run, hasRole, canSeeCost, go, route, loadRefs, label, money, toast, refreshPending, refRow } from './lib.js';
 import { FieldInput, DataTable, Badge, confirmBox } from './components.js';
 import { pdfView } from './pdf.js';
 
@@ -184,6 +184,11 @@ export const DocEditor = {
           for (const f of g.fields) {
             if (f.required && (r[f.k] === null || r[f.k] === undefined || r[f.k] === '')) {
               throw new Error(`${g.title} line ${i + 1}: ${f.label} is required`);
+            }
+            // quantity fields marked whole: no fractions for items counted in whole units (unit with 0 decimals), e.g. PCS, SHT, BDL
+            if (f.whole && r.item_id && r[f.k] !== null && r[f.k] !== undefined && r[f.k] !== '' && !Number.isInteger(Number(r[f.k])) && !(g.wholeSkip && g.wholeSkip(r))) {
+              const it = refRow('items', r.item_id), u = it && refRow('uoms', it.uom_id);
+              if (u && Number(u.decimals) === 0 && !it.dim_tracking) throw new Error(`${g.title} line ${i + 1}: ${it.code} is counted in whole ${u.code} — ${f.label} cannot be ${r[f.k]}`);
             }
           }
         }

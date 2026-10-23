@@ -384,8 +384,11 @@ export const Mrp = {
         const ids = [...new Set(rows.map(r => r.item_id))];
         const its = ids.length ? must(await sb.from('items').select('id, item_categories(name, parent:parent_id(name))').in('id', ids)) : [];
         const catOf = Object.fromEntries(its.map(i => { const c = i.item_categories; return [i.id, c ? (c.parent ? `${c.parent.name} › ${c.name}` : c.name) : '']; }));
+        // units counted whole (PCS, SHT, BDL…) are proposed rounded up
+        const wholeUom = Object.fromEntries((state.refs.uoms || []).map(u => [u.code, Number(u.decimals) === 0]));
         rows.forEach(r => {
           const s = Number(r.suggested_qty); const moq = Number(r.moq) || 0; r._qty = s > 0 ? Math.max(s, moq) : 0; r._pick = s > 0;
+          if (wholeUom[r.uom] && r._qty > 0) r._qty = Math.ceil(r._qty - 1e-9);
           r._cat = catOf[r.item_id] || '';
           // "BOQ AV-01 (to produce), BOQ AV-02 (to produce) …" → "14 BOQ lines (to produce)"; full list on hover
           const src = String(r.sources || '').split(', ').filter(Boolean), prod = src.filter(s => s.endsWith('(to produce)'));

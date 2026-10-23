@@ -141,7 +141,7 @@ const pr = {
     select: '*, pr_line_boq(qty, boq_lines(boq_ref))',
     newRow: ctx => ({ project_id: ctx.doc.project_id || null }),
     importers: [{ label: '⇩ Traded items from project / order', run: ctx => tradedIntoPr(ctx) }],
-    fields: [itemF({ filter: r => r.is_active }), uomF, { k: 'qty', label: 'Qty', type: 'number', required: true },
+    fields: [itemF({ filter: r => r.is_active }), uomF, { k: 'qty', label: 'Qty', type: 'number', required: true, whole: true },
              lineProjectF({ filter: r => r.status === 'OPEN' && ['PROJECT', 'SALES'].includes(r.project_type) }),
              boqColF(r => r.pr_line_boq), roQty('ordered_qty', 'Ordered'),
              { k: 'required_date', label: 'Required', type: 'date' }, { k: 'remarks', label: 'Remarks' }],
@@ -309,7 +309,7 @@ export const po = {
       itemF({ filter: r => r.is_active, onChange: (r, v, ctx) => poItemDefaults(r, ctx) }), uomF,
       { k: 'description', label: 'Description', width: '180px' },
       lineProjectF(), boqColF(r => r.pr_lines?.pr_line_boq || r._split),
-      { k: 'qty', label: 'Qty', type: 'number', required: true },
+      { k: 'qty', label: 'Qty', type: 'number', required: true, whole: true },
       { k: 'rate', label: 'Rate', type: 'number', required: true },
       { k: 'discount_pct', label: 'Disc %', type: 'number' },
       { k: 'vat_rate', label: 'VAT %', type: 'number' },
@@ -646,9 +646,9 @@ export const grn = {
           fmt: (v, r) => !isDim(r) ? '' : isCbm(r) ? (pcCbm(r) > 0 ? pcCbm(r).toFixed(5) + ' CBM/pc' : '')
             : num(r.pcs) > 0 && num(r.received_qty) > 0 ? `${+(num(r.pcs) / num(r.received_qty)).toFixed(2)} pcs/${itemUom(r.item_id)}` : '',
           show: () => (grnCur.ctx?.grids.lines || []).some(isDim) },
-        { k: 'dn_qty', label: 'DN qty', type: 'number', show: d => !['OPENING'].includes(d.receipt_type) },
-        { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true, onChange: r => dimCalc(r, 'received_qty') },
-        { k: 'damaged_qty', label: 'Damaged', type: 'number' },
+        { k: 'dn_qty', label: 'DN qty', type: 'number', whole: true, show: d => !['OPENING'].includes(d.receipt_type) },
+        { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true, whole: true, onChange: r => dimCalc(r, 'received_qty') },
+        { k: 'damaged_qty', label: 'Damaged', type: 'number', whole: true },
         { k: '_acc', label: 'To stock', type: 'ro', virtual: true, show: d => d.status === 'DRAFT', fmt: (v, r) => qty(grnSplit(r).acc) },
         { k: '_exc', label: 'Excess', type: 'ro', virtual: true, show: d => d.status === 'DRAFT', fmt: (v, r) => { const x = grnSplit(r).exc; return x > 0 ? '⚠ ' + qty(x) : ''; } },
         { k: '_short', label: 'Short vs DN', type: 'ro', virtual: true, show: d => d.status === 'DRAFT', fmt: (v, r) => { const x = num(r.dn_qty) - num(r.received_qty); return r.dn_qty != null && x > 0 ? '⚠ ' + qty(x) : ''; } },
@@ -685,6 +685,7 @@ export const grn = {
       if (num(r.received_qty) > 0 && isDim(r)) {
         // CBM timber: size + pieces (the CBM comes from them); other units (e.g. bundles): pieces only, size optional
         if (!(num(r.pcs) > 0)) throw new Error(`${itemName(r.item_id)}: enter the number of pieces in this batch`);
+        if (!Number.isInteger(num(r.pcs))) throw new Error(`${itemName(r.item_id)}: pieces must be a whole number (${r.pcs})`);
         if (isCbm(r) && !(num(r.thickness_mm) > 0 && num(r.width_mm) > 0 && num(r.length_mm) > 0))
           throw new Error(`${itemName(r.item_id)}: enter thickness, width and length (mm) for this batch`);
         if (isCbm(r)) {
@@ -877,6 +878,7 @@ export const mr = {
   validate(ctx) {
     for (const r of ctx.grids.lines) {
       if (!isDim(r) || !(num(r.pcs) > 0)) continue;
+      if (!Number.isInteger(num(r.pcs))) throw new Error(`${itemName(r.item_id)}: pieces must be a whole number (${r.pcs})`);
       const p = mrLotPpu(r);
       if (!p) throw new Error(`${itemName(r.item_id)}: choose the timber size (batch) for the ${qty(r.pcs)} pieces`);
       r.requested_qty = cbmOf(r.pcs, p);
@@ -914,6 +916,7 @@ export const mr = {
     (['DRAFT', 'REJECTED', 'PENDING_APPROVAL'].includes(ctx.doc.status) ? 'For boards you can name the exact <b>board lot or offcut piece</b> (✂ Request offcuts, or the Board / offcut column) — Stores issues exactly that piece; offcuts are requested whole.' : ''),
   grids: [{
     key: 'lines', title: 'Materials requested', table: 'mr_lines', fk: 'mr_id', order: 'line_no',
+    wholeSkip: r => !!(opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.offcut,   // an offcut is part of a sheet
     importers: [{ label: '✂ Request offcuts', run: ctx => pickOffcuts(ctx) }],
     fields: [
       itemF({ filter: r => isLotItem(r) && browseOk(r), lockSaved: false, onChange: async (r, v, ctx) => { r.lot_id = null; await fillSplit(ctx); await loadMrLots(ctx); } }), uomF, splitF,
@@ -924,9 +927,9 @@ export const mr = {
       // timber: request in pieces of the chosen size; the CBM follows (or type the CBM and the pieces follow)
       { k: 'pcs', label: 'Pieces', type: 'number', width: '90px', ro: r => !isDim(r), show: () => (mrCur.ctx?.grids.lines || []).some(isDim),
         onChange: r => { const p = mrLotPpu(r); if (p) r.requested_qty = cbmOf(r.pcs, p); } },
-      { k: 'requested_qty', label: 'Requested', type: 'number', required: true, ro: r => !!(opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.offcut,
+      { k: 'requested_qty', label: 'Requested', type: 'number', required: true, whole: true, ro: r => !!(opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.offcut,
         onChange: r => { const p = mrLotPpu(r); if (p) r.pcs = pcsOf(r.requested_qty, p); } },
-      { k: 'approved_qty', label: 'Approved qty', type: 'number', show: d => d.status !== 'DRAFT' },
+      { k: 'approved_qty', label: 'Approved qty', type: 'number', whole: true, show: d => d.status !== 'DRAFT' },
       roQty('issued_qty', 'Issued', { show: d => !['DRAFT', 'PENDING_APPROVAL'].includes(d.status) }),
       { k: '_pcsAI', label: 'Pieces approved / issued', type: 'ro', virtual: true, show: d => d.status !== 'DRAFT' && (mrCur.ctx?.grids.lines || []).some(isDim),
         fmt: (v, r) => { const p = mrLotPpu(r); return p ? `${qty(pcsOf(r.approved_qty ?? r.requested_qty, p))} / ${qty(pcsOf(r.issued_qty, p))} pcs` : ''; } },
@@ -1050,6 +1053,7 @@ export const issue = {
   },
   grids: [{
     key: 'lines', title: 'Items to issue', table: 'issue_lines', fk: 'issue_id', order: 'line_no', saveKeys: ['mr_line_id'],
+    wholeSkip: r => !!(opts.lots[r.item_id] || []).find(l => l.id === r.lot_id)?.offcut,
     fields: [
       itemF({ filter: isLotItem, ro: r => !!r.mr_line_id, onChange: async (r, v, ctx) => { r.lot_id = null; await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); } }), uomF,
       machineF,
@@ -1060,7 +1064,7 @@ export const issue = {
       // timber: pieces of the chosen size; the issue qty (CBM) follows, and vice versa
       { k: 'pcs', label: 'Pieces', type: 'number', width: '90px', ro: r => !issueLotPpu(r),
         show: () => (issueCur.ctx?.grids.lines || []).some(isDim), onChange: r => { const p = issueLotPpu(r); if (p) r.qty = cbmOf(r.pcs, p); } },
-      { k: 'qty', label: 'Issue qty', type: 'number', required: true, onChange: r => { const p = issueLotPpu(r); if (p) r.pcs = pcsOf(r.qty, p); } },
+      { k: 'qty', label: 'Issue qty', type: 'number', required: true, whole: true, onChange: r => { const p = issueLotPpu(r); if (p) r.pcs = pcsOf(r.qty, p); } },
       roMoney('value', 'Value', { show: d => d.status === 'POSTED' }),
       { k: 'received_qty', label: 'Received good', type: 'ro', fmt: (v, r) => v == null ? '' : (num(v) + num(r.damaged_qty) === num(r.qty) ? qty(v) : '⚠ ' + qty(v)), show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
       { k: 'damaged_qty', label: 'Damaged', type: 'ro', fmt: v => num(v) ? '⚠ ' + qty(v) : '', show: d => ['ACKNOWLEDGED', 'DISCREPANCY'].includes(d.ack_status) },
@@ -1303,8 +1307,9 @@ export const trf = {
   ],
   headerNote: () => 'Lots keep their original receipt date and cost when moved. Moving out of Quarantine releases the HOLD.',
   grids: [{ key: 'lines', title: 'Items', table: 'transfer_lines', fk: 'transfer_id', order: 'line_no', saveKeys: ['lot_id'],
+    wholeSkip: r => !!r.lot_id,   // a named lot may be an offcut; the server checks it exactly
     fields: [itemF({ filter: r => r.is_active && r.item_classes?.tracking === 'LOT', onChange: (r, v, ctx) => fillAvail(ctx, 'lines', ctx.doc.from_location_id) }), uomF, { ...availF, show: d => d.status === 'DRAFT' },
-             { k: 'qty', label: 'Qty', type: 'number', required: true }] }],
+             { k: 'qty', label: 'Qty', type: 'number', required: true, whole: true }] }],
   validate(ctx) { if (ctx.doc.from_location_id === ctx.doc.to_location_id) throw new Error('From and To locations must differ'); },
   actions: ctx => [
     { label: '✔ Post transfer', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores'), confirm: 'Post this transfer?', done: 'Transfer posted', run: c => rpc('post_transfer', { p_trf: c.doc.id }) },
@@ -1514,7 +1519,7 @@ export const prt = {
   ],
   grids: [{ key: 'lines', title: 'Items returned', table: 'prt_lines', fk: 'prt_id', lineNo: false, addable: false, saveKeys: ['grn_line_id'],
     fields: [itemF({ ro: true }), uomF, { k: '_bal', label: 'Returnable', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.status === 'DRAFT' },
-             { k: 'qty', label: 'Return qty', type: 'number', required: true }, { k: 'rate_aed', label: 'Rate AED', type: 'number', cost: true }, { k: 'vat_rate', label: 'VAT %', type: 'number', cost: true },
+             { k: 'qty', label: 'Return qty', type: 'number', required: true, whole: true }, { k: 'rate_aed', label: 'Rate AED', type: 'number', cost: true }, { k: 'vat_rate', label: 'VAT %', type: 'number', cost: true },
              { k: '_amt', label: 'Amount', type: 'ro', virtual: true, cost: true, fmt: (v, r) => money(num(r.qty) * num(r.rate_aed)) }] }],
   validate(ctx) { ctx.grids.lines = ctx.grids.lines.filter(r => num(r.qty) > 0); if (!ctx.grids.lines.length) throw new Error('Enter at least one return quantity'); },
   actions: ctx => [
