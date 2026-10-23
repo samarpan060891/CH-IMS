@@ -13,12 +13,16 @@ const Z = { k: 'buffer_zone', label: 'Buffer zone', fmt: 'badge' };
 export const REPORTS = {
   stock: { title: 'Stock in hand', src: 'v_item_stock', filter: q => q.gt('on_hand', 0), columns: [
     { k: 'code', label: 'Code' }, { k: 'name', label: 'Item' }, { k: 'class_code', label: 'Class' }, { k: 'category_name', label: 'Category' }, { k: 'uom', label: 'UoM' },
-    { k: 'on_hand', label: 'On hand', fmt: 'qty' }, { k: r => r._pcs, label: 'Pieces', fmt: 'qty' }, { k: 'available', label: 'Free stock', fmt: 'qty' }, { k: 'reserved_qty', label: 'Reserved for projects', fmt: 'qty' },
+    { k: 'on_hand', label: 'On hand', fmt: 'qty' }, { k: r => r._pcs, label: 'Pieces', fmt: 'qty' }, { k: 'available', label: 'Free stock', fmt: 'qty' }, { k: r => r._pcsFree, label: 'Free pcs', fmt: 'qty' },
+    { k: 'reserved_qty', label: 'Reserved for projects', fmt: 'qty' }, { k: r => r._pcsRes, label: 'Reserved pcs', fmt: 'qty' },
     { k: 'on_order', label: 'On order (stock)', fmt: 'qty' }, { k: 'on_order_projects', label: 'On order (projects)', fmt: 'qty' }, { k: 'open_demand', label: 'Open requests', fmt: 'qty' },
     { k: 'stock_value', label: 'Value AED', fmt: 'money', cost: true, sum: true }, { k: 'avg_daily_consumption', label: 'Avg/day', fmt: 'qty' }, { k: 'stock_cover_days', label: 'Cover days', n: true },
     { k: 'last_receipt', label: 'Last receipt', fmt: 'date' }, { k: 'last_issue', label: 'Last issue', fmt: 'date' }, { k: 'stock_status', label: 'Status', fmt: 'badge' }, Z],
     // pieces in stock for items received in pieces (timber); batch-wise detail is in "Stock by lot & location"
-    async after(rows) { const p = must(await sb.from('v_item_pieces').select('item_id,pcs_on_hand')); const m = Object.fromEntries(p.map(x => [x.item_id, x.pcs_on_hand])); rows.forEach(r => { r._pcs = m[r.item_id] ?? null; }); } },
+    async after(rows) {
+      const m = Object.fromEntries(must(await sb.from('v_item_pieces').select('item_id,pcs_on_hand,pcs_free,pcs_reserved')).map(x => [x.item_id, x]));
+      rows.forEach(r => { const p = m[r.item_id]; r._pcs = p?.pcs_on_hand ?? null; r._pcsFree = p ? p.pcs_free : null; r._pcsRes = p ? p.pcs_reserved : null; });
+    } },
   offcuts: { title: 'Offcut stock (panels & timber pieces)', src: 'v_offcuts', order: 'item_code', columns: [
     { k: 'item_code', label: 'Item' }, { k: 'item_name', label: 'Description' }, { k: 'kind', label: 'Type', fmt: 'label' }, { k: 'thickness_mm', label: 'Thk mm', n: true },
     { k: 'length_mm', label: 'Length mm', n: true }, { k: 'width_mm', label: 'Width mm', n: true }, { k: 'area_m2', label: 'Area m²', fmt: 'qty', sum: true },
