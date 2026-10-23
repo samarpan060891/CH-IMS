@@ -361,11 +361,14 @@ export const ins = {
 export const Mrp = {
   components: { Badge },
   props: { projectId: String },
-  data: () => ({ rows: [], loading: true, busy: false, proj: '', cls: '', onlyShort: true }),
+  data: () => ({ rows: [], loading: true, busy: false, proj: '', cls: '', cat: '', onlyShort: true }),
   computed: {
     projects() { return [...new Map(this.rows.map(r => [r.project_id, r.project_code])).entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]))); },
+    // categories of the materials on screen (narrowed by the class filter)
+    cats() { return [...new Set(this.rows.filter(r => !this.cls || r.class_code === this.cls).map(r => r._cat).filter(Boolean))].sort(); },
     shown() {
-      return this.rows.filter(r => (!this.proj || r.project_id === this.proj) && (!this.cls || r.class_code === this.cls) && (!this.onlyShort || Number(r.suggested_qty) > 0));
+      return this.rows.filter(r => (!this.proj || r.project_id === this.proj) && (!this.cls || r.class_code === this.cls) && (!this.cat || r._cat === this.cat)
+        && (!this.onlyShort || Number(r.suggested_qty) > 0));
     },
     picked() { return this.shown.filter(r => r._pick && Number(r._qty) > 0); },
     canOrder() { return hasRole('purchase', 'stores', 'production_incharge', 'factory_manager'); },
@@ -377,7 +380,18 @@ export const Mrp = {
       this.loading = true;
       await run(async () => {
         const rows = must(await sb.from('v_mrp').select('*').order('due_date', { nullsFirst: false }).order('project_code').order('item_code'));
-        rows.forEach(r => { const s = Number(r.suggested_qty); const moq = Number(r.moq) || 0; r._qty = s > 0 ? Math.max(s, moq) : 0; r._pick = s > 0; });
+        // item category (sub-category shown as "Category › Sub")
+        const ids = [...new Set(rows.map(r => r.item_id))];
+        const its = ids.length ? must(await sb.from('items').select('id, item_categories(name, parent:parent_id(name))').in('id', ids)) : [];
+        const catOf = Object.fromEntries(its.map(i => { const c = i.item_categories; return [i.id, c ? (c.parent ? `${c.parent.name} › ${c.name}` : c.name) : '']; }));
+        rows.forEach(r => {
+          const s = Number(r.suggested_qty); const moq = Number(r.moq) || 0; r._qty = s > 0 ? Math.max(s, moq) : 0; r._pick = s > 0;
+          r._cat = catOf[r.item_id] || '';
+          // "BOQ AV-01 (to produce), BOQ AV-02 (to produce) …" → "14 BOQ lines (to produce)"; full list on hover
+          const src = String(r.sources || '').split(', ').filter(Boolean), prod = src.filter(s => s.endsWith('(to produce)'));
+          r._src = prod.length > 2 ? [`${prod.length} BOQ lines (to produce)`, ...src.filter(s => !s.endsWith('(to produce)'))].join(', ') : r.sources;
+        });
+        if (this.cat && !rows.some(r => r._cat === this.cat)) this.cat = '';
         this.rows = rows;
       });
       this.loading = false;
@@ -396,7 +410,8 @@ export const Mrp = {
     <div class="card">
       <div class="row" style="flex-wrap:wrap;gap:10px">
         <label class="f" style="min-width:200px"><span>Project</span><select v-model="proj"><option value="">All running projects</option><option v-for="p in projects" :value="p[0]">{{ p[1] }}</option></select></label>
-        <label class="f" style="min-width:140px"><span>Class</span><select v-model="cls"><option value="">All</option><option v-for="c in [...new Set(rows.map(r=>r.class_code))]" :value="c">{{ c }}</option></select></label>
+        <label class="f" style="min-width:140px"><span>Class</span><select v-model="cls" @change="cat=''"><option value="">All</option><option v-for="c in [...new Set(rows.map(r=>r.class_code))]" :value="c">{{ c }}</option></select></label>
+        <label class="f" style="min-width:220px"><span>Category</span><select v-model="cat"><option value="">All</option><option v-for="c in cats" :value="c">{{ c }}</option></select></label>
         <label class="row small" style="gap:6px;margin-top:18px"><input type="checkbox" v-model="onlyShort"> Only lines to order</label>
         <span class="spacer"></span>
         <button class="btn sm" @click="reload" :disabled="loading">↻ Recalculate</button>
@@ -408,19 +423,19 @@ export const Mrp = {
     </div>
     <div class="card">
       <div class="tbl-wrap"><table class="t">
-        <thead><tr><th></th><th>Project</th><th>Item</th><th>UoM</th><th>Due</th><th class="n">Gross need</th><th class="n">Project stock</th><th class="n">Project on order</th>
+        <thead><tr><th></th><th>Project</th><th>Item</th><th>Category</th><th>UoM</th><th>Due</th><th class="n">Gross need</th><th class="n">Project stock</th><th class="n">Project on order</th>
           <th class="n">Net need</th><th class="n">From free stock</th><th class="n">To order</th><th class="n" style="width:110px">Requisition qty</th><th>Sources</th></tr></thead>
         <tbody>
-          <tr v-if="loading"><td colspan="13" class="empty">Calculating…</td></tr>
-          <tr v-else-if="!shown.length"><td colspan="13" class="empty">Nothing to order — running projects are covered</td></tr>
+          <tr v-if="loading"><td colspan="14" class="empty">Calculating…</td></tr>
+          <tr v-else-if="!shown.length"><td colspan="14" class="empty">Nothing to order — running projects are covered</td></tr>
           <tr v-for="r in shown" :key="r.project_id + r.item_id">
             <td><input type="checkbox" v-model="r._pick" :disabled="!(Number(r._qty) > 0)"></td>
             <td>{{ r.project_code }}</td><td><b>{{ r.item_code }}</b> {{ r.item_name }}<div class="small muted">{{ r.class_code }}{{ r.lead_time_days ? ' · lead ' + r.lead_time_days + 'd' : '' }}</div></td>
-            <td>{{ r.uom }}</td><td>{{ dt(r.due_date) }}</td>
+            <td class="small">{{ r._cat }}</td><td>{{ r.uom }}</td><td>{{ dt(r.due_date) }}</td>
             <td class="n">{{ qty(r.gross_req) }}</td><td class="n">{{ qty(r.project_stock) }}</td><td class="n">{{ qty(r.project_on_order) }}</td>
             <td class="n">{{ qty(r.net_req) }}</td><td class="n">{{ qty(r.from_free) }}</td><td class="n"><b>{{ qty(r.suggested_qty) }}</b></td>
             <td><input type="number" step="any" min="0" v-model.number="r._qty" style="width:100px" :title="r.moq ? 'MOQ ' + r.moq : ''"></td>
-            <td class="small">{{ r.sources }}</td>
+            <td class="small" :title="r.sources">{{ r._src }}</td>
           </tr>
         </tbody>
       </table></div>
