@@ -6,7 +6,7 @@ import { ask, namePick, CURRENCIES } from './components.js';
 import { makePdf, partyOf } from './pdf.js';
 
 // shared dynamic option lists for ref fields ({id,label})
-export const opts = reactive({ pos: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [], lots: {}, mrLots: {}, snags: [] });
+export const opts = reactive({ pos: [], sched: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [], lots: {}, mrLots: {}, snags: [] });
 // open snags, so rework material can be issued against them
 async function loadOpenSnags(extraId) {
   let q = sb.from('snags').select('id,snag_no,project_id,description,status');
@@ -494,8 +494,38 @@ async function loadPoIntoGrn(ctx, poId) {
     dn_qty: num(l.qty) - num(l.received_qty), received_qty: num(l.qty) - num(l.received_qty), damaged_qty: 0,
     rate: num(l.rate) * (1 - num(l.discount_pct) / 100), vat_rate: l.vat_rate,
   }));
+  // a PO with a delivery schedule: receive the earliest pending delivery by default
+  await loadPoSched(poId);
+  ctx.doc._due = dueOptions()[0]?.v || null;
+  if (ctx.doc._due) applyDue(ctx, ctx.doc._due);
   ctx.dirty = true;
 }
+// ---- PO delivery schedule on the GRN (received fills the earliest deliveries first, so extra counts against the next one) ----
+async function loadPoSched(poId) { opts.sched = poId ? must(await sb.from('v_po_schedule').select('*').eq('po_id', poId).order('delivery_date')) : []; }
+const schedPending = s => Math.max(0, num(s.qty) - num(s.received_qty));
+// the delivery dates still to come in (overdue ones first), plus "everything pending"
+function dueOptions() {
+  const dates = [...new Set((opts.sched || []).filter(s => schedPending(s) > 0.0005).map(s => s.delivery_date))].sort();
+  if (!dates.length) return [];
+  const t = today();
+  return [...dates.map(d => { const n = new Set(opts.sched.filter(s => s.delivery_date === d && schedPending(s) > 0.0005).map(s => s.po_line_id)).size;
+    return { v: d, l: `${dt(d)}${d < t ? ' (overdue)' : ''} — ${n} line${n === 1 ? '' : 's'} due (+ anything still pending before it)` }; }),
+    { v: 'ALL', l: 'Everything still pending on the PO' }];
+}
+// qty of a PO line due up to and including a delivery date (pending earlier deliveries are included)
+const dueUpTo = (lineId, date) => (opts.sched || []).filter(s => s.po_line_id === lineId && (date === 'ALL' || s.delivery_date <= date)).reduce((t, s) => t + schedPending(s), 0);
+const hasSched = lineId => (opts.sched || []).some(s => s.po_line_id === lineId);
+function applyDue(ctx, date) {
+  for (const r of ctx.grids.lines) {
+    if (!r.po_line_id || !hasSched(r.po_line_id)) continue;   // unscheduled lines: one delivery, keep the PO balance
+    const q = +Math.min(dueUpTo(r.po_line_id, date), num(r._bal)).toFixed(3);
+    r.dn_qty = q; r.received_qty = q;
+  }
+}
+// "05 Nov 9 ✓ · 19 Nov 4/9 · 03 Dec 9.713" — received / scheduled per delivery of a line
+const schedLineText = lineId => (opts.sched || []).filter(s => s.po_line_id === lineId)
+  .map(s => { const rec = num(s.received_qty), q = num(s.qty); const d = new Date(s.delivery_date + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+    return `${d} ${rec >= q - 0.0005 ? qty(q) + ' ✓' : rec > 0 ? qty(rec) + '/' + qty(q) : qty(q)}`; }).join(' · ');
 const isSerial = r => refRow('items', r.item_id)?.item_classes?.tracking === 'SERIAL';
 // preview of what posting will do: good = received - damaged; to stock = good up to PO balance; rest = excess
 function grnSplit(r) {
@@ -514,6 +544,7 @@ export const grn = {
   async onNew(ctx, parts) { await loadOpenPos(); if (parts[0] === 'po' && parts[1]) { ctx.doc.po_id = parts[1]; await loadPoIntoGrn(ctx, parts[1]); } },
   async afterLoad(ctx) {
     await loadOpenPos(ctx.doc.po_id);
+    await loadPoSched(ctx.doc.po_id);
     if (ctx.doc.status === 'DRAFT' && ctx.doc.po_id) {
       const lines = must(await sb.from('po_lines').select('id,qty,received_qty').eq('po_id', ctx.doc.po_id));
       ctx.grids.lines.forEach(r => { const l = lines.find(x => x.id === r.po_line_id); if (l) r._bal = num(l.qty) - num(l.received_qty); });
@@ -524,6 +555,9 @@ export const grn = {
       onChange: (d, v, ctx) => { if (v !== 'PO') { d.po_id = null; ctx.grids.lines.forEach(r => { r.po_line_id = null; }); } } },
     { k: 'po_id', label: 'Purchase order', type: 'ref', refOptions: () => opts.pos, required: true, wide: true, show: d => d.receipt_type === 'PO',
       onChange: (d, v, ctx) => v && loadPoIntoGrn(ctx, v) },
+    // the PO's delivery schedule: which delivery this is (sets the quantities on scheduled lines)
+    { k: '_due', label: 'Receiving scheduled delivery', type: 'select', virtual: true, wide: true, options: () => dueOptions(),
+      show: d => d.receipt_type === 'PO' && d.status === 'DRAFT' && dueOptions().length > 0, onChange: (d, v, ctx) => v && applyDue(ctx, v) },
     { k: 'vendor_id', label: 'Vendor', type: 'ref', ref: 'vendors', ro: d => d.receipt_type === 'PO', show: d => d.receipt_type !== 'OPENING' },
     { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', required: false, show: d => d.receipt_type !== 'OPENING' },
     { k: 'grn_date', label: 'GRN date', type: 'date', required: true },
@@ -539,6 +573,7 @@ export const grn = {
   ],
   headerNote: ctx => '<b>Control</b> column: <b>Batch</b> = supplier batch no. mandatory; <b>Expiry</b> = expiry date mandatory (filled from the mfg date + shelf life when set in the item master; expired goods are refused). ' +
     (ctx.doc.receipt_type === 'OPENING' ? 'Opening stock: enter the <b>Original receipt date</b> on each line so the aging report shows the true age.' :
+    ((opts.sched || []).length ? '<b>Delivery schedule</b>: quantities are set to the delivery chosen above; receiving more than that delivery (within the PO balance) counts against the next scheduled delivery. ' : '') +
     'Enter the <b>DN qty</b> (per supplier delivery note), the qty physically <b>received</b> and how many are <b>damaged</b>. On posting: good qty up to the PO balance is accepted into stock; ' +
     '<b>damaged</b> and <b>excess</b> go to Quarantine on hold (damaged → draft purchase return; excess → Purchase accepts or returns); <b>short</b> vs DN is recorded and the PO stays open.'),
   grids: [
@@ -547,6 +582,8 @@ export const grn = {
       fields: [
         itemF({ ro: r => !!r.po_line_id, filter: r => r.is_active, onChange: (r, v, ctx) => { const it = refRow('items', r.item_id); if (it) { r.vat_rate = it.vat_rate; if (!r.rate) r.rate = it.last_purchase_rate || it.standard_cost || 0; fillExpiry(r, ctx.doc); } } }), uomF,
         { k: '_bal', label: 'PO balance', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.receipt_type === 'PO' && d.status === 'DRAFT' },
+        { k: '_sch', label: 'Delivery schedule (received / due)', type: 'ro', virtual: true, width: '260px', fmt: (v, r) => r.po_line_id ? schedLineText(r.po_line_id) : '',
+          show: d => d.receipt_type === 'PO' && (opts.sched || []).length > 0 },
         lineProjectF({ label: 'Reserve for project', ro: r => !!r.po_line_id, show: d => ['PO', 'NON_PO'].includes(d.receipt_type) }),
         { k: 'dn_qty', label: 'DN qty', type: 'number', show: d => !['OPENING'].includes(d.receipt_type) },
         { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true },
