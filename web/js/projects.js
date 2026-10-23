@@ -133,7 +133,13 @@ export const proj = {
   // sales / internal order jobs are opened from their sales order
   list: { select: '*', filter: q => q.in('project_type', ['PROJECT', 'MTS']), columns: [{ k: 'name', label: 'Project' }, { k: 'project_type', label: 'Type', fmt: 'label' }, { k: 'customer', label: 'Customer' },
     { k: 'end_date', label: 'Due', fmt: 'date' }, { k: r => r.billing_basis === 'UNIT' ? 'Unit-wise' : 'BOQ item', label: 'Billing' },
-    { k: 'contract_value', label: 'Contract', fmt: 'money', cost: true, sum: true }] },
+    { k: 'contract_value', label: 'Contract', fmt: 'money', cost: true, sum: true }],
+    // a project order becomes a project when it is confirmed; until then list it here so it is not missed
+    notice: async () => {
+      const so = must(await sb.from('sales_orders').select('id,so_no,title,status').eq('so_type', 'PROJECT').in('status', ['DRAFT', 'REJECTED']).order('so_date'));
+      return { text: `${so.length} project order${so.length === 1 ? '' : 's'} in Sales not confirmed yet — the project (with its BOQ) is created when the order is confirmed (✔ Confirm — create the project).`,
+               items: so.map(o => ({ label: `${o.so_no} — ${o.title}`, to: 'd/so/' + o.id })) };
+    } },
   defaults: () => ({ status: 'OPEN', project_type: 'PROJECT', billing_basis: 'BOQ_ITEM' }),
   header: [
     { k: 'code', label: 'Project code', required: true },

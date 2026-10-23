@@ -31,7 +31,7 @@ export async function previewDoc(cfg, id, no) {
 export const DocList = {
   components: { DataTable, Badge },
   props: { cfg: Object },
-  data: () => ({ rows: [], loading: true, tab: 'ALL' }),
+  data: () => ({ rows: [], loading: true, tab: 'ALL', notice: null }),
   computed: {
     sf() { return this.cfg.statusField || 'status'; },
     tabs() { return ['ALL', ...(this.cfg.statuses || [])]; },
@@ -58,6 +58,8 @@ export const DocList = {
         let q = sb.from(this.cfg.table).select(this.cfg.list.select || '*');
         if (this.cfg.list.filter) q = this.cfg.list.filter(q);
         this.rows = must(await q.order(this.cfg.dateField, { ascending: false }).order('created_at', { ascending: false }).limit(2000));
+        // optional banner above the list (e.g. orders waiting to become projects)
+        if (this.cfg.list.notice) this.notice = await this.cfg.list.notice();
       });
       if (this.cfg.defaultTab && this.rows.some(r => r[this.sf] === this.cfg.defaultTab)) this.tab = this.cfg.defaultTab;
       this.loading = false;
@@ -73,6 +75,10 @@ export const DocList = {
       </div>
       <span class="spacer"></span>
       <button class="btn primary" v-if="canCreate" @click="create">+ New {{ cfg.single }}</button>
+    </div>
+    <div class="card" v-if="notice?.items?.length" style="margin-bottom:12px;border-left:4px solid var(--warn, #d97706)">
+      <div class="small" style="margin-bottom:6px">{{ notice.text }}</div>
+      <div class="row" style="flex-wrap:wrap;gap:6px"><a v-for="n in notice.items" :key="n.to" class="btn sm" :href="'#/' + n.to">{{ n.label }}</a></div>
     </div>
     <div class="card"><DataTable :columns="columns" :rows="shown" :loading="loading" clickable @row="open" :filename="cfg.key" /></div>
   </div>`,
