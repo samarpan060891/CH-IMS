@@ -211,6 +211,7 @@ export const DocEditor = {
           if (del.length) must(await sb.from(g.table).delete().in('id', del));
           const keys = [...new Set([...g.fields.filter(f => f.type !== 'ro' && !f.virtual).map(f => f.k), ...(g.saveKeys || [])])];
           for (const [i, r] of this.grids[g.key].entries()) {
+            if (g.prepare) g.prepare(r, this);   // e.g. link to a row of a grid saved before this one
             const row = this.pick(r, keys);
             if (g.lineNo !== false) row.line_no = i + 1;
             if (r.id) must(await sb.from(g.table).update(row).eq('id', r.id));

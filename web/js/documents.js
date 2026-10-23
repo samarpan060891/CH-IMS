@@ -198,6 +198,15 @@ async function tradedIntoPr(ctx) {
 // PURCHASE ORDER
 // ======================================================================
 function poLineAmount(r) { return num(r.qty) * num(r.rate) * (1 - num(r.discount_pct) / 100); }
+// delivery schedule rows point at a PO line: saved lines by id, unsaved ones by a temporary key
+const poCur = { ctx: null };
+const lineKey = l => l.id || (l._k ||= 'n' + Math.random().toString(36).slice(2));
+// "Deliveries: 26 on 5 Nov 2026 · 26 on 19 Nov 2026" under a PO line on the PDF
+const schedText = (c, l) => {
+  const rows = (c.grids.sched || []).filter(s => (s._line || s.po_line_id) === lineKey(l)).sort((a, b) => String(a.delivery_date).localeCompare(String(b.delivery_date)));
+  return rows.length ? 'Deliveries: ' + rows.map(s => `${qty(s.qty)} on ${dt(s.delivery_date)}`).join(' · ') : '';
+};
+const poLineLabel = (ctx, l) => `${ctx.grids.lines.indexOf(l) + 1}. ${itemName(l.item_id) || 'item?'} — ${qty(l.qty)} ${itemUom(l.item_id)}`;
 async function loadPrLines(ctx, prId) {
   const lines = must(await sb.from('pr_lines').select('id,item_id,qty,ordered_qty,required_date,pr_id,project_id,boq_line_id').eq('pr_id', prId).order('line_no'));
   for (const l of lines) {
@@ -233,7 +242,8 @@ export const po = {
           { k: 'total_amount', label: 'Total', fmt: 'money', cost: true }, { k: 'total_aed', label: 'Total AED', fmt: 'money', cost: true, sum: true }, { k: 'delivery_date', label: 'Delivery', fmt: 'date' }] },
   defaults: () => ({ po_date: today(), po_type: 'LOCAL', currency: 'AED', exchange_rate: 1, delivery_location_id: locId('MS'), terms_set: 'goods', quote_label: 'quotation',
     terms_conditions: '', delivery_address: state.company?.address || '' }),
-  async onNew(ctx, parts) { if (parts[0] === 'pr' && parts[1]) await loadPrLines(ctx, parts[1]); },
+  async onNew(ctx, parts) { poCur.ctx = ctx; if (parts[0] === 'pr' && parts[1]) await loadPrLines(ctx, parts[1]); },
+  afterLoad(ctx) { poCur.ctx = ctx; (ctx.grids.sched || []).forEach(s => { s._line = s.po_line_id; }); },
   header: [
     { k: 'vendor_id', label: 'Vendor', type: 'ref', ref: 'vendors', required: true, wide: true, filter: r => r.status === 'ACTIVE',
       onChange: async (d, v, ctx) => {
@@ -294,8 +304,36 @@ export const po = {
       { k: 'pct', label: '%', type: 'number', required: true, width: '70px' },
       { k: 'text', label: 'Payment term text (e.g. advance payment against PDC ({amt}).)', required: true, width: '520px' },
     ],
+  }, {
+    // optional: split a line into dated deliveries; the quantities of a line must add up to its PO quantity
+    key: 'sched', title: 'Delivery schedule (optional — split a line into dated deliveries)', table: 'po_line_schedule', fk: 'po_id', order: 'delivery_date',
+    saveKeys: ['po_line_id'],
+    newRow: ctx => { const l = ctx.grids.lines[ctx.grids.lines.length - 1]; return l ? { _line: lineKey(l), delivery_date: ctx.doc.delivery_date || null } : {}; },
+    prepare: (r, ctx) => { const l = ctx.grids.lines.find(x => lineKey(x) === r._line); r.po_line_id = l?.id || null; },
+    fields: [
+      { k: '_line', label: 'PO line', type: 'ref', required: true, virtual: true, width: '320px',
+        refOptions: () => (poCur.ctx?.grids.lines || []).filter(l => l.item_id).map(l => ({ id: lineKey(l), label: poLineLabel(poCur.ctx, l) })) },
+      { k: 'delivery_date', label: 'Delivery date', type: 'date', required: true },
+      { k: 'qty', label: 'Qty', type: 'number', required: true },
+      { k: '_uom', label: 'UoM', type: 'ro', virtual: true, fmt: (v, r) => itemUom((poCur.ctx?.grids.lines || []).find(l => lineKey(l) === r._line)?.item_id) },
+      { k: 'remarks', label: 'Remarks (e.g. Batch 1)', width: '180px' },
+    ],
   }],
   validate(ctx) {
+    // delivery schedule: each scheduled line adds up to its PO quantity; the line's required date = its first delivery
+    const sched = ctx.grids.sched || [];
+    for (const [i, s] of sched.entries()) {
+      if (!ctx.grids.lines.some(l => lineKey(l) === s._line)) throw new Error(`Delivery schedule row ${i + 1}: its PO line was removed — pick a line or delete the row`);
+      if (!(num(s.qty) > 0)) throw new Error(`Delivery schedule row ${i + 1}: quantity must be more than 0`);
+    }
+    for (const [i, l] of ctx.grids.lines.entries()) {
+      const rows = sched.filter(s => s._line === lineKey(l));
+      if (!rows.length) continue;
+      const tot = rows.reduce((s, r) => s + num(r.qty), 0);
+      if (Math.abs(tot - num(l.qty)) > 0.0005)
+        throw new Error(`PO line ${i + 1} (${itemName(l.item_id)}): delivery schedule adds up to ${qty(tot)} but the line is ${qty(l.qty)} — make them equal`);
+      l.required_date = rows.map(r => r.delivery_date).sort()[0];
+    }
     const pay = ctx.grids.payment || [];
     if (pay.length) {
       const pct = pay.reduce((s, p) => s + num(p.pct), 0);
@@ -315,7 +353,13 @@ export const po = {
   async loadInfo(ctx) {
     const ap = must(await sb.from('po_approvals').select('*, profiles:acted_by(full_name,email)').eq('po_id', ctx.doc.id).order('acted_at'));
     const grns = must(await sb.from('grns').select('grn_no,grn_date,status,vendor_dn_no,vendor_invoice_no').eq('po_id', ctx.doc.id).order('grn_date'));
-    return [approvalsInfo(ap), { title: 'Receipts (GRN)', columns: [{ k: 'grn_no', label: 'GRN' }, { k: 'grn_date', label: 'Date', fmt: 'date' }, { k: 'vendor_dn_no', label: 'DN' }, { k: 'vendor_invoice_no', label: 'Invoice' }, { k: 'status', label: 'Status', fmt: 'badge' }], rows: grns }];
+    const sch = must(await sb.from('v_po_schedule').select('*').eq('po_id', ctx.doc.id).order('delivery_date'));
+    const t = today();
+    const schedInfo = sch.length ? [{ title: 'Delivery schedule — received so far', columns: [{ k: 'delivery_date', label: 'Due', fmt: 'date' }, { k: r => itemName(r.item_id), label: 'Item' },
+      { k: 'qty', label: 'Scheduled', fmt: 'qty' }, { k: 'received_qty', label: 'Received', fmt: 'qty' }, { k: r => num(r.qty) - num(r.received_qty), label: 'Pending', fmt: 'qty' },
+      { k: r => num(r.received_qty) >= num(r.qty) - 0.0005 ? 'RECEIVED' : r.delivery_date < t ? 'OVERDUE' : num(r.received_qty) > 0 ? 'PARTIAL' : 'DUE', label: 'Status', fmt: 'badge' },
+      { k: 'remarks', label: 'Remarks' }], rows: sch }] : [];
+    return [approvalsInfo(ap), ...schedInfo, { title: 'Receipts (GRN)', columns: [{ k: 'grn_no', label: 'GRN' }, { k: 'grn_date', label: 'Date', fmt: 'date' }, { k: 'vendor_dn_no', label: 'DN' }, { k: 'vendor_invoice_no', label: 'Invoice' }, { k: 'status', label: 'Status', fmt: 'badge' }], rows: grns }];
   },
   actions: ctx => {
     const s = ctx.doc.status;
@@ -376,7 +420,8 @@ async function pdfPO(c) {
     columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 },
               { h: 'Description of ' + (works ? 'Works' : 'Goods'), strong: true, k: r => [r.description || itemName(r.item_id),
                 r.description && r.description !== refRow('items', r.item_id)?.name ? itemName(r.item_id) : '',
-                r.project_id ? 'For ' + (refRow('projects', r.project_id)?.code || 'project') : ''].filter(Boolean).join('\n') },
+                r.project_id ? 'For ' + (refRow('projects', r.project_id)?.code || 'project') : '',
+                schedText(c, r)].filter(Boolean).join('\n') },
               { h: works ? 'Estimated\nQuantity' : 'Quantity', k: r => `${qty(r.qty)} ${itemUom(r.item_id)}`.trim(), align: 'center', w: 26 },
               { h: `Rate\n(${cur})`, k: r => money(r.rate), align: 'right', w: 24 },
               ...(disc ? [{ h: 'Disc.\n%', k: r => num(r.discount_pct) || '', align: 'right', w: 14 }] : []),
