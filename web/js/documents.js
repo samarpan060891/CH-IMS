@@ -493,6 +493,7 @@ async function loadPoIntoGrn(ctx, poId) {
     po_line_id: l.id, item_id: l.item_id, project_id: l.project_id, _bal: num(l.qty) - num(l.received_qty),
     dn_qty: num(l.qty) - num(l.received_qty), received_qty: num(l.qty) - num(l.received_qty), damaged_qty: 0,
     rate: num(l.rate) * (1 - num(l.discount_pct) / 100), vat_rate: l.vat_rate,
+    location_id: putAwayDefault(l.item_id),
   }));
   // a PO with a delivery schedule: receive the earliest pending delivery by default
   await loadPoSched(poId);
@@ -500,6 +501,8 @@ async function loadPoIntoGrn(ctx, poId) {
   if (ctx.doc._due) applyDue(ctx, ctx.doc._due);
   ctx.dirty = true;
 }
+// the item's default store location (zone / rack / bin) as its put-away, when it is a stock location
+const putAwayDefault = itemId => { const loc = refRow('locations', refRow('items', itemId)?.default_location_id); return loc?.is_stock && loc.is_active ? loc.id : null; };
 // ---- PO delivery schedule on the GRN (received fills the earliest deliveries first, so extra counts against the next one) ----
 async function loadPoSched(poId) { opts.sched = poId ? must(await sb.from('v_po_schedule').select('*').eq('po_id', poId).order('delivery_date')) : []; }
 const schedPending = s => Math.max(0, num(s.qty) - num(s.received_qty));
@@ -580,11 +583,14 @@ export const grn = {
     { key: 'lines', title: 'Items received', table: 'grn_lines', fk: 'grn_id', order: 'line_no', saveKeys: ['po_line_id'],
       newRow: () => ({ vat_rate: 5, received_qty: null, damaged_qty: 0 }),
       fields: [
-        itemF({ ro: r => !!r.po_line_id, filter: r => r.is_active, onChange: (r, v, ctx) => { const it = refRow('items', r.item_id); if (it) { r.vat_rate = it.vat_rate; if (!r.rate) r.rate = it.last_purchase_rate || it.standard_cost || 0; fillExpiry(r, ctx.doc); } } }), uomF,
+        itemF({ ro: r => !!r.po_line_id, filter: r => r.is_active, onChange: (r, v, ctx) => { const it = refRow('items', r.item_id); if (it) { r.vat_rate = it.vat_rate; if (!r.rate) r.rate = it.last_purchase_rate || it.standard_cost || 0; if (!r.location_id) r.location_id = putAwayDefault(it.id); fillExpiry(r, ctx.doc); } } }), uomF,
         { k: '_bal', label: 'PO balance', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.receipt_type === 'PO' && d.status === 'DRAFT' },
         { k: '_sch', label: 'Delivery schedule (received / due)', type: 'ro', virtual: true, width: '260px', fmt: (v, r) => r.po_line_id ? schedLineText(r.po_line_id) : '',
           show: d => d.receipt_type === 'PO' && (opts.sched || []).length > 0 },
         lineProjectF({ label: 'Reserve for project', ro: r => !!r.po_line_id, show: d => ['PO', 'NON_PO'].includes(d.receipt_type) }),
+        // where this line is stored (zone / rack / bin); blank = the GRN's receiving location. Damaged / excess still go to Quarantine.
+        { k: 'location_id', label: 'Put-away location (blank = receiving location)', type: 'ref', ref: 'locations', width: '200px',
+          filter: r => r.is_stock && r.is_active && !['QUARANTINE', 'SCRAP_YARD'].includes(r.loc_type) && (!siteOnly() || r.loc_type === 'SITE') },
         { k: 'dn_qty', label: 'DN qty', type: 'number', show: d => !['OPENING'].includes(d.receipt_type) },
         { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true },
         { k: 'damaged_qty', label: 'Damaged', type: 'number' },
@@ -661,6 +667,7 @@ export const grn = {
           { h: 'Damaged', k: r => num(r.damaged_qty) ? qty(r.damaged_qty) : '', align: 'right' }, { h: 'Accepted', k: r => qty(r.accepted_qty), align: 'right' },
           { h: 'Excess', k: r => num(r.excess_qty) ? qty(r.excess_qty) : '', align: 'right' }, { h: 'Short', k: r => num(r.short_qty) ? qty(r.short_qty) : '', align: 'right' },
           { h: 'Remarks', k: 'rejection_reason' },
+          { h: 'Put-away', k: r => refRow('locations', r.location_id || d.location_id)?.code || '' },
           { h: 'Lot / Batch', k: r => [r.lot_no, r.batch_no].filter(Boolean).join(' / ') }, { h: 'Expiry', k: r => dt(r.expiry_date) }];
         if (cost) cols.push({ h: 'Rate', k: r => money(r.rate), align: 'right' }, { h: 'Landed AED', k: r => money(r.unit_cost_aed), align: 'right' });
         return makePdf({ title: 'Goods Receipt Note', noLabel: 'GRN No.', no: d.grn_no, date: d.grn_date, subtitle: label(d.status), landscape: true,
