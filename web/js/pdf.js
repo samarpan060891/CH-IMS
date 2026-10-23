@@ -292,6 +292,11 @@ export async function makePdf({ title, no, date, meta = [], columns, rows, total
     doc.setPage(p);
     if (asset.logo) doc.addImage(asset.logo, 'PNG', LM, 12.7, 78.7, 78.7 * 234 / 1240);
     else { font('bold', 13); doc.setTextColor(0); doc.text((state.company || {}).company_name || 'Citi Homes', LM, 18); }
+    // company TRN and trade licence, top right beside the logo
+    const co = state.company || {};
+    const ids = [co.trn && 'TRN: ' + co.trn, co.trade_license_no && 'Trade Licence: ' + co.trade_license_no].filter(Boolean);
+    font('normal', 8); doc.setTextColor(...GREY);
+    ids.forEach((t, i) => doc.text(t, W - RM, 21.5 + i * 3.8, { align: 'right' }));
     if (asset.footer) doc.addImage(asset.footer, 'PNG', LM, H - 9 - 39.5 * 298 / 746, 39.5, 39.5 * 298 / 746);
     font('normal', 8); doc.setTextColor(...GREY);
     doc.text(`${no ? no + '  |  ' : ''}Page ${p} of ${pages}`, W - RM, H - 10.5, { align: 'right' });

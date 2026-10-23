@@ -980,6 +980,7 @@ export const Settings = {
     fields() {
       return [
         { k: 'company_name', label: 'Company name', required: true, full: true }, { k: 'trn', label: 'Company TRN' }, { k: 'phone', label: 'Phone' }, { k: 'email', label: 'Email' },
+        { k: 'trade_license_no', label: 'Trade licence no. (printed on documents)' }, { k: 'trade_license_authority', label: 'Licence issued by', wide: true },
         { k: 'address', label: 'Address', type: 'textarea', full: true },
         { k: 'emirate', label: 'Emirate (VAT return box 1)', type: 'select', options: ['Abu Dhabi', 'Dubai', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah'].map(v => ({ v, l: v })) },
         { k: 'expense_approval_limit', label: 'Expenses above AED … need Factory Manager approval', type: 'number' },
