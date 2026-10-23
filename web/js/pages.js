@@ -8,7 +8,8 @@ const AGE_ORDER = ['0-30', '31-60', '61-90', '91-180', '181-365', '365+'];
 // ======================================================================
 // REPORTS
 // ======================================================================
-const Z = { k: 'buffer_zone', label: 'Zone', fmt: 'badge' };
+// stock-level (buffer) zone: Red / Yellow / Green against the buffer target — not a storage location
+const Z = { k: 'buffer_zone', label: 'Buffer zone', fmt: 'badge' };
 export const REPORTS = {
   stock: { title: 'Stock in hand', src: 'v_item_stock', filter: q => q.gt('on_hand', 0), columns: [
     { k: 'code', label: 'Code' }, { k: 'name', label: 'Item' }, { k: 'class_code', label: 'Class' }, { k: 'category_name', label: 'Category' }, { k: 'uom', label: 'UoM' },
