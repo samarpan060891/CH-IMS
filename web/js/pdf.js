@@ -151,7 +151,8 @@ async function loadSigners(sign) {
  *   sign {prepared, checked, approved, labels} (user ids → stored signatures), acceptance (counter-party name).
  */
 export async function makePdf({ title, no, date, meta = [], columns, rows, totals = [], notes = '', signatures = [], filename, landscape = false, subtitle = '',
-  noLabel = 'Number', party = null, subject = '', intro = '', scopeHeading = '', words = null, paymentTerms = [], terms = [], deliveryAddress = '', sign = null, acceptance = '' }) {
+  noLabel = 'Number', party = null, subject = '', intro = '', scopeHeading = '', words = null, paymentTerms = [], terms = [], deliveryAddress = '', sign = null, acceptance = '',
+  sections = [] }) {
   await loadAssets();
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: landscape ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
@@ -246,6 +247,19 @@ export async function makePdf({ title, no, date, meta = [], columns, rows, total
     const x = LM + doc.getTextWidth('Amount in Words: ');
     font('italic', 9.5); doc.splitTextToSize(amountInWords(words), CW - (x - LM)).forEach((s, i) => { doc.text(s, x, y); y += lh(9.5); });
     y += 3;
+  }
+  // further tables in the same style (e.g. the PO delivery schedule), each with a heading
+  for (const s of sections) {
+    if (!s.rows?.length) continue;
+    room(16); font('bold', 11.5); doc.text(s.heading, LM, y); y += 3;
+    doc.autoTable({
+      startY: y, head: [s.columns.map(c => c.h)], body: s.rows.map(r => s.columns.map(c => cellText(c, r))), theme: 'grid',
+      styles: { font: FONT(), fontSize: 9.5, cellPadding: 1.6, lineColor: GRID, lineWidth: 0.18, textColor: 20, valign: 'middle' },
+      headStyles: { fillColor: NAVY, textColor: 255, fontStyle: 'bold', halign: 'center' }, alternateRowStyles: { fillColor: ZEBRA },
+      columnStyles: Object.fromEntries(s.columns.map((c, i) => [i, { halign: c.align || (c.h === 'Sr. No.' ? 'center' : 'left'), cellWidth: c.w || 'auto', fontStyle: c.bold ? 'bold' : 'normal' }])),
+      margin: { left: LM, right: RM, top: TOP, bottom: BOTTOM },
+    });
+    y = doc.lastAutoTable.finalY + 6;
   }
   let n = 0;
   if (paymentTerms.length) {

@@ -218,11 +218,25 @@ function poLineAmount(r) { return num(r.qty) * num(r.rate) * (1 - num(r.discount
 // delivery schedule rows point at a PO line: saved lines by id, unsaved ones by a temporary key
 const poCur = { ctx: null };
 const lineKey = l => l.id || (l._k ||= 'n' + Math.random().toString(36).slice(2));
-// "Deliveries: 26 on 5 Nov 2026 · 26 on 19 Nov 2026" under a PO line on the PDF
-const schedText = (c, l) => {
-  const rows = (c.grids.sched || []).filter(s => (s._line || s.po_line_id) === lineKey(l)).sort((a, b) => String(a.delivery_date).localeCompare(String(b.delivery_date)));
-  return rows.length ? 'Deliveries: ' + rows.map(s => `${qty(s.qty)} on ${dt(s.delivery_date)}`).join(' · ') : '';
-};
+// the PO's delivery schedule as a table on the PDF, by date: scheduled deliveries, and unscheduled lines on their required / delivery date
+function poScheduleRows(c) {
+  const d = c.doc, out = [];
+  c.grids.lines.forEach((l, i) => {
+    const s = (c.grids.sched || []).filter(x => (x._line || x.po_line_id) === lineKey(l));
+    const base = { _no: i + 1, item: l.description || itemName(l.item_id), uom: itemUom(l.item_id) };
+    if (s.length) s.forEach(x => {
+      // two schedule rows of the same line on the same date print as one delivery
+      const same = out.find(o => o._no === i + 1 && o.date === x.delivery_date);
+      if (same) { same.qty += num(x.qty); if (x.remarks) same.remarks = [same.remarks, x.remarks].filter(Boolean).join('; '); }
+      else out.push({ ...base, date: x.delivery_date, qty: num(x.qty), remarks: x.remarks || '' });
+    });
+    else out.push({ ...base, date: l.required_date || d.delivery_date || null, qty: num(l.qty), remarks: '' });
+  });
+  out.sort((a, b) => String(a.date || '9999').localeCompare(String(b.date || '9999')) || a._no - b._no);
+  // the date on every row (a delivery can run across a page break)
+  out.forEach(r => { r._date = r.date ? dt(r.date) : 'To be advised'; });
+  return out;
+}
 // PO line qty not yet covered by its schedule rows (negative = scheduled too much)
 const schedBalance = (ctx, l) => num(l.qty) - (ctx.grids.sched || []).filter(s => s._line === lineKey(l)).reduce((t, s) => t + num(s.qty), 0);
 const poLineLabel = (ctx, l) => `${ctx.grids.lines.indexOf(l) + 1}. ${itemName(l.item_id) || 'item?'} — ${qty(l.qty)} ${itemUom(l.item_id)}`;
@@ -459,14 +473,17 @@ async function pdfPO(c) {
     columns: [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 },
               { h: 'Description of ' + (works ? 'Works' : 'Goods'), strong: true, k: r => [r.description || itemName(r.item_id),
                 r.description && r.description !== refRow('items', r.item_id)?.name ? itemName(r.item_id) : '',
-                r.project_id ? 'For ' + (refRow('projects', r.project_id)?.code || 'project') : '',
-                schedText(c, r)].filter(Boolean).join('\n') },
+                r.project_id ? 'For ' + (refRow('projects', r.project_id)?.code || 'project') : ''].filter(Boolean).join('\n') },
               { h: works ? 'Estimated\nQuantity' : 'Quantity', k: r => `${qty(r.qty)} ${itemUom(r.item_id)}`.trim(), align: 'center', w: 26 },
               { h: `Rate\n(${cur})`, k: r => money(r.rate), align: 'right', w: 24 },
               ...(disc ? [{ h: 'Disc.\n%', k: r => num(r.discount_pct) || '', align: 'right', w: 14 }] : []),
               { h: `Amount\n(${cur})`, k: r => money(poLineAmount(r)), align: 'right', w: 28 }],
     rows: c.grids.lines, totals,
     words: cur === 'AED' ? sub + vat : null,
+    // shown when any line has a delivery schedule
+    sections: (c.grids.sched || []).length ? [{ heading: 'Delivery Schedule', rows: poScheduleRows(c), columns: [
+      { h: 'Delivery date', k: '_date', w: 30, bold: true }, { h: 'Line', k: r => r._no + '.', w: 14, align: 'center' }, { h: 'Description of Goods', k: 'item' },
+      { h: 'Quantity', k: r => `${qty(r.qty)} ${r.uom}`.trim(), w: 28, align: 'center' }, { h: 'Remarks', k: 'remarks', w: 34 }] }] : [],
     paymentTerms: (c.grids.payment || []).map(p => ({ pct: p.pct, text: String(p.text || '').replace('{amt}', `AED ${money(aed * num(p.pct) / 100)}`) })),
     terms: [...((works ? co.po_terms_works : co.po_terms_goods) || []).map(fill), ...extra],
     deliveryAddress: d.delivery_address || refLabel('locations', d.delivery_location_id) || '',
