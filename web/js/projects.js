@@ -363,15 +363,23 @@ export const Mrp = {
   props: { projectId: String },
   data: () => ({ rows: [], loading: true, busy: false, proj: '', cls: '', cat: '', onlyShort: true }),
   computed: {
-    projects() { return [...new Map(this.rows.map(r => [r.project_id, r.project_code])).entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]))); },
-    // categories of the materials on screen (narrowed by the class filter)
-    cats() { return [...new Set(this.rows.filter(r => !this.cls || r.class_code === this.cls).map(r => r._cat).filter(Boolean))].sort(); },
+    // filter choices come from the lines still to order (with "Only lines to order"): a project / class / category whose
+    // materials are all requisitioned drops out of its list
+    open() { return this.rows.filter(r => !this.onlyShort || Number(r.suggested_qty) > 0); },
+    projects() { return [...new Map(this.open.map(r => [r.project_id, r.project_code])).entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]))); },
+    classes() { return [...new Set(this.open.filter(r => !this.proj || r.project_id === this.proj).map(r => r.class_code).filter(Boolean))].sort(); },
+    cats() { return [...new Set(this.open.filter(r => (!this.proj || r.project_id === this.proj) && (!this.cls || r.class_code === this.cls)).map(r => r._cat).filter(Boolean))].sort(); },
     shown() {
       return this.rows.filter(r => (!this.proj || r.project_id === this.proj) && (!this.cls || r.class_code === this.cls) && (!this.cat || r._cat === this.cat)
         && (!this.onlyShort || Number(r.suggested_qty) > 0));
     },
     picked() { return this.shown.filter(r => r._pick && Number(r._qty) > 0); },
     canOrder() { return hasRole('purchase', 'stores', 'production_incharge', 'factory_manager'); },
+  },
+  // a chosen class / category that has dropped out of its list (all requisitioned) is cleared
+  watch: {
+    classes(v) { if (this.cls && !v.includes(this.cls)) this.cls = ''; },
+    cats(v) { if (this.cat && !v.includes(this.cat)) this.cat = ''; },
   },
   async mounted() { this.proj = this.projectId || ''; await this.reload(); },
   methods: {
@@ -394,7 +402,6 @@ export const Mrp = {
           const src = String(r.sources || '').split(', ').filter(Boolean), prod = src.filter(s => s.endsWith('(to produce)'));
           r._src = prod.length > 2 ? [`${prod.length} BOQ lines (to produce)`, ...src.filter(s => !s.endsWith('(to produce)'))].join(', ') : r.sources;
         });
-        if (this.cat && !rows.some(r => r._cat === this.cat)) this.cat = '';
         this.rows = rows;
       });
       this.loading = false;
@@ -413,7 +420,7 @@ export const Mrp = {
     <div class="card">
       <div class="row" style="flex-wrap:wrap;gap:10px">
         <label class="f" style="min-width:200px"><span>Project</span><select v-model="proj"><option value="">All running projects</option><option v-for="p in projects" :value="p[0]">{{ p[1] }}</option></select></label>
-        <label class="f" style="min-width:140px"><span>Class</span><select v-model="cls" @change="cat=''"><option value="">All</option><option v-for="c in [...new Set(rows.map(r=>r.class_code))]" :value="c">{{ c }}</option></select></label>
+        <label class="f" style="min-width:140px"><span>Class</span><select v-model="cls" @change="cat=''"><option value="">All</option><option v-for="c in classes" :value="c">{{ c }}</option></select></label>
         <label class="f" style="min-width:220px"><span>Category</span><select v-model="cat"><option value="">All</option><option v-for="c in cats" :value="c">{{ c }}</option></select></label>
         <label class="row small" style="gap:6px;margin-top:18px"><input type="checkbox" v-model="onlyShort"> Only lines to order</label>
         <span class="spacer"></span>
