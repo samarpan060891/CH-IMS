@@ -854,12 +854,14 @@ export const mr = {
   key: 'mr', title: 'Material Requests', single: 'Material Request', table: 'material_requests', noField: 'mr_no', dateField: 'mr_date',
   statuses: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PARTIALLY_ISSUED', 'ISSUED', 'REJECTED', 'CANCELLED', 'CLOSED'],
   createRoles: ['shop_floor', 'production_incharge', 'stores', 'site_supervisor'],
-  canEdit: ctx => (['DRAFT', 'REJECTED'].includes(ctx.doc.status) && hasRole('shop_floor', 'production_incharge', 'stores', 'site_supervisor')) ||
-                  (ctx.doc.status === 'PENDING_APPROVAL' && hasRole('production_incharge')),
+  // production / excess requests come from the production order: items and quantities are fixed
+  canEdit: ctx => (ctx.doc.kind || 'MANUAL') === 'MANUAL' && ((['DRAFT', 'REJECTED'].includes(ctx.doc.status) && hasRole('shop_floor', 'production_incharge', 'stores', 'site_supervisor')) ||
+                  (ctx.doc.status === 'PENDING_APPROVAL' && hasRole('production_incharge'))),
   headerEditable: ctx => ['DRAFT', 'REJECTED'].includes(ctx.doc.status),
   refs: ['items', 'projects', 'cost_centers', 'profiles', 'item_classes', 'item_categories', 'work_centers'],
-  list: { select: '*, projects(code,name), cost_centers(code), profiles:requested_by(full_name)', columns: [
-    { k: 'purpose', label: 'Purpose', fmt: 'label' }, { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : r.cost_centers?.code, label: 'Project / Cost centre' },
+  list: { select: '*, projects(code,name), cost_centers(code), profiles:requested_by(full_name), production_orders!material_requests_production_order_id_fkey(wo_no)', columns: [
+    { k: 'purpose', label: 'Purpose', fmt: 'label' },
+    { k: r => r.kind === 'MANUAL' ? '' : `${r.kind === 'EXCESS' ? 'Excess' : 'Production'} · ${r.production_orders?.wo_no || ''}`, label: 'Production order' }, { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : r.cost_centers?.code, label: 'Project / Cost centre' },
     { k: 'priority', label: 'Priority', fmt: 'badge' }, { k: 'required_date', label: 'Required', fmt: 'date' }, { k: r => r.profiles?.full_name, label: 'Requested by' }] },
   defaults: () => ({ mr_date: today(), purpose: 'PROJECT', priority: 'NORMAL' }),
   // from a sales / internal order or a project: d/mr/new/so/<job id>
@@ -890,6 +892,7 @@ export const mr = {
       ctx.extra.shortLines = sh.filter(s => num(s.shortage) > 0).length;
     }
     ctx.extra.prs = must(await sb.from('purchase_requisitions').select('id,pr_no,status,pr_date').eq('mr_id', ctx.doc.id).order('created_at'));
+    if (ctx.doc.production_order_id) ctx.doc._woNo = must(await sb.from('production_orders').select('wo_no').eq('id', ctx.doc.production_order_id).single()).wo_no;
   },
   async loadInfo(ctx) {
     const prs = ctx.extra.prs || [];
@@ -899,7 +902,9 @@ export const mr = {
   header: [
     ...mrTarget,
     { k: 'mr_date', label: 'Request date', type: 'date', required: true },
-    ...browseFields,
+    { k: 'production_order_id', label: 'Production order', type: 'ro', fmt: (v, d) => `${d._woNo || ''} · ${d.kind === 'EXCESS' ? 'Excess material (process rejection)' : 'Materials as per BOM'}`, show: d => !!d.production_order_id },
+    { k: 'excess_reason', label: 'Reason for excess', type: 'ro', show: d => d.kind === 'EXCESS', wide: true },
+    ...browseFields.map(f => ({ ...f, show: d => (d.kind || 'MANUAL') === 'MANUAL' && f.show(d) })),
     { k: 'required_date', label: 'Required by', type: 'date' },
     { k: 'priority', label: 'Priority', type: 'select', required: true, options: ['NORMAL', 'URGENT'] },
     { k: 'requested_by', label: 'Requested by', type: 'ro', fmt: v => refLabel('profiles', v), show: d => !!d.id },
@@ -907,7 +912,9 @@ export const mr = {
     { k: 'approval_comments', label: 'Approval comments', type: 'ro', show: d => !!d.approval_comments, wide: true },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: ctx => (ctx.doc.status === 'PENDING_APPROVAL' && hasRole('production_incharge') ? 'You can adjust <b>Approved qty</b> or the board / offcut on each line, then Save and Approve. ' : '') +
+  headerNote: ctx => ctx.doc.kind === 'PRODUCTION' ? 'Prepared from the production order (BOM × quantity) at release. Items and quantities cannot be changed — the floor presses <b>Request material</b> and it goes straight to Stores. For process rejections use <b>Excess material</b> on the production order.'
+    : ctx.doc.kind === 'EXCESS' ? 'Excess material for a process rejection on the production order — the <b>Factory Manager</b> approves; the cost is charged to that order.'
+    : (ctx.doc.status === 'PENDING_APPROVAL' && hasRole('production_incharge') ? 'You can adjust <b>Approved qty</b> or the board / offcut on each line, then Save and Approve. ' : '') +
     (['DRAFT', 'REJECTED', 'PENDING_APPROVAL'].includes(ctx.doc.status) ? 'For boards you can name the exact <b>board lot or offcut piece</b> (✂ Request offcuts, or the Board / offcut column) — Stores issues exactly that piece; offcuts are requested whole.' : ''),
   grids: [{
     key: 'lines', title: 'Materials requested', table: 'mr_lines', fk: 'mr_id', order: 'line_no',
@@ -934,13 +941,19 @@ export const mr = {
     ],
   }],
   actions: ctx => {
-    const s = ctx.doc.status;
+    const s = ctx.doc.status, kind = ctx.doc.kind || 'MANUAL';
+    // excess material for a production order is approved by the Factory Manager; other requests by the Production In-charge
+    const approver = kind === 'EXCESS' ? hasRole('factory_manager') : hasRole('production_incharge');
     return [
-      { label: 'Submit for approval', cls: 'primary', show: ['DRAFT', 'REJECTED'].includes(s) && hasRole('shop_floor', 'production_incharge', 'stores', 'site_supervisor'), done: 'Sent to Production In-charge',
+      { label: 'Submit for approval', cls: 'primary', show: kind !== 'PRODUCTION' && ['DRAFT', 'REJECTED'].includes(s) && hasRole('shop_floor', 'production_incharge', 'stores', 'site_supervisor'), done: 'Sent to Production In-charge',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'SUBMIT' }) },
-      { label: '✔ Approve', cls: 'ok', show: s === 'PENDING_APPROVAL' && hasRole('production_incharge'), done: 'Approved — Stores can issue',
+      { label: '📤 Request material (send to Stores)', cls: 'primary', show: kind === 'PRODUCTION' && s === 'DRAFT' && hasRole('shop_floor', 'production_incharge', 'stores', 'factory_manager'),
+        confirm: 'Send this request to Stores? Items and quantities are as per the production order BOM.', done: 'Sent to Stores',
+        run: c => rpc('wo_request_material', { p_wo: c.doc.production_order_id }) },
+      { label: '↗ Production order', show: !!ctx.doc.production_order_id, reload: false, run: c => go('d/wo/' + c.doc.production_order_id) },
+      { label: '✔ Approve', cls: 'ok', show: s === 'PENDING_APPROVAL' && approver, done: 'Approved — Stores can issue',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'APPROVE' }) },
-      { label: '✖ Reject', cls: 'bad', show: s === 'PENDING_APPROVAL' && hasRole('production_incharge'),
+      { label: '✖ Reject', cls: 'bad', show: s === 'PENDING_APPROVAL' && approver,
         run: async c => { const r = await reason('Reject request'); if (r) return rpc('mr_action', { p_mr: c.doc.id, p_action: 'REJECT', p_comments: r }); } },
       { label: '📦 Issue material', cls: 'primary', show: ['APPROVED', 'PARTIALLY_ISSUED'].includes(s) && hasRole('stores'), reload: false, run: c => go(`d/issue/new/mr/${c.doc.id}`) },
       { label: `🛒 Requisition shortage (${ctx.extra.shortLines || 0})`, show: ['APPROVED', 'PARTIALLY_ISSUED'].includes(s) && !!ctx.extra.shortLines && hasRole('stores', 'production_incharge', 'factory_manager', 'purchase'),
@@ -948,7 +961,7 @@ export const mr = {
         reload: false, run: async c => { const id = await rpc('mr_raise_pr', { p_mr: c.doc.id }); toast('Requisition sent to Purchase', 'ok'); go('d/pr/' + id); } },
       { label: 'Short close', show: ['APPROVED', 'PARTIALLY_ISSUED'].includes(s) && hasRole('stores', 'production_incharge'), confirm: 'Close this request? Balance will not be issued.',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'CLOSE' }) },
-      { label: 'Cancel', show: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(s), confirm: 'Cancel this request?',
+      { label: 'Cancel', show: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(s) && (kind !== 'PRODUCTION' || hasRole('production_incharge', 'factory_manager')), confirm: 'Cancel this request?',
         run: c => rpc('mr_action', { p_mr: c.doc.id, p_action: 'CANCEL' }) },
       { label: '🖨 PDF', reload: false, run: c => makePdf({
           title: 'Material Request', no: c.doc.mr_no, date: c.doc.mr_date, subtitle: label(c.doc.status),

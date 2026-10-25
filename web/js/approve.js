@@ -30,8 +30,18 @@ const QUEUES = [
         if (!v) return false; return rpc('po_action', { p_po: r.id, p_action: 'APPROVE', p_comments: v.c || null, p_ref_no: v.ref, p_ref_date: v.date || null, p_doc_url: null }); } },
       { label: '✖ Rejected', cls: 'bad', run: async r => { const x = await reason('Top management rejected ' + r.no); if (!x) return false; return rpc('po_action', { p_po: r.id, p_action: 'REJECT', p_comments: x }); } }] },
   { k: 'mr', t: 'Material requests', roles: ['production_incharge'],
-    load: async () => must(await sb.from('material_requests').select('id,mr_no,priority,created_at,profiles:requested_by(full_name),projects(code),cost_centers(code),mr_lines(item_id,requested_qty,items(code,uoms(code)))').eq('status', 'PENDING_APPROVAL').order('created_at'))
+    load: async () => must(await sb.from('material_requests').select('id,mr_no,priority,created_at,profiles:requested_by(full_name),projects(code),cost_centers(code),mr_lines(item_id,requested_qty,items(code,uoms(code)))').eq('status', 'PENDING_APPROVAL').neq('kind', 'EXCESS').order('created_at'))
       .map(m => ({ id: m.id, no: m.mr_no, title: m.profiles?.full_name || '', sub: m.projects?.code || m.cost_centers?.code, urgent: m.priority === 'URGENT', at: m.created_at, link: 'd/mr/' + m.id,
+                   lines: m.mr_lines.map(l => `${l.items?.code} × ${qty(l.requested_qty)} ${l.items?.uoms?.code || ''}`) })),
+    actions: approveReject('mr_action', 'p_mr').map(a => a.cls === 'ok' ? { ...a, run: r => rpc('mr_action', { p_mr: r.id, p_action: 'APPROVE' }) } : a) },
+  { k: 'wo', t: 'Production orders', roles: ['factory_manager'],
+    load: async () => must(await sb.from('production_orders').select('id,wo_no,description,qty,due_date,created_at,projects(code),items(code,uoms(code))').eq('status', 'PENDING_FM').order('wo_no'))
+      .map(w => ({ id: w.id, no: w.wo_no, title: w.description || w.items?.code, sub: `${w.projects?.code || ''} · ${qty(w.qty)} ${w.items?.uoms?.code || ''}${w.due_date ? ' · due ' + dt(w.due_date) : ''}`, at: w.created_at, link: 'd/wo/' + w.id })),
+    actions: [{ label: '✔ Approve', cls: 'ok', run: r => rpc('wo_fm_decide', { p_wo: r.id, p_approve: true, p_comments: null }) },
+              { label: '↩ Return', cls: 'bad', run: async r => { const x = await reason('Return ' + r.no); if (!x) return false; return rpc('wo_fm_decide', { p_wo: r.id, p_approve: false, p_comments: x }); } }] },
+  { k: 'mrx', t: 'Excess material (process rejections)', roles: ['factory_manager'],
+    load: async () => must(await sb.from('material_requests').select('id,mr_no,excess_reason,created_at,profiles:requested_by(full_name),projects(code),production_orders!material_requests_production_order_id_fkey(wo_no),mr_lines(requested_qty,items(code,uoms(code)))').eq('status', 'PENDING_APPROVAL').eq('kind', 'EXCESS').order('created_at'))
+      .map(m => ({ id: m.id, no: m.mr_no, title: `${m.production_orders?.wo_no || ''} — ${m.excess_reason || ''}`, sub: `${m.projects?.code || ''} · ${m.profiles?.full_name || ''}`, urgent: true, at: m.created_at, link: 'd/mr/' + m.id,
                    lines: m.mr_lines.map(l => `${l.items?.code} × ${qty(l.requested_qty)} ${l.items?.uoms?.code || ''}`) })),
     actions: approveReject('mr_action', 'p_mr').map(a => a.cls === 'ok' ? { ...a, run: r => rpc('mr_action', { p_mr: r.id, p_action: 'APPROVE' }) } : a) },
   { k: 'budget', t: 'Issues over project budget', roles: ['factory_manager'],

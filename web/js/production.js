@@ -240,7 +240,7 @@ const latestTpl = itemId => (state.refs.bom_templates || []).filter(t => t.item_
 const woBoqLabel = b => `${b.boq_ref || b.line_no} — ${b.description} · ${itemCode(b.item_id) || 'no product set'} · ${qty(b.left)} of ${qty(b.qty)} still to plan`;
 export const wo = {
   key: 'wo', title: 'Production Orders', single: 'Production Order', table: 'production_orders', noField: 'wo_no', dateField: 'wo_date',
-  statuses: ['DRAFT', 'RELEASED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'], createRoles: ['production_incharge', 'factory_manager'],
+  statuses: ['DRAFT', 'PENDING_FM', 'APPROVED', 'RELEASED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'], createRoles: ['production_incharge', 'factory_manager'],
   refs: ['items', 'projects', 'work_centers', 'bom_templates', 'profiles'],
   list: { select: '*, projects(code,name), items(code,name)', columns: [
     { k: r => r.projects ? `${r.projects.code} — ${r.projects.name}` : '', label: 'Project / MTS' }, { k: r => r.items ? `${r.items.code} — ${r.items.name}` : '', label: 'Product' },
@@ -301,15 +301,22 @@ export const wo = {
     { k: 'qty_completed', label: 'Good qty to FG store', type: 'ro', fmt: v => qty(v), show: d => ['IN_PROGRESS', 'COMPLETED'].includes(d.status) },
     { k: 'qty_rejected', label: 'Rejected at QC (rework + scrap)', type: 'ro', fmt: v => qty(v), show: d => ['IN_PROGRESS', 'COMPLETED'].includes(d.status) },
     { k: 'cost_total', label: 'Total cost AED', type: 'ro', fmt: (v, d) => `${money(v)}  (unit ${money(num(v) / (num(d.qty_completed) || 1))})`, cost: true, show: d => d.status === 'COMPLETED' },
+    { k: 'fm_approved_by', label: 'Approved by Factory Manager', type: 'ro', fmt: (v, d) => v ? `${refLabel('profiles', v)} · ${dt(d.fm_approved_at)}` : '', show: d => !!d.fm_approved_by },
+    { k: 'fm_comments', label: 'Factory Manager comments', type: 'ro', show: d => !!d.fm_comments, wide: true },
     { k: 'released_by', label: 'Released', type: 'ro', fmt: (v, d) => v ? `${refLabel('profiles', v)} · ${dt(d.released_at)}` : '', show: d => !!d.released_by },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
   headerNote: ctx => {
-    if (ctx.doc.is_rework && ctx.doc.status === 'DRAFT') return '<b>Rework order</b> created at QC. The original route was copied — delete the stages that are not needed (or skip them later), add any replacement material, then <b>Release</b>.';
-    if (ctx.doc.status !== 'DRAFT') return 'Stages are tracked on the <b>Stage board</b> (Production menu or scan the job card QR). Material comes through the linked material request. ' +
+    const s = ctx.doc.status;
+    if (ctx.doc.is_rework && s === 'DRAFT') return '<b>Rework order</b> created at QC (approved by the FM there). The original route was copied — delete the stages that are not needed (or skip them later), add any replacement material, then <b>Release</b>.';
+    if (s === 'DRAFT' && ctx.doc.fm_comments) return `<b>Returned by the Factory Manager:</b> ${ctx.doc.fm_comments}. Correct the order, <b>Save</b> and <b>Send to Factory Manager</b> again.`;
+    if (s === 'PENDING_FM') return 'Waiting for the <b>Factory Manager</b> to approve. After approval the Production In-charge releases it to the floor.';
+    if (s === 'APPROVED') return 'Approved by the Factory Manager — <b>Release to floor</b> prepares the material request from the BOM and puts the stages on the stage board.';
+    if (s !== 'DRAFT') return 'Stages are tracked on the <b>Stage board</b> (Production menu or scan the job card QR). The floor sends the prepared material request with <b>Request material</b> (no items or quantities to type); ' +
+      'for process rejections use <b>Excess material</b> (this order\'s BOM items only, Factory Manager approves, cost charged to this order). ' +
       'Send finished units to the FG store in batches with <b>Receive batch</b>; the <b>Final receipt</b> closes the order and absorbs all remaining cost.';
     return 'Choosing the product (or BOQ line), BOM template and quantity fills the <b>cut list, material requirement and stage man-hours / machine hours</b> = template × quantity; ' +
-      'they are recalculated when the quantity changes. Adjust or add lines if needed, <b>Save</b>, then <b>Release</b> — a material request goes to the Production In-charge and Stores.';
+      'they are recalculated when the quantity changes. Adjust or add lines if needed, <b>Save</b>, then <b>Send to Factory Manager</b> → FM approves → <b>Release</b>.';
   },
   grids: [
     { key: 'parts', title: 'Cut list (whole order)', table: 'wo_parts', fk: 'wo_id', order: 'line_no', fields: partFields,
@@ -338,6 +345,8 @@ export const wo = {
     ctx.extra.mat = must(await sb.from('stock_ledger').select('txn_date,txn_type,doc_no,qty,value,item_id').eq('production_order_id', id).in('txn_type', ['ISSUE', 'RETURN']).order('txn_at'));
     ctx.extra.receipts = must(await sb.from('wo_receipts').select('*, rw:production_orders!wo_receipts_rework_wo_id_fkey(id,wo_no), scrap_notes(id,scrap_no,status)').eq('wo_id', id).order('created_at'));
     ctx.extra.reworks = must(await sb.from('production_orders').select('id,wo_no,status,qty').eq('parent_wo_id', id).order('created_at'));
+    ctx.extra.mrStatus = ctx.doc.mr_id ? must(await sb.from('material_requests').select('status').eq('id', ctx.doc.mr_id).single()).status : null;
+    ctx.extra.excess = must(await sb.from('material_requests').select('id,mr_no,status').eq('production_order_id', id).eq('kind', 'EXCESS').order('created_at'));
     if (ctx.doc.parent_wo_id) ctx.doc._parentNo = must(await sb.from('production_orders').select('wo_no').eq('id', ctx.doc.parent_wo_id).single()).wo_no;
   },
   async loadInfo(ctx) {
@@ -392,12 +401,25 @@ export const wo = {
         run: c => rpc('wo_apply_template', { p_wo: c.doc.id, p_template: c.doc.template_id }) },
       { label: '🧮 Calculate materials', show: s === 'DRAFT' && plan && ctx.grids.parts.length > 0, done: 'Sheets and edge banding calculated from the cut list',
         run: c => rpc('wo_compute_materials', { p_wo: c.doc.id }) },
-      { label: '🚀 Release to floor', cls: 'primary', show: s === 'DRAFT' && plan,
-        confirm: 'Release this order? The cut list and route are locked, a material request is sent for approval and the stages appear on the stage board.',
-        run: async c => { const mr = await rpc('wo_release', { p_wo: c.doc.id }); toast(mr ? 'Released — material request sent for approval' : 'Released', 'ok'); } },
+      { label: '📨 Send to Factory Manager', cls: 'primary', show: s === 'DRAFT' && plan && !ctx.doc.is_rework, done: 'Sent to the Factory Manager for approval',
+        run: c => rpc('wo_submit', { p_wo: c.doc.id }) },
+      { label: '✔ Approve (FM)', cls: 'ok', show: s === 'PENDING_FM' && hasRole('factory_manager'), done: 'Approved — the Production In-charge can release it',
+        run: c => rpc('wo_fm_decide', { p_wo: c.doc.id, p_approve: true, p_comments: null }) },
+      { label: '↩ Return (FM)', cls: 'bad', show: s === 'PENDING_FM' && hasRole('factory_manager'),
+        run: async c => { const v = await ask({ title: 'Return ' + c.doc.wo_no, fields: [{ k: 'r', label: 'Reason / what to change', type: 'textarea', required: true }], okText: 'Return order' });
+          if (v) return rpc('wo_fm_decide', { p_wo: c.doc.id, p_approve: false, p_comments: v.r }); } },
+      { label: '🚀 Release to floor', cls: 'primary', show: (s === 'APPROVED' || (s === 'DRAFT' && ctx.doc.is_rework)) && plan,
+        confirm: 'Release this order? The cut list and route are locked, the material request is prepared from the BOM (the floor sends it to Stores with "Request material") and the stages appear on the stage board.',
+        run: async c => { const mr = await rpc('wo_release', { p_wo: c.doc.id }); toast(mr ? 'Released — material request prepared; the floor sends it with "Request material"' : 'Released', 'ok', 6000); } },
+      { label: '📤 Request material', cls: 'primary', show: ['RELEASED', 'IN_PROGRESS'].includes(s) && ctx.extra.mrStatus === 'DRAFT' && hasRole('shop_floor', 'production_incharge', 'stores', 'factory_manager'),
+        confirm: 'Send the material request for this order to Stores? Items and quantities are as per the BOM.', done: 'Material request sent to Stores',
+        run: c => rpc('wo_request_material', { p_wo: c.doc.id }) },
+      { label: '➕ Excess material', show: ['RELEASED', 'IN_PROGRESS'].includes(s) && hasRole('shop_floor', 'production_incharge', 'stores', 'factory_manager'),
+        run: c => excessMaterial(c.doc) },
       { label: '🖨 Job card', show: s !== 'CANCELLED', reload: false, run: c => jobCard(c) },
       { label: '⏱ Stage board', show: ['RELEASED', 'IN_PROGRESS'].includes(s), reload: false, run: c => go('floor/' + c.doc.id) },
       { label: '📦 Material request', show: !!ctx.doc.mr_id, reload: false, run: c => go('d/mr/' + c.doc.mr_id) },
+      ...(ctx.extra.excess || []).map(m => ({ label: `➕ ${m.mr_no} (${label(m.status)})`, reload: false, run: () => go('d/mr/' + m.id) })),
       { label: '📥 Receive batch to FG', show: ['RELEASED', 'IN_PROGRESS'].includes(s) && plan, run: c => receiveFg(c, false) },
       { label: '✔ Final receipt & complete', cls: 'ok', show: ['RELEASED', 'IN_PROGRESS'].includes(s) && plan, run: c => receiveFg(c, true) },
       ...(ctx.extra.receipts || []).filter(r => r.qc_status === 'PENDING_FM').map(r => ({ label: `⚖ QC decision ${r.receipt_no}`, cls: 'primary',
@@ -405,7 +427,7 @@ export const wo = {
       { label: '↻ Parent order', show: !!ctx.doc.parent_wo_id, reload: false, run: c => go('d/wo/' + c.doc.parent_wo_id) },
       ...(ctx.extra.reworks || []).map(r => ({ label: `↻ ${r.wo_no} (${label(r.status)})`, reload: false, run: () => go('d/wo/' + r.id) })),
       { label: '🚚 Dispatch', cls: 'primary', show: s === 'COMPLETED' && hasRole('stores', 'factory_manager'), reload: false, run: c => go('d/dsp/new/wo/' + c.doc.id) },
-      { label: 'Cancel order', show: ['RELEASED', 'IN_PROGRESS'].includes(s) && plan,
+      { label: 'Cancel order', show: ['PENDING_FM', 'APPROVED', 'RELEASED', 'IN_PROGRESS'].includes(s) && plan,
         run: async c => { const v = await ask({ title: 'Cancel ' + c.doc.wo_no, fields: [{ k: 'r', label: 'Reason', type: 'textarea', required: true }], okText: 'Cancel order', danger: true });
           if (v) return rpc('wo_cancel', { p_wo: c.doc.id, p_reason: v.r }); } },
     ];
@@ -430,6 +452,27 @@ async function receiveFg(c, final) {
   await rpc('wo_receive_fg', { p_wo: d.id, p_good: num(v.g), p_rework: num(v.rw), p_scrap: num(v.sc), p_final: final, p_remarks: v.m || null });
   const rej = num(v.rw) + num(v.sc);
   toast(`${final ? 'Order completed' : 'Batch received'} — ${qty(v.g)} to FG store${rej ? `; ${qty(rej)} rejected unit(s) sent to the Factory Manager for approval` : ''}`, 'ok', 7000);
+}
+
+// ---------- excess material for a process rejection: only this order's BOM items, reason required, FM approves ----------
+export async function excessMaterial(d) {
+  await loadRefs(['items']);
+  const mats = must(await sb.from('wo_materials').select('item_id,required_qty').eq('wo_id', d.id));
+  const by = {};
+  mats.forEach(m => { by[m.item_id] = (by[m.item_id] || 0) + num(m.required_qty); });
+  const ids = Object.keys(by).sort((a, b) => itemCode(a).localeCompare(itemCode(b)));
+  if (!ids.length) throw new Error('This order has no BOM materials');
+  const v = await ask({ title: 'Excess material — ' + d.wo_no,
+    message: 'For parts rejected in a process (damage, wrong cut, defect). Only the materials of this order can be requested. The Factory Manager approves; the cost is charged to this order.',
+    fields: [{ k: 'reason', label: 'Reason — which part / process was rejected', type: 'textarea', required: true },
+      ...ids.map((id, i) => ({ k: 'q' + i, label: `${itemName(id)} (${itemUom(id)}) — BOM ${qty(by[id])}`, type: 'number' }))],
+    okText: 'Send to Factory Manager' });
+  if (!v) return;
+  const lines = ids.map((id, i) => ({ item_id: id, qty: num(v['q' + i]) })).filter(l => l.qty > 0);
+  if (!lines.length) throw new Error('Enter the quantity for at least one material');
+  const id = await rpc('wo_excess_request', { p_wo: d.id, p_lines: lines, p_reason: v.reason });
+  toast('Excess material request sent to the Factory Manager', 'ok');
+  return id;
 }
 
 // FM decision on rejected units of one receipt (accept as good / rework / scrap)
@@ -799,6 +842,190 @@ export const dsp = {
           acceptance: refRow('projects', c.doc.project_id)?.customer || 'the customer' }) },
     ];
   },
+};
+
+// ======================================================================
+// PRODUCTION PLANNER: project cards → in-house BOQ products → split into batches → production orders (to the FM)
+// ======================================================================
+const PLAN_OPEN = ['DRAFT', 'PENDING_FM', 'APPROVED'];
+const PLAN_FLOOR = ['RELEASED', 'IN_PROGRESS'];
+export const ProductionPlanner = {
+  components: { Badge },
+  props: { projectId: String, lineId: String },
+  data: () => ({ loading: true, busy: false, projects: [], lines: [], orders: [], nb: 1, batches: [] }),
+  computed: {
+    project() { return this.projects.find(p => p.id === this.projectId) || null; },
+    line() { return this.lines.find(l => l.id === this.lineId) || null; },
+    canPlan() { return hasRole('production_incharge', 'factory_manager'); },
+    batchTotal() { return this.batches.reduce((s, b) => s + num(b.qty), 0); },
+    lineOrders() { return this.orders.filter(o => o.boq_line_id === this.lineId); },
+  },
+  watch: { projectId() { this.reload(); }, lineId() { this.reload(); } },
+  async mounted() { await this.reload(); },
+  methods: {
+    qty, dt, label, itemName,
+    async reload() {
+      this.loading = true;
+      await run(async () => {
+        await loadRefs(['items', 'projects']);
+        // made in-house BOQ lines of open projects, and the production orders against them (rework orders are outside the BOQ)
+        const lines = must(await sb.from('boq_lines').select('id,project_id,boq_ref,line_no,description,item_id,qty,unit_type,template_id,projects!inner(id,code,name,status,customer)')
+          .eq('category', 'MANUFACTURED').eq('projects.status', 'OPEN').order('line_no'));
+        const pids = [...new Set(lines.map(l => l.project_id))];
+        const orders = pids.length ? must(await sb.from('production_orders').select('id,wo_no,boq_line_id,project_id,qty,qty_completed,status,due_date,batch_label,fm_comments')
+          .in('project_id', pids).neq('status', 'CANCELLED').eq('is_rework', false).not('boq_line_id', 'is', null).order('wo_no')) : [];
+        const by = {};
+        orders.forEach(o => { (by[o.boq_line_id] ||= []).push(o); });
+        this.orders = orders;
+        this.lines = lines.map(l => {
+          const os = by[l.id] || [];
+          const planned = os.reduce((s, o) => s + num(o.qty), 0);
+          return { ...l, planned, left: Math.max(0, num(l.qty) - planned), done: os.reduce((s, o) => s + num(o.qty_completed), 0),
+            nPending: os.filter(o => o.status === 'PENDING_FM').length, nFloor: os.filter(o => PLAN_FLOOR.includes(o.status)).length, nOrders: os.length };
+        });
+        const pm = {};
+        this.lines.forEach(l => {
+          const p = (pm[l.project_id] ||= { ...l.projects, items: 0, qty: 0, planned: 0, left: 0, done: 0, pending: 0, floor: 0 });
+          p.items++; p.qty += num(l.qty); p.planned += l.planned; p.left += l.left; p.done += l.done; p.pending += l.nPending; p.floor += l.nFloor;
+        });
+        this.projects = Object.values(pm).sort((a, b) => a.code.localeCompare(b.code));
+        if (this.projectId) this.lines = this.lines.filter(l => l.project_id === this.projectId);
+        if (this.line) this.split(1);
+      });
+      this.loading = false;
+    },
+    pct(a, b) { return b ? Math.min(100, Math.round(100 * a / b)) : 0; },
+    // split what is left into n batches of whole units (the first batches take the remainder)
+    split(n) {
+      const left = this.line?.left || 0;
+      n = Math.max(1, Math.min(Math.floor(num(n)) || 1, Math.max(1, Math.ceil(left))));
+      this.nb = n;
+      const base = Math.floor(left / n), rem = Math.round(left - base * n);
+      const old = this.batches;
+      this.batches = Array.from({ length: n }, (_, i) => ({ qty: base + (i < rem ? 1 : 0), due_date: old[i]?.due_date || '', remarks: old[i]?.remarks || '' }));
+    },
+    async create() {
+      const l = this.line, bs = this.batches.filter(b => num(b.qty) > 0);
+      if (!bs.length) return toast('Enter a quantity for at least one batch', 'error');
+      if (bs.some(b => !Number.isInteger(num(b.qty)))) return toast('Batch quantities must be whole units', 'error');
+      if (this.batchTotal > l.left + 0.0005) return toast(`The batches add up to ${qty(this.batchTotal)} — only ${qty(l.left)} is left to plan on this BOQ line`, 'error');
+      if (!(await confirmBox('Create production orders', `Create ${bs.length} production order(s) for ${qty(this.batchTotal)} × ${l.description} and send them to the Factory Manager for approval?`))) return;
+      this.busy = true;
+      const n = await run(() => rpc('wo_create_batches', { p_line: l.id, p_batches: bs.map(b => ({ qty: num(b.qty), due_date: b.due_date || null, remarks: b.remarks || null })) }));
+      this.busy = false;
+      if (n) { toast(`${n} production order(s) created and sent to the Factory Manager`, 'ok', 6000); await this.reload(); }
+    },
+    async fmAll() {
+      const ps = this.lineOrders.filter(o => o.status === 'PENDING_FM');
+      if (!(await confirmBox('Approve orders', `Approve ${ps.length} production order(s) for release?`))) return;
+      this.busy = true;
+      await run(async () => { for (const o of ps) await rpc('wo_fm_decide', { p_wo: o.id, p_approve: true, p_comments: null }); toast('Approved', 'ok'); });
+      this.busy = false; await this.reload();
+    },
+    async releaseAll() {
+      const ps = this.lineOrders.filter(o => o.status === 'APPROVED');
+      if (!(await confirmBox('Release to floor', `Release ${ps.length} approved order(s) to the floor? Their material requests are prepared from the BOM.`))) return;
+      this.busy = true;
+      await run(async () => { for (const o of ps) await rpc('wo_release', { p_wo: o.id }); toast('Released to the floor', 'ok'); });
+      this.busy = false; await this.reload();
+    },
+    hasRole, go,
+  },
+  template: `<div>
+    <div class="row" style="gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+      <a v-if="projectId" class="btn sm" href="javascript:void 0" @click="go(lineId ? 'plan/' + projectId : 'plan')">← {{ lineId ? 'Back to products' : 'All projects' }}</a>
+      <b v-if="project">{{ project.code }} — {{ project.name }}</b>
+      <span v-if="line" class="muted">/ {{ line.boq_ref || line.line_no }} {{ line.description }}</span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn sm" @click="go('d/wo')">☰ All production orders (list)</button>
+      <button class="btn sm" @click="reload">↻ Refresh</button>
+    </div>
+    <div v-if="loading" class="card empty">Loading…</div>
+
+    <!-- 1. project cards -->
+    <template v-else-if="!projectId">
+      <div v-if="!projects.length" class="card empty">No open project has made in-house products in its BOQ.</div>
+      <div class="kpis">
+        <div v-for="p in projects" :key="p.id" class="kpi" style="cursor:pointer" @click="go('plan/' + p.id)">
+          <div class="l">{{ p.code }}<span v-if="p.customer"> · {{ p.customer }}</span></div>
+          <div style="font-weight:700;font-size:16px;margin:4px 0">{{ p.name }}</div>
+          <div class="s">{{ p.items }} in-house product(s) · {{ qty(p.qty) }} units in BOQ</div>
+          <div style="height:6px;background:var(--line);border-radius:3px;margin:8px 0 4px"><div :style="{ width: pct(p.planned, p.qty) + '%', height: '6px', background: 'var(--brand)', borderRadius: '3px' }"></div></div>
+          <div class="s">{{ qty(p.planned) }} on orders · <b>{{ qty(p.left) }} to plan</b> · {{ qty(p.done) }} to FG</div>
+          <div class="s" v-if="p.pending || p.floor"><span v-if="p.pending">⏳ {{ p.pending }} with FM</span><span v-if="p.pending && p.floor"> · </span><span v-if="p.floor">🏭 {{ p.floor }} on floor</span></div>
+        </div>
+      </div>
+    </template>
+
+    <!-- 2. producible items of the project -->
+    <template v-else-if="!lineId">
+      <div class="card">
+        <div class="hd"><h3>Made in-house products (BOQ)</h3></div>
+        <div class="tbl-wrap"><table class="t">
+          <thead><tr><th>BOQ</th><th>Description</th><th>Product</th><th class="n">BOQ qty</th><th class="n">On orders</th><th class="n">To plan</th><th class="n">To FG</th><th>Orders</th><th></th></tr></thead>
+          <tbody>
+            <tr v-if="!lines.length"><td colspan="9" class="empty">No made in-house BOQ lines</td></tr>
+            <tr v-for="l in lines" :key="l.id" style="cursor:pointer" @click="go('plan/' + projectId + '/' + l.id)">
+              <td>{{ l.boq_ref || l.line_no }}</td><td>{{ l.description }}<div class="small muted" v-if="l.unit_type">{{ l.unit_type }}</div></td>
+              <td>{{ l.item_id ? itemName(l.item_id) : '⚠ product not set' }}</td>
+              <td class="n">{{ qty(l.qty) }}</td><td class="n">{{ qty(l.planned) }}</td><td class="n"><b>{{ qty(l.left) }}</b></td><td class="n">{{ qty(l.done) }}</td>
+              <td class="small">{{ l.nOrders || '' }}<span v-if="l.nPending"> · ⏳ {{ l.nPending }} with FM</span><span v-if="l.nFloor"> · 🏭 {{ l.nFloor }} on floor</span></td>
+              <td><button class="btn sm primary" @click.stop="go('plan/' + projectId + '/' + l.id)">{{ l.left > 0 && canPlan ? 'Plan batches →' : 'Open →' }}</button></td>
+            </tr>
+          </tbody>
+        </table></div>
+      </div>
+    </template>
+
+    <!-- 3. split one product into batches -->
+    <template v-else-if="line">
+      <div class="kpis">
+        <div class="kpi"><div class="l">Product</div><div style="font-weight:600;margin-top:4px">{{ line.item_id ? itemName(line.item_id) : '⚠ set the product on the BOQ line' }}</div></div>
+        <div class="kpi"><div class="l">BOQ quantity</div><div class="v">{{ qty(line.qty) }}</div></div>
+        <div class="kpi"><div class="l">Already on orders</div><div class="v">{{ qty(line.planned) }}</div></div>
+        <div class="kpi" :class="line.left > 0 ? 'warn' : 'ok'"><div class="l">Left to plan</div><div class="v">{{ qty(line.left) }}</div></div>
+      </div>
+      <div class="card" v-if="line.left > 0 && canPlan && line.item_id">
+        <div class="hd"><h3>Split into batches</h3></div>
+        <div class="row" style="gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+          <label>Number of batches <input type="number" min="1" step="1" style="width:80px" v-model.number="nb" @change="split(nb)"></label>
+          <button class="btn sm" @click="split(nb)">⇆ Split {{ qty(line.left) }} equally</button>
+          <span class="small muted">Each batch becomes one production order with materials, man-hours and machine hours from the BOM × batch qty.</span>
+        </div>
+        <div class="tbl-wrap"><table class="t">
+          <thead><tr><th>Batch</th><th class="n">Quantity</th><th>Due date</th><th>Remarks (units / floor / building)</th></tr></thead>
+          <tbody>
+            <tr v-for="(b, i) in batches" :key="i">
+              <td>Batch {{ i + 1 }} of {{ batches.length }}</td>
+              <td class="n"><input type="number" min="0" step="1" style="width:90px;text-align:right" v-model.number="b.qty"></td>
+              <td><input type="date" v-model="b.due_date"></td>
+              <td><input style="width:100%" v-model="b.remarks"></td>
+            </tr>
+          </tbody>
+          <tfoot><tr><th>Total</th><th class="n" :style="{ color: batchTotal > line.left + 0.0005 ? 'var(--bad)' : '' }">{{ qty(batchTotal) }} / {{ qty(line.left) }}</th><th colspan="2"></th></tr></tfoot>
+        </table></div>
+        <div style="margin-top:10px"><button class="btn primary" :disabled="busy || !batchTotal" @click="create">🏭 Create production orders → Factory Manager</button></div>
+      </div>
+      <div class="card">
+        <div class="hd"><h3>Production orders for this product</h3><span class="spacer" style="flex:1"></span>
+          <button v-if="hasRole('factory_manager') && lineOrders.some(o => o.status === 'PENDING_FM')" class="btn sm ok" :disabled="busy" @click="fmAll">✔ Approve all waiting (FM)</button>
+          <button v-if="canPlan && lineOrders.some(o => o.status === 'APPROVED')" class="btn sm primary" :disabled="busy" @click="releaseAll">🚀 Release all approved</button>
+        </div>
+        <div class="tbl-wrap"><table class="t">
+          <thead><tr><th>Order</th><th>Batch</th><th class="n">Qty</th><th class="n">To FG</th><th>Due</th><th>Status</th><th>FM comments</th></tr></thead>
+          <tbody>
+            <tr v-if="!lineOrders.length"><td colspan="7" class="empty">No production orders yet</td></tr>
+            <tr v-for="o in lineOrders" :key="o.id" style="cursor:pointer" @click="go('d/wo/' + o.id)">
+              <td><a href="javascript:void 0"><b>{{ o.wo_no }}</b></a></td><td>{{ o.batch_label || '' }}</td>
+              <td class="n">{{ qty(o.qty) }}</td><td class="n">{{ qty(o.qty_completed) }}</td><td>{{ dt(o.due_date) }}</td>
+              <td><Badge :v="o.status" /></td><td class="small">{{ o.fm_comments || '' }}</td>
+            </tr>
+          </tbody>
+        </table></div>
+      </div>
+    </template>
+    <div v-else class="card empty">This BOQ line is not a made in-house product of an open project.</div>
+  </div>`,
 };
 
 // ======================================================================

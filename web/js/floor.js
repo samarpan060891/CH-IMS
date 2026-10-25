@@ -6,6 +6,7 @@ const BY_PICK = namePick('employees');
 // the signed-in user's employee name when it is in the employee master
 const myEmployeeName = () => (state.refs.employees || []).find(e => e.name === state.profile?.full_name)?.name || '';
 import { Scanner, parseCode } from './scan.js';
+import { excessMaterial } from './production.js';
 
 const KEY = 'cc.floor.for';
 const OPEN_MR = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PARTIALLY_ISSUED', 'REJECTED'];
@@ -28,7 +29,7 @@ export const FloorApp = {
   components: { Badge, Scanner, RefSelect },
   data: () => ({ tab: 'new', loading: false, busy: false, wos: [], projects: [], ccs: [], kind: 'PROJECT', f: blank(), q: '', split: {}, scanning: false,
                  bCls: null, bCat: null, bSub: null,
-                 mine: [], pending: [], receive: [], openId: null, fits: [],
+                 mine: [], pending: [], receive: [], openId: null, fits: [], woMr: null, woExcess: [],
                  issues: [], iq: '', rt: null, myReturns: [], ocPI: [], ocFM: [] }),
   computed: {
     isPI: () => hasRole('production_incharge'),
@@ -69,7 +70,7 @@ export const FloorApp = {
     toReceive() { return this.receive.length; },
   },
   watch: {
-    'f.target'(v) { try { localStorage.setItem(KEY, v); } catch { /* storage unavailable */ } this.loadFits(); this.split = {}; this.loadSplit(); },
+    'f.target'(v) { try { localStorage.setItem(KEY, v); } catch { /* storage unavailable */ } this.loadFits(); this.loadWoMr(); this.split = {}; this.loadSplit(); },
     kind(k) {
       if (!this.targets.some(t => t.v === this.f.target)) this.f.target = '';
       this.bCls = null;
@@ -87,7 +88,7 @@ export const FloorApp = {
     await run(async () => {
       await loadRefs(['items', 'locations', 'employees', 'item_classes', 'item_categories', 'work_centers']);
       const [w, p, c] = await Promise.all([
-        sb.from('production_orders').select('id,wo_no,description,project_id,status,projects(code,project_type)').in('status', ['RELEASED', 'IN_PROGRESS']).order('wo_no'),
+        sb.from('production_orders').select('id,wo_no,description,project_id,status,qty,mr_id,projects(code,project_type)').in('status', ['RELEASED', 'IN_PROGRESS']).order('wo_no'),
         sb.from('projects').select('id,code,name,project_type,cost_center_id').eq('status', 'OPEN').order('code'),
         sb.from('cost_centers').select('id,code,name').eq('is_active', true).order('code')]);
       this.wos = must(w); this.projects = must(p); this.ccs = must(c);
@@ -115,7 +116,7 @@ export const FloorApp = {
         jobs.push(this.isPI ? sb.from('material_returns').select(ret).eq('status', 'PENDING_PI').order('created_at') : Promise.resolve({ data: [] }));
         jobs.push(this.isFM ? sb.from('material_returns').select(ret).eq('status', 'PENDING_FM').order('created_at') : Promise.resolve({ data: [] }));
         if (this.isPI) jobs.push(sb.from('material_requests').select('id,mr_no,mr_date,status,priority,required_date,profiles:requested_by(full_name),projects(code),cost_centers(code),production_orders!material_requests_production_order_id_fkey(wo_no),mr_lines(id,item_id,requested_qty,approved_qty,lot_id,pcs,remarks)')
-          .eq('status', 'PENDING_APPROVAL').order('created_at'));
+          .eq('status', 'PENDING_APPROVAL').neq('kind', 'EXCESS').order('created_at'));
         const [m, r, mr, pi, fm, p] = await Promise.all(jobs);
         this.mine = must(m); this.receive = must(r); this.myReturns = must(mr); this.pending = p ? must(p) : [];
         // offcut decisions: each line keeps the In-charge's choice while editing
@@ -187,6 +188,26 @@ export const FloorApp = {
           await this.addItem(i);
         }
       });
+    },
+    // a production order's material comes from its BOM: the prepared request is sent as it is (no items or quantities typed)
+    async loadWoMr() {
+      this.woMr = null; this.woExcess = [];
+      const w = this.wo; if (!w) return;
+      const sel = 'id,mr_no,status,kind,excess_reason,mr_lines(id,item_id,requested_qty,approved_qty,issued_qty)';
+      const [m, x] = await Promise.all([w.mr_id ? sb.from('material_requests').select(sel).eq('id', w.mr_id).maybeSingle() : Promise.resolve({ data: null }),
+        sb.from('material_requests').select(sel).eq('production_order_id', w.id).eq('kind', 'EXCESS').order('created_at')]);
+      this.woMr = must(m); this.woExcess = must(x);
+    },
+    async requestWo() {
+      if (!(await confirmBox('Request material', `Send the material for ${this.wo.wo_no} to Stores? Items and quantities are as per the BOM.`))) return;
+      this.busy = true;
+      if (await run(() => rpc('wo_request_material', { p_wo: this.wo.id }), 'Material request sent to Stores')) { await this.loadWoMr(); await this.load(); }
+      this.busy = false;
+    },
+    async excessWo() {
+      this.busy = true;
+      if (await run(() => excessMaterial(this.wo))) await this.loadWoMr();
+      this.busy = false;
     },
     // offcuts in stock that fit the chosen production order
     async loadFits() {
@@ -374,6 +395,27 @@ export const FloorApp = {
         <a href="javascript:void 0" @click="go('d/so/new/internal')">＋ New internal order</a></div>
       <div class="small muted" style="margin-bottom:8px" v-else-if="!targets.length">Nothing open of this kind.</div>
 
+      <!-- production order: the BOM decides the material; the floor only sends the prepared request or asks for excess -->
+      <template v-if="kind==='WO' && wo">
+        <div class="site-card" style="cursor:default">
+          <div class="row"><b>{{ wo.wo_no }}</b>&nbsp;<span class="muted small">{{ wo.description }}</span><span class="spacer"></span><Badge v-if="woMr" :v="woMr.status" /></div>
+          <div v-if="!woMr" class="small muted" style="margin-top:6px">This order needs no material from the store.</div>
+          <template v-else>
+            <div class="small muted" style="margin:4px 0">{{ woMr.mr_no }} · materials as per the BOM</div>
+            <div v-for="l in woMr.mr_lines" :key="l.id" class="row small" style="margin-top:3px">
+              <span style="flex:1">{{ itemName(l.item_id) }}</span><span>{{ woMr.status === 'DRAFT' ? '' : qty(l.issued_qty) + ' / ' }}{{ qty(l.approved_qty ?? l.requested_qty) }} {{ uom(l.item_id) }}</span>
+            </div>
+            <button v-if="woMr.status==='DRAFT'" class="btn primary" style="width:100%;justify-content:center;padding:12px;margin-top:8px" :disabled="busy" @click="requestWo">📤 Request material</button>
+          </template>
+        </div>
+        <div v-for="x in woExcess" :key="x.id" class="site-card" style="cursor:default">
+          <div class="row"><b>➕ {{ x.mr_no }}</b>&nbsp;<span class="muted small">{{ x.excess_reason }}</span><span class="spacer"></span><Badge :v="x.status" /></div>
+          <div v-for="l in x.mr_lines" :key="l.id" class="small">{{ itemName(l.item_id) }} × {{ qty(l.requested_qty) }} {{ uom(l.item_id) }}</div>
+        </div>
+        <button class="btn" style="width:100%;justify-content:center;padding:10px" :disabled="busy" @click="excessWo">➕ Excess material (process rejection)</button>
+        <div class="small muted" style="margin-top:6px">Only this order's BOM materials; the Factory Manager approves and the cost is charged to {{ wo.wo_no }}.</div>
+      </template>
+      <template v-if="kind!=='WO'">
       <div class="small muted" style="margin:4px 0">Find the material</div>
       <div class="floor-kinds">
         <a v-for="c in classes" :key="c.id" class="chip" :class="{on: bCls===c.id}" @click="bCls = bCls === c.id ? null : c.id">{{ c.name }}</a>
@@ -427,6 +469,7 @@ export const FloorApp = {
         </div>
         <textarea v-model="f.remarks" placeholder="Remarks (optional)" style="width:100%;margin-bottom:8px"></textarea>
         <button class="btn primary" style="width:100%;justify-content:center;padding:12px" :disabled="busy" @click="submit">📤 Send request ({{ f.lines.length }} item{{ f.lines.length > 1 ? 's' : '' }})</button>
+      </template>
       </template>
     </template>
 

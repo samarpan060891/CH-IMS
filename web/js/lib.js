@@ -178,7 +178,7 @@ export function dtm(v) {
   return new Date(v).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 export const today = () => new Date().toISOString().slice(0, 10);
-export const label = s => (s || '').toString().replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+export const label = s => (s || '').toString().replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()).replace(/\b(Fm|Pi|Qc|Po|Pr|Mr|Boq|Vat|Fg)\b/g, w => w.toUpperCase());
 export const num = v => (v === '' || v === null || v === undefined || isNaN(Number(v))) ? 0 : Number(v);
 
 // ---------- CSV export ----------
@@ -239,7 +239,11 @@ export async function refreshPending() {
   if (hasRole('purchase')) p.po = (p.po || 0) + await count('purchase_orders', q => q.in('status', ['PENDING_TOP_MGMT', 'APPROVED']));
   if (hasRole('purchase', 'factory_manager')) p.dbm = await count('buffer_suggestions', q => q.eq('status', 'PENDING'));
   if (hasRole('purchase')) p.prOpen = await count('purchase_requisitions', q => q.in('status', ['SUBMITTED', 'PARTIAL_PO']));
-  if (hasRole('production_incharge')) p.mr = await count('material_requests', q => q.eq('status', 'PENDING_APPROVAL'));
+  if (hasRole('production_incharge')) p.mr = await count('material_requests', q => q.eq('status', 'PENDING_APPROVAL').neq('kind', 'EXCESS'));
+  // excess material for process rejections is approved by the Factory Manager
+  if (hasRole('factory_manager')) p.mr = (p.mr || 0) + await count('material_requests', q => q.eq('status', 'PENDING_APPROVAL').eq('kind', 'EXCESS'));
+  // the floor sends the prepared production requests
+  if (hasRole('shop_floor')) p.mr = (p.mr || 0) + await count('material_requests', q => q.eq('status', 'DRAFT').eq('kind', 'PRODUCTION'));
   if (hasRole('stores')) p.issue = await count('material_requests', q => q.in('status', ['APPROVED', 'PARTIALLY_ISSUED']));
   if (hasRole('stores', 'purchase')) p.holds = await count('stock_lots', q => q.eq('status', 'HOLD').gt('qty_on_hand', 0).not('hold_reason', 'is', null));
   if (hasRole('stores')) p.ret = await count('material_returns', q => q.eq('status', 'SUBMITTED'));
@@ -248,7 +252,9 @@ export async function refreshPending() {
   if (hasRole('factory_manager')) p.ret = (p.ret || 0) + await count('material_returns', q => q.eq('status', 'PENDING_FM'));
   if (hasRole('shop_floor', 'production_incharge', 'site_supervisor')) p.ack = await count('material_issues', q => q.eq('status', 'POSTED').eq('ack_status', 'PENDING'));
   if (hasRole('stores', 'factory_manager')) p.ack = (p.ack || 0) + await count('material_issues', q => q.eq('ack_status', 'DISCREPANCY'));
-  if (hasRole('production_incharge', 'factory_manager')) p.wo = await count('production_orders', q => q.eq('status', 'DRAFT'));
+  // production orders: In-charge sends drafts and releases approved ones; the FM approves
+  if (hasRole('production_incharge')) p.wo = await count('production_orders', q => q.in('status', ['DRAFT', 'APPROVED']));
+  if (hasRole('factory_manager')) p.wo = (p.wo || 0) + await count('production_orders', q => q.eq('status', 'PENDING_FM'));
   if (hasRole('shop_floor', 'production_incharge', 'factory_manager', 'stores')) p.pm = await count('pm_jobs', q => q.in('status', ['OPEN', 'IN_PROGRESS']).lte('due_date', today()));
   if (hasRole('shop_floor', 'production_incharge')) p.stages =await count('wo_operations', q => q.eq('status', 'IN_PROGRESS'));
   if (hasRole('stores')) p.dsp = await count('dispatch_notes', q => q.eq('status', 'DRAFT'));

@@ -13,7 +13,7 @@ import { Logo } from './logo.js';
 import { CountSheet, CountApp } from './counting.js';
 import { Labels } from './labels.js';
 import { Scanner, describeCode } from './scan.js';
-import { PROD_DOCS, StageBoard, QcApprovals } from './production.js';
+import { PROD_DOCS, StageBoard, QcApprovals, ProductionPlanner } from './production.js';
 import { PROJ_DOCS, Mrp } from './projects.js';
 import { SiteApp } from './site.js';
 import { HR_DOCS, AttendanceSheet } from './hr.js';
@@ -97,7 +97,8 @@ const MENU = [
   { g: 'Production', icon: 'building-factory', items: [
     { to: 'floorapp', t: '📱 Floor app (phone)', roles: ['shop_floor', 'production_incharge', 'stores', 'factory_manager'] },
     { to: 'floor', t: 'Stage board', roles: ['shop_floor', 'production_incharge', 'factory_manager'], badge: 'stages' },
-    { to: 'd/wo', t: 'Production orders', roles: ['production_incharge', 'factory_manager', 'shop_floor', 'stores', 'finance'], badge: 'wo' },
+    { to: 'plan', t: 'Production orders', roles: ['production_incharge', 'factory_manager', 'shop_floor', 'stores', 'finance'], badge: 'wo' },
+    { to: 'd/wo', t: 'All production orders (list)', roles: ['production_incharge', 'factory_manager', 'shop_floor', 'stores', 'finance'] },
     { to: 'qc', t: 'QC approvals', roles: ['factory_manager', 'production_incharge'], badge: 'qc' },
     { sep: 'Shop floor material' },
     { to: 'd/mr', t: 'Material requests', roles: ALL, badge: 'mr' },
@@ -238,7 +239,7 @@ const Login = {
 };
 
 const App = {
-  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions, MachineRates, CashForecast, PdfPanel, MySignature },
+  components: { Login, DocList, DocEditor, MasterPage, Dashboard, Reports, Replenishment, Assets, Users, Settings, Importer, BufferReview, ConsolidatePR, Holds, CountSheet, Labels, Scanner, FieldInput, Modal, Logo, Icon, StageBoard, QcApprovals, ProductionPlanner, Mrp, SiteApp, AttendanceSheet, Books, FloorApp, ApprovalsApp, CountApp, ReceiveApp, PettyCash, Provisions, MachineRates, CashForecast, PdfPanel, MySignature },
   data: () => ({ state, route, dialog, ready: false, sideOpen: false, bellOpen: false, ROLES, openGroup: null, scanning: false, scanResult: null, newVersion: false }),
   watch: {
     // opening a page expands its menu group
@@ -275,6 +276,7 @@ const App = {
       if (a === 'assets') return { comp: 'Assets', props: { tag: b || null }, title: 'Tool crib & assets' };
       if (a === 'floor') return { comp: 'StageBoard', props: { woId: b || null }, title: 'Stage board' };
       if (a === 'qc') return { comp: 'QcApprovals', props: {}, title: 'QC approvals' };
+      if (a === 'plan') return { comp: 'ProductionPlanner', props: { projectId: b || null, lineId: c || null }, title: 'Production orders' };
       if (a === 'mrp') return { comp: 'Mrp', props: { projectId: b || null }, title: 'Material planning (MRP)' };
       if (a === 'attendance') return { comp: 'AttendanceSheet', props: {}, title: 'Attendance & overtime' };
       if (a === 'books') return { comp: 'Books', props: { tab: b || 'tb', arg: c || null }, title: 'Books of account' };
