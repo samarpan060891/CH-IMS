@@ -492,6 +492,7 @@ function woDraft(ctx) {
 // the final receipt costs the units with what was issued to the order, so material still to issue, far below plan,
 // above plan + approved excess, or issued but not yet received on the floor is shown first
 export async function materialGaps(d) {
+  await loadRefs(['uoms']);
   const [mats, led, mrs, iss] = await Promise.all([
     sb.from('wo_materials').select('item_id,required_qty').eq('wo_id', d.id),
     sb.from('stock_ledger').select('item_id,qty').eq('production_order_id', d.id).in('txn_type', ['ISSUE', 'RETURN']),
@@ -507,7 +508,9 @@ export async function materialGaps(d) {
   }
   const lines = [];
   for (const r of Object.values(by)) {
-    const name = itemName(r.item), u = itemUom(r.item), allowed = r.plan + r.excess;
+    // items counted in whole units (sheets, cans, rolls) are issued rounded up: 4 sheets for a plan of 3.08 is normal
+    const whole = Number(refRow('uoms', refRow('items', r.item)?.uom_id)?.decimals ?? refRow('items', r.item)?.uoms?.decimals) === 0;
+    const name = itemName(r.item), u = itemUom(r.item), allowed = (whole ? Math.ceil(r.plan - 1e-6) : r.plan) + r.excess;
     if (r.held > 1e-6) lines.push(`• ${name}: ${qty(r.held)} ${u} never sent to Stores (request not sent / awaiting approval)`);
     if (r.open > 1e-6) lines.push(`• ${name}: ${qty(r.open)} ${u} requested but not issued yet`);
     if (r.plan > 0 && r.issued < r.plan * 0.9 - 1e-6) lines.push(`• ${name}: issued ${qty(r.issued)} of ${qty(r.plan)} ${u} planned (${Math.round(100 * r.issued / r.plan)}%)`);
@@ -515,28 +518,51 @@ export async function materialGaps(d) {
   }
   const unack = must(iss).map(i => i.issue_no);
   if (unack.length) lines.push(`• Issued but not yet received on the floor: ${unack.join(', ')}`);
-  // material still in WIP beyond what the remaining units need by the BOM — consumed into these units unless returned
+  // material still in WIP beyond what the remaining units need by the BOM — carried forward to another order or consumed
   const left = Math.max(0, num(d.qty) - num(d.qty_completed) - num(d.qty_rejected));
+  const excess = [];
   for (const w of must(await sb.from('v_wip_by_order').select('item_id,qty_wip').eq('wo_id', d.id))) {
-    const need = (by[w.item_id]?.plan || 0) / (num(d.qty) || 1) * left;
-    if (num(w.qty_wip) > need * 1.02 + 1e-6) lines.push(`• ${itemName(w.item_id)}: ${qty(Math.round(num(w.qty_wip) * 1000) / 1000)} ${itemUom(w.item_id)} still in WIP, the remaining ${qty(left)} unit(s) need ${qty(Math.round(need * 1000) / 1000)} — return the extra, or it is consumed into these units`);
+    const need = (by[w.item_id]?.plan || 0) / (num(d.qty) || 1) * left, extra = Math.round((num(w.qty_wip) - need) * 1000) / 1000;
+    if (num(w.qty_wip) > need * 1.02 + 1e-6 && extra > 0) excess.push({ item: w.item_id, wip: num(w.qty_wip), need: Math.round(need * 1000) / 1000, extra });
   }
-  return lines;
+  return { lines, excess };
 }
 
 // ---------- FG receipt (batch or final) with QC outcome ----------
 async function receiveFg(c, final) {
   const d = c.doc, open = Math.max(0, num(d.qty) - num(d.qty_completed) - num(d.qty_rejected));
-  let override = '';
+  let override = '', carry = [];
   if (final) {
-    const gaps = await materialGaps(d);
-    if (gaps.length) {
-      const w = await ask({ title: '⚠ Check material before completing ' + d.wo_no, danger: true,
-        message: 'The final receipt costs the units with the material actually issued to this order, and closes what is still to issue:\n\n' + gaps.join('\n') +
-          '\n\nIssue or return the material first (Material request → Issue material; Return to store & offcuts), or give the reason to complete anyway.',
-        fields: [{ k: 'r', label: 'Reason to complete anyway (saved on the order)', type: 'textarea', required: true }], okText: 'Complete anyway' });
+    const { lines: gaps, excess } = await materialGaps(d);
+    if (gaps.length || excess.length) {
+      // WIP left over (whole sheets / cans / rolls, part-used packs): carry it to another open order of the project that
+      // uses it — the next batch of the same BOQ line first — or consume it into these units
+      let cand = [];
+      if (excess.length) {
+        const os = must(await sb.from('production_orders').select('id,wo_no,batch_label,boq_line_id,status').eq('project_id', d.project_id)
+          .in('status', OPEN_WO).neq('id', d.id).order('wo_no'));
+        const uses = os.length ? must(await sb.from('wo_materials').select('wo_id,item_id').in('wo_id', os.map(o => o.id)).in('item_id', excess.map(x => x.item))) : [];
+        cand = os.map(o => ({ ...o, items: new Set(uses.filter(u => u.wo_id === o.id).map(u => u.item_id)) }))
+          .sort((a, b) => (a.boq_line_id === d.boq_line_id ? 0 : 1) - (b.boq_line_id === d.boq_line_id ? 0 : 1));
+      }
+      const fields = excess.map((x, i) => {
+        const to = cand.filter(o => o.items.has(x.item));
+        return { k: 'x' + i, type: 'select', required: true, default: to[0] ? to[0].id : 'CONSUME',
+          label: `${itemName(x.item)}: ${qty(x.wip)} ${itemUom(x.item)} in WIP, these ${qty(Math.max(0, num(d.qty) - num(d.qty_completed) - num(d.qty_rejected)))} unit(s) need ${qty(x.need)} — ${qty(x.extra)} extra`,
+          options: [...to.map(o => ({ v: o.id, l: `Carry ${qty(x.extra)} forward to ${o.wo_no}${o.batch_label ? ' (' + o.batch_label + ')' : ''}` })), { v: 'CONSUME', l: `Consume into these units` }] };
+      });
+      const w = await ask({ title: '⚠ Check material before completing ' + d.wo_no, danger: !!gaps.length,
+        message: (gaps.length ? 'The final receipt costs the units with the material actually issued to this order, and closes what is still to issue:\n\n' + gaps.join('\n') +
+          '\n\nIssue or return the material first (Material request → Issue material; Return to store & offcuts), or give the reason to complete anyway.' : '') +
+          (excess.length ? (gaps.length ? '\n\n' : '') + 'Material left in WIP: carry it forward to the next batch (its material request is reduced), or consume it here. ' +
+            'At the last batch of the BOQ, return what is left to store before the final receipt.' : ''),
+        fields: [...fields, { k: 'r', label: gaps.length ? 'Reason to complete anyway (saved on the order)' : 'Remarks (optional)', type: 'textarea', required: !!gaps.length }],
+        okText: gaps.length ? 'Complete anyway' : 'Continue' });
       if (!w) return;
-      override = 'Material check: ' + gaps.map(g => g.replace(/^• /, '')).join('; ') + ' — completed anyway: ' + w.r;
+      carry = excess.map((x, i) => ({ item_id: x.item, qty: x.extra, to_wo: w['x' + i] })).filter(c => c.to_wo !== 'CONSUME');
+      const notes = [...gaps.map(g => g.replace(/^• /, '')),
+        ...carry.map(c => `${itemName(c.item_id)} ${qty(c.qty)} carried forward to ${cand.find(o => o.id === c.to_wo)?.wo_no}`)];
+      if (notes.length || w.r) override = 'Material check: ' + notes.join('; ') + (w.r ? (gaps.length ? ' — completed anyway: ' : ' — ') + w.r : '');
     }
   }
   const v = await ask({
@@ -551,6 +577,7 @@ async function receiveFg(c, final) {
     okText: final ? 'Receive & complete' : 'Receive batch' });
   if (!v) return;
   if ((num(v.rw) || num(v.sc)) && !v.m) throw new Error('Enter the QC remarks for the rejected units');
+  if (carry.length) await rpc('wip_carry_forward', { p_from: d.id, p_lines: carry });
   await rpc('wo_receive_fg', { p_wo: d.id, p_good: num(v.g), p_rework: num(v.rw), p_scrap: num(v.sc), p_final: final, p_remarks: [v.m, override].filter(Boolean).join(' · ') || null });
   const rej = num(v.rw) + num(v.sc);
   toast(`${final ? 'Order completed' : 'Batch received'} — ${qty(v.g)} to FG store${rej ? `; ${qty(rej)} rejected unit(s) sent to the Factory Manager for approval` : ''}`, 'ok', 7000);
