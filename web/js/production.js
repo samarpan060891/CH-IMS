@@ -872,21 +872,25 @@ const PLAN_FLOOR = ['RELEASED', 'IN_PROGRESS'];
 const isoDate = d => d.toISOString().slice(0, 10);
 const parseIso = s => new Date(s + 'T00:00:00Z');
 const weekOff = () => state.company?.plan_week_off?.length ? state.company.plan_week_off : [0];
-function workday(s) { const d = parseIso(s); while (weekOff().includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() + 1); return isoDate(d); }
-function addWorkdays(s, n) { const d = parseIso(workday(s)); for (let i = 0; i < n; i++) { d.setUTCDate(d.getUTCDate() + 1); while (weekOff().includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() + 1); } return isoDate(d); }
+let HOLIDAYS = new Set();   // public holidays (Masters → Public holidays)
+const isOff = d => weekOff().includes(d.getUTCDay()) || HOLIDAYS.has(isoDate(d));
+function workday(s) { const d = parseIso(s); while (isOff(d)) d.setUTCDate(d.getUTCDate() + 1); return isoDate(d); }
+function addWorkdays(s, n) { const d = parseIso(workday(s)); for (let i = 0; i < n; i++) { d.setUTCDate(d.getUTCDate() + 1); while (isOff(d)) d.setUTCDate(d.getUTCDate() + 1); } return isoDate(d); }
 export const ProductionPlanner = {
   components: { Badge },
   props: { projectId: String, lineId: String },
-  data: () => ({ loading: true, busy: false, projects: [], lines: [], orders: [], nb: 1, batches: [], route: [], queue: {}, useQueue: true, startDate: today(), showStages: false }),
+  data: () => ({ loading: true, busy: false, projects: [], lines: [], orders: [], nb: 1, batches: [], route: [], queue: {}, useQueue: true, startDate: today(), showStages: false, holidays: [] }),
   computed: {
     // capacity per work centre per day: hours × planning % × machines / people
     perDay() { const c = state.company || {}; return num(c.plan_hours_per_day || 8) * num(c.plan_efficiency_pct || 85) / 100; },
-    capText() { const c = state.company || {}; return `Capacity: ${qty(this.perDay)} h per machine / person per day (${qty(c.plan_hours_per_day || 8)} h × ${qty(c.plan_efficiency_pct || 85)}%) · ${this.weekOffText} off · change in Settings / Work centres`; },
+    capText() { const c = state.company || {}; return `Capacity: ${qty(this.perDay)} h per machine / person per day (${qty(c.plan_hours_per_day || 8)} h × ${qty(c.plan_efficiency_pct || 85)}%) · ${this.weekOffText} off` +
+      ` · ${this.holAhead.length} public holiday(s) ahead skipped${this.holAhead.some(h => !h.confirmed) ? ' (some expected, not yet announced)' : ''} · change in Settings / Work centres / Public holidays`; },
+    holAhead() { const s = this.startDate || today(); return this.holidays.filter(h => h.holiday_date >= s); },
     weekOffText() { return weekOff().map(d => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d]).join(', '); },
     // each batch goes through the BOM route stage by stage; a stage starts when the batch has left the previous stage
     // and the work centre has finished the batch before it (and, if ticked, the orders already queued there)
     plan() {
-      if (!this.route.length) return null;
+      if (!this.route.length || !this.holidays) return null;   // (recalculates when the holidays are loaded)
       const free = {}, cap = r => this.perDay * Math.max(1, num(r.wc?.crew_size) || 1);
       this.route.forEach(r => { free[r.work_center_id] = this.useQueue ? (this.queue[r.work_center_id] || 0) / cap(r) : 0; });
       const stageDays = this.route.map(() => 0);
@@ -964,6 +968,9 @@ export const ProductionPlanner = {
         q[o.work_center_id] = (q[o.work_center_id] || 0) + stageHours(o.work_center_id, o.planned_machine_hours, o.planned_labour_hours) * left;
       });
       this.queue = q;
+      const hol = must(await sb.from('public_holidays').select('holiday_date,name,confirmed').order('holiday_date'));
+      HOLIDAYS = new Set(hol.map(h => h.holiday_date));
+      this.holidays = hol;
     },
     d1: v => (Math.round(num(v) * 10) / 10).toFixed(1),
     useEstimates() { this.plan?.rows.forEach((r, i) => { if (r.date) this.batches[i].due_date = r.date; }); },

@@ -197,6 +197,7 @@ const MENU = [
     { to: 'm/item_categories', t: 'Categories', roles: ['stores', 'purchase'] },
     { to: 'm/item_classes', t: 'Item classes', roles: ['stores', 'purchase', 'finance'] },
     { to: 'm/uoms', t: 'Units of measure', roles: ['stores', 'purchase'] },
+    { to: 'm/public_holidays', t: 'Public holidays', roles: ['factory_manager', 'hr_officer', 'production_incharge'] },
   ] },
   { g: 'Administration', icon: 'settings', items: [
     { to: 'users', t: 'Users & roles', roles: [] },

@@ -343,6 +343,16 @@ export const MASTERS = {
     validate: d => { d.value = (d.value || '').trim(); },
     afterSave: () => loadRef('lookups', true),
   },
+  // skipped by the production planning calendar (with the weekly off day in Settings)
+  public_holidays: {
+    title: 'Public Holidays', single: 'Public Holiday', table: 'public_holidays', order: 'holiday_date', editRoles: ['factory_manager', 'hr_officer'],
+    columns: [{ k: 'holiday_date', label: 'Date', fmt: 'date' }, { k: r => new Date(r.holiday_date + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' }), label: 'Day' },
+      { k: 'name', label: 'Holiday' }, { k: r => r.confirmed ? 'Confirmed' : 'Expected — confirm when announced', label: 'Status' }],
+    defaults: () => ({ confirmed: true }),
+    sections: [{ title: 'Public holiday', fields: [{ k: 'holiday_date', label: 'Date', type: 'date', required: true }, { k: 'name', label: 'Holiday', required: true, wide: true },
+      { k: 'confirmed', label: 'Officially announced', type: 'check' }] }],
+    note: 'Production completion dates skip these days and the weekly off day. Islamic holidays follow the moon sighting — move them to the announced dates and tick "Officially announced".',
+  },
   uoms: {
     title: 'Units of Measure', single: 'UoM', table: 'uoms', order: 'code', editRoles: ['stores', 'purchase'],
     columns: [{ k: 'code', label: 'Code' }, { k: 'name', label: 'Name' }, { k: 'decimals', label: 'Decimals', n: true }],
