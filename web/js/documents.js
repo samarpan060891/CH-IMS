@@ -6,7 +6,7 @@ import { ask, namePick, CURRENCIES } from './components.js';
 import { makePdf, partyOf } from './pdf.js';
 
 // shared dynamic option lists for ref fields ({id,label})
-export const opts = reactive({ pos: [], sched: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [], lots: {}, mrLots: {}, snags: [] });
+export const opts = reactive({ pos: [], sched: [], mrs: [], issues: [], grns: [], prts: [], invs: [], vpos: [], lots: {}, mrLots: {}, snags: [], issueLocs: {} });
 // open snags, so rework material can be issued against them
 async function loadOpenSnags(extraId) {
   let q = sb.from('snags').select('id,snag_no,project_id,description,status');
@@ -14,17 +14,42 @@ async function loadOpenSnags(extraId) {
   opts.snags = must(await q.order('snag_no')).map(s => ({ id: s.id, project_id: s.project_id, label: `${s.snag_no} — ${s.description.slice(0, 50)}` }));
 }
 
-// batches (lots) that may be issued: available at the location, free or reserved for this project; oldest / earliest expiry first
+// a store and its zones (MS → MS-CON, MS-PKG …): where an issue can take stock from
+const storeLocs = id => id ? [id, ...(state.refs.locations || []).filter(l => l.parent_id === id && l.is_active !== false).map(l => l.id)] : [];
+// issue lines: usable stock of each item at each location of the store; a line without a location takes the item's
+// default zone when it has enough there, else the location with the most stock
+async function fillIssueAvail(ctx) {
+  const rows = ctx.grids.lines, store = ctx.doc.from_location_id, locs = storeLocs(store);
+  const ids = [...new Set(rows.map(r => r.item_id).filter(Boolean))];
+  const m = {};
+  if (ids.length && locs.length) {
+    must(await sb.from('v_lot_values').select('item_id,location_id,qty_on_hand,lot_status,project_id').in('item_id', ids).in('location_id', locs)).forEach(l => {
+      if (l.lot_status !== 'AVAILABLE' || (l.project_id && l.project_id !== ctx.doc.project_id)) return;
+      const b = (m[l.item_id] ||= {}); b[l.location_id] = (b[l.location_id] || 0) + num(l.qty_on_hand);
+    });
+  }
+  opts.issueLocs = m;
+  rows.forEach(r => {
+    const by = m[r.item_id] || {};
+    if (ctx.doc.status === 'DRAFT' && r.item_id && (!r.location_id || !locs.includes(r.location_id))) {
+      const def = refRow('items', r.item_id)?.default_location_id, defOk = def && locs.includes(def);
+      const most = Object.entries(by).sort((a, b) => b[1] - a[1])[0]?.[0];
+      r.location_id = defOk && (by[def] || 0) >= num(r.qty) ? def : most || (defOk ? def : store);
+    }
+    r._avail = by[r.location_id || store] || 0;
+  });
+}
+// batches (lots) that may be issued: available at the store or its zones, free or reserved for this project; oldest / earliest expiry first
 async function loadLotOpts(ctx) {
   const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
   opts.lots = {};
   if (!ids.length || !ctx.doc.from_location_id) return;
-  const rows = must(await sb.from('stock_lots').select('id,item_id,lot_no,batch_no,expiry_date,received_date,qty_on_hand,project_id,status,is_offcut,length_mm,width_mm,thickness_mm,pcs_per_unit,size_text')
-    .in('item_id', ids).eq('location_id', ctx.doc.from_location_id).eq('status', 'AVAILABLE').gt('qty_on_hand', 0)
+  const rows = must(await sb.from('stock_lots').select('id,item_id,location_id,lot_no,batch_no,expiry_date,received_date,qty_on_hand,project_id,status,is_offcut,length_mm,width_mm,thickness_mm,pcs_per_unit,size_text')
+    .in('item_id', ids).in('location_id', storeLocs(ctx.doc.from_location_id)).eq('status', 'AVAILABLE').gt('qty_on_hand', 0)
     .order('expiry_date', { nullsFirst: false }).order('received_date'));
   // offcut pieces are listed first (use them before cutting a new sheet); they are only issued when chosen, and whole
   rows.filter(l => !l.project_id || l.project_id === ctx.doc.project_id).sort((a, b) => (b.is_offcut ? 1 : 0) - (a.is_offcut ? 1 : 0)).forEach(l => {
-    (opts.lots[l.item_id] ||= []).push({ id: l.id, qty: num(l.qty_on_hand), offcut: l.is_offcut, ppu: num(l.pcs_per_unit) || null,
+    (opts.lots[l.item_id] ||= []).push({ id: l.id, location_id: l.location_id, qty: num(l.qty_on_hand), offcut: l.is_offcut, ppu: num(l.pcs_per_unit) || null,
       label: l.is_offcut
         ? `✂ OFFCUT ${qty(l.length_mm)}${l.width_mm ? ' × ' + qty(l.width_mm) : ''} mm · ${l.lot_no} · ${qty(l.qty_on_hand)}`
         : l.pcs_per_unit ? `${l.size_text || `${+num(l.pcs_per_unit).toFixed(2)} pcs/${itemUom(l.item_id)}`} · ${qty(pcsOf(l.qty_on_hand, l.pcs_per_unit))} pcs (${qty(l.qty_on_hand)}) · ${l.lot_no}${l.project_id ? ' (reserved)' : ''}`
@@ -995,13 +1020,15 @@ async function loadMrIntoIssue(ctx, mrId) {
   const lines = must(await sb.from('mr_lines').select('*').eq('mr_id', mrId).order('line_no'));
   ctx.grids.lines = lines.map(l => ({ mr_line_id: l.id, item_id: l.item_id, lot_id: l.lot_id, _mrLot: !!l.lot_id, work_center_id: l.work_center_id, qty: num(l.approved_qty ?? l.requested_qty) - num(l.issued_qty), remarks: l.remarks }))
     .filter(l => l.qty > 0);
-  // requested boards / offcuts fix the store location when it is not chosen yet
+  // requested boards / offcuts: their line takes the batch's location (and the store, when it is not chosen yet)
   const named = ctx.grids.lines.filter(l => l.lot_id).map(l => l.lot_id);
-  if (named.length && !ctx.doc.from_location_id) {
-    const locs = [...new Set(must(await sb.from('stock_lots').select('location_id').in('id', named)).map(l => l.location_id))];
-    if (locs.length === 1) ctx.doc.from_location_id = locs[0];
+  if (named.length) {
+    const at = Object.fromEntries(must(await sb.from('stock_lots').select('id,location_id').in('id', named)).map(l => [l.id, l.location_id]));
+    ctx.grids.lines.forEach(l => { if (l.lot_id && at[l.lot_id]) l.location_id = at[l.lot_id]; });
+    const stores = [...new Set(Object.values(at).map(id => refRow('locations', id)?.parent_id || id))];
+    if (!ctx.doc.from_location_id && stores.length === 1) ctx.doc.from_location_id = stores[0];
   }
-  await fillAvail(ctx, 'lines', ctx.doc.from_location_id);
+  await fillIssueAvail(ctx);
   await loadLotOpts(ctx);
   ctx.grids.lines.forEach(r => { const p = issueLotPpu(r); if (p) r.pcs = pcsOf(r.qty, p); });
   ctx.dirty = true;
@@ -1022,7 +1049,7 @@ export const issue = {
     issueCur.ctx = ctx;
     await loadApprovedMrs(ctx.doc.mr_id);
     await loadOpenSnags(ctx.doc.snag_id);
-    if (ctx.doc.status === 'DRAFT') { await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); }
+    if (ctx.doc.status === 'DRAFT') { await fillIssueAvail(ctx); await loadLotOpts(ctx); }
     ctx.extra.budget = ctx.doc.project_id ? must(await sb.rpc('issue_budget_check', { p_issue: ctx.doc.id })) : null;
   },
   header: [
@@ -1031,8 +1058,8 @@ export const issue = {
     { k: 'snag_id', label: 'Rework for snag (optional)', type: 'ref', show: d => d.purpose === 'PROJECT',
       refOptions: d => opts.snags.filter(s => s.project_id === d.project_id) },
     { k: 'issue_date', label: 'Issue date', type: 'date', required: true },
-    { k: 'from_location_id', label: 'Issue from', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock && r.loc_type !== 'QUARANTINE',
-      onChange: async (d, v, ctx) => { ctx.grids.lines.forEach(r => { r.lot_id = null; }); await fillAvail(ctx, 'lines', v); await loadLotOpts(ctx); } },
+    { k: 'from_location_id', label: 'Issue from (store)', type: 'ref', ref: 'locations', required: true, filter: r => r.is_stock && r.loc_type !== 'QUARANTINE' && !r.parent_id,
+      onChange: async (d, v, ctx) => { ctx.grids.lines.forEach(r => { r.lot_id = null; r.location_id = null; }); await fillIssueAvail(ctx); await loadLotOpts(ctx); } },
     { k: 'received_by_employee_id', label: 'Received by (employee)', type: 'ref', ref: 'employees', filter: r => r.is_active,
       onChange: (d, v) => { d.received_by_name = refRow('employees', v)?.name || null; } },
     { k: 'received_by_name', label: 'Received by (typed in earlier)', type: 'ro', show: d => !d.received_by_employee_id && !!d.received_by_name },
@@ -1063,10 +1090,15 @@ export const issue = {
     key: 'lines', title: 'Items to issue', table: 'issue_lines', fk: 'issue_id', order: 'line_no', saveKeys: ['mr_line_id'],
     wholeSkip: r => !!(opts.lots[r.item_id] || []).find(l => l.id === r.lot_id)?.offcut,
     fields: [
-      itemF({ filter: isLotItem, ro: r => !!r.mr_line_id, onChange: async (r, v, ctx) => { r.lot_id = null; await fillAvail(ctx, 'lines', ctx.doc.from_location_id); await loadLotOpts(ctx); } }), uomF,
+      itemF({ filter: isLotItem, ro: r => !!r.mr_line_id, onChange: async (r, v, ctx) => { r.lot_id = null; r.location_id = null; await fillIssueAvail(ctx); await loadLotOpts(ctx); } }), uomF,
       machineF,
+      // where the item is stored: the store or one of its zones (filled from stock; the quantity there is shown)
+      { k: 'location_id', label: 'From location', type: 'ref', width: '170px',
+        refOptions: r => storeLocs(issueCur.ctx?.doc.from_location_id).map(id => ({ id,
+          label: (refRow('locations', id)?.code || '') + (issueCur.ctx?.doc.status === 'DRAFT' ? ` · ${qty(opts.issueLocs?.[r.item_id]?.[id] || 0)} available` : '') })),
+        onChange: (r, v) => { r.lot_id = null; r._avail = opts.issueLocs?.[r.item_id]?.[v] || 0; } },
       { ...availF, show: d => d.status === 'DRAFT' },
-      { k: 'lot_id', label: 'Batch / offcut / timber size (blank = oldest / earliest expiry first)', type: 'ref', width: '300px', refOptions: r => opts.lots[r.item_id] || [],
+      { k: 'lot_id', label: 'Batch / offcut / timber size (blank = oldest / earliest expiry first)', type: 'ref', width: '300px', refOptions: r => (opts.lots[r.item_id] || []).filter(l => !r.location_id || l.location_id === r.location_id),
         show: d => d.status === 'DRAFT', ro: r => !!r._mrLot,
         onChange: (r, v) => { const l = (opts.lots[r.item_id] || []).find(x => x.id === v); if (l?.offcut) r.qty = l.qty; if (l?.ppu && num(r.pcs) > 0) r.qty = cbmOf(r.pcs, l.ppu); else if (l?.ppu) r.pcs = pcsOf(r.qty, l.ppu); } },
       // timber: pieces of the chosen size; the issue qty (CBM) follows, and vice versa
@@ -1146,7 +1178,8 @@ function pdfIssue(c) {
   const lots = c.extra.lots || [];
   const lotText = l => lots.filter(x => x.issue_lines.item_id === l.item_id).map(x => `${x.stock_lots?.lot_no} (${qty(x.qty)})`).join(', ');
   const cols = [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Item code', k: r => refRow('items', r.item_id)?.code }, { h: 'Description', k: r => refRow('items', r.item_id)?.name },
-    { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'Qty issued', k: r => qty(r.qty) + (num(r.pcs) > 0 ? `\n${qty(r.pcs)} pcs` : ''), align: 'right' }, { h: 'Lots (FIFO)', k: lotText }];
+    { h: 'UoM', k: r => itemUom(r.item_id) }, { h: 'From', k: r => refRow('locations', r.location_id || d.from_location_id)?.code || '' },
+    { h: 'Qty issued', k: r => qty(r.qty) + (num(r.pcs) > 0 ? `\n${qty(r.pcs)} pcs` : ''), align: 'right' }, { h: 'Lots (FIFO)', k: lotText }];
   if (cost) cols.push({ h: 'Value AED', k: r => money(r.value), align: 'right' });
   return makePdf({
     title: 'Material Issue Slip', no: d.issue_no, date: d.issue_date,
