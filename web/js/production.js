@@ -707,6 +707,10 @@ export const StageBoard = {
         rows.sort((a, b) => a._t - b._t || String(a.wo_no).localeCompare(String(b.wo_no)) || a.seq - b.seq);
         const nAt = {};
         rows.forEach(r => { r._pos = (nAt[r.work_center_id] = (nAt[r.work_center_id] || 0) + 1); });
+        // machine hours already logged per stage (to pre-fill what is still planned)
+        const opIds = rows.map(r => r.operation_id);
+        const mlog = opIds.length ? must(await sb.from('wo_time_logs').select('operation_id,machine_hours').in('operation_id', opIds)) : [];
+        rows.forEach(r => { r._actMh = mlog.filter(l => l.operation_id === r.operation_id).reduce((s, l) => s + num(l.machine_hours), 0); });
         // combined runs: the stage carries its run and the other orders in it
         const grp = Object.fromEntries(w.ops.filter(o => o.run_group_id).map(o => [o.id, o.run_group_id]));
         const woNo = Object.fromEntries(w.orders.map(o => [o.id, o]));
@@ -733,8 +737,11 @@ export const StageBoard = {
       const left = Math.max(0, stageRows.reduce((s, x) => s + num(x.planned_labour_hours) - num(x.act_labour_hours), 0));
       const workers = wcOps(r.work_center_id), shift = num(state.company?.plan_hours_per_day) || 8;
       const each = left > 0 ? Math.round((finish ? left / workers : Math.min(left / workers, shift)) * 100) / 100 : null;
+      // machine stages: the machine hours still planned — the balance when finishing, at most one shift otherwise
+      const mLeft = Math.max(0, stageRows.reduce((s, x) => s + num(x.planned_machine_hours) - num(x._actMh), 0));
+      const mh = wc?.kind === 'MACHINE' && mLeft > 0 ? Math.round((finish ? mLeft : Math.min(mLeft, shift)) * 100) / 100 : null;
       this.dlg = { r, run, d: today(), crew: [{ grade_id: g, workers, hours: each, ot: 0, _auto: true, _left: left, _finish: finish, _shift: shift }],
-        mh: null, q: finish && !run ? Math.max(0, num(r.qty) - num(r.qty_done)) : 0, n: '', f: finish, machine: wc?.kind === 'MACHINE' };
+        mh, q: finish && !run ? Math.max(0, num(r.qty) - num(r.qty_done)) : 0, n: '', f: finish, machine: wc?.kind === 'MACHINE' };
     },
     // a pre-filled line follows a change of the number of workers (until its hours are typed by hand)
     crewWorkers(c) {
@@ -886,7 +893,7 @@ export const StageBoard = {
       <div class="grid">
         <label class="f"><span>Date <span class="req">*</span></span><input type="date" v-model="dlg.d"></label>
         <label class="f" v-if="!dlg.run"><span>Qty completed this session</span><input type="number" step="any" v-model.number="dlg.q"></label>
-        <label class="f" v-if="dlg.machine"><span>Machine hours (blank = longest crew line)</span><input type="number" step="any" v-model.number="dlg.mh"></label>
+        <label class="f" v-if="dlg.machine"><span>Machine hours (pre-filled from the plan; blank = longest crew line)</span><input type="number" step="any" v-model.number="dlg.mh"></label>
       </div>
       <h3 style="margin:14px 0 6px">Crew</h3>
       <!-- one block per worker grade; fits a phone without sideways scrolling -->
