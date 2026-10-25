@@ -59,11 +59,14 @@ export async function loadOpenWork() {
 const STOCK_LOC = ['WAREHOUSE', 'ZONE'];
 const FIRM_PO = ['APPROVED', 'RELEASED', 'PARTIALLY_RECEIVED'];
 const PENDING_PO = ['PENDING_FM', 'PENDING_FINANCE', 'PENDING_TOP_MGMT'];
-export async function loadMaterials(orders) {
+// extra: requirements of an order not saved that way yet (a draft as it is on screen) — replace its saved lines
+export async function loadMaterials(orders, extra = null) {
   const ids = orders.map(o => o.id);
   const empty = { req: [], issued: {}, lots: [], po: [], pr: {} };
   if (!ids.length) return empty;
-  const req = must(await sb.from('wo_materials').select('wo_id,item_id,required_qty').in('wo_id', ids).gt('required_qty', 0));
+  const saved = ids.filter(id => !extra || id !== extra.wo_id);
+  let req = saved.length ? must(await sb.from('wo_materials').select('wo_id,item_id,required_qty').in('wo_id', saved).gt('required_qty', 0)) : [];
+  if (extra) req = [...req, ...extra.req];
   const items = [...new Set(req.map(r => r.item_id))];
   if (!items.length) return { ...empty, req };
   const [led, lots, sched, lines, prl] = await Promise.all([
@@ -146,13 +149,25 @@ export function scheduleWithMaterials(jobs, mat, startIso = today(), waitMat = f
   return { ...s, alloc };
 }
 
-// one order's place in the factory schedule, projected finish and material position (production order screen)
-export async function orderOutlook(woId) {
+// one order's place in the factory schedule, projected finish and material position (production order screen).
+// draft: { wo, ops, req } — a draft order as it is on screen, scheduled as if it were sent to the Factory Manager now;
+// the result also names the open orders it would push past their due date
+export async function orderOutlook(woId, draft = null) {
   const w = await loadOpenWork();
-  if (!w.orders.some(o => o.id === woId)) return null;
-  const mat = await loadMaterials(w.orders);
-  const s = scheduleWithMaterials(jobsFrom(w.orders, w.ops), mat);
-  return { r: s.res.get(woId), a: s.alloc.get(woId), pos: s.sorted.findIndex(j => j.id === woId) + 1, total: s.sorted.length, start: s.start };
+  let orders = w.orders, ops = w.ops;
+  if (draft) {
+    orders = [...orders.filter(o => o.id !== woId), draft.wo];
+    ops = [...ops.filter(o => o.wo_id !== woId), ...draft.ops];
+  }
+  if (!orders.some(o => o.id === woId)) return null;
+  const mat = await loadMaterials(orders, draft ? { wo_id: woId, req: draft.req } : null);
+  const s = scheduleWithMaterials(jobsFrom(orders, ops), mat);
+  let pushed = [];
+  if (draft) {
+    const base = schedule(jobsFrom(w.orders.filter(o => o.id !== woId), w.ops.filter(o => o.wo_id !== woId)));
+    pushed = [...base.res.values()].filter(r => r.flag !== 'LATE' && s.res.get(r.job.id)?.flag === 'LATE').map(r => r.job.wo.wo_no);
+  }
+  return { r: s.res.get(woId), a: s.alloc.get(woId), pos: s.sorted.findIndex(j => j.id === woId) + 1, total: s.sorted.length, start: s.start, draft: !!draft, pushed };
 }
 
 // orders → schedule jobs with the hours still to do on each stage

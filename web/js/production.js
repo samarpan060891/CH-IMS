@@ -361,7 +361,10 @@ export const wo = {
     ctx.extra.mat = must(await sb.from('stock_ledger').select('txn_date,txn_type,doc_no,qty,value,item_id').eq('production_order_id', id).in('txn_type', ['ISSUE', 'RETURN']).order('txn_at'));
     ctx.extra.receipts = must(await sb.from('wo_receipts').select('*, rw:production_orders!wo_receipts_rework_wo_id_fkey(id,wo_no), scrap_notes(id,scrap_no,status)').eq('wo_id', id).order('created_at'));
     ctx.extra.reworks = must(await sb.from('production_orders').select('id,wo_no,status,qty').eq('parent_wo_id', id).order('created_at'));
-    ctx.extra.outlook = OPEN_WO.includes(ctx.doc.status) ? await orderOutlook(id).catch(e => { console.warn('outlook', e); return null; }) : null;
+    // open orders: their place in the factory schedule; drafts: as if sent to the Factory Manager now (route and
+    // materials as they are on the order)
+    const draft = ctx.doc.status === 'DRAFT' ? woDraft(ctx) : null;
+    ctx.extra.outlook = OPEN_WO.includes(ctx.doc.status) || draft ? await orderOutlook(id, draft).catch(e => { console.warn('outlook', e); return null; }) : null;
     ctx.extra.mrStatus = ctx.doc.mr_id ? must(await sb.from('material_requests').select('status').eq('id', ctx.doc.mr_id).single()).status : null;
     ctx.extra.excess = must(await sb.from('material_requests').select('id,mr_no,status').eq('production_order_id', id).eq('kind', 'EXCESS').order('created_at'));
     if (ctx.doc.parent_wo_id) ctx.doc._parentNo = must(await sb.from('production_orders').select('wo_no').eq('id', ctx.doc.parent_wo_id).single()).wo_no;
@@ -372,7 +375,8 @@ export const wo = {
     const o = ctx.extra.outlook;
     if (o?.r) {
       const d = ctx.doc, a = o.a;
-      out.push({ title: `📅 Factory schedule — #${o.pos} of ${o.total} · ${FLAG[o.r.flag]?.t || ''} · material ${MAT[a?.status]?.t || ''}`, rows: [{
+      out.push({ title: `📅 Factory schedule${o.draft ? ' (estimate — if sent to the Factory Manager now)' : ''} — #${o.pos} of ${o.total} · ${FLAG[o.r.flag]?.t || ''} · material ${MAT[a?.status]?.t || ''}` +
+        (o.pushed.length ? ` · ⚠ would make ${o.pushed.join(', ')} late` : ''), rows: [{
         pos: `${o.pos} of ${o.total}`, due: d.due_date, fin: o.r.date, slack: o.r.slack, start: o.r.stages[0] ? dateAt(o.start, o.r.stages[0].start) : null,
         mat: MAT[a?.status]?.t || '', matDate: a && ['ON_PO', 'PO_LATE', 'PO_PENDING'].includes(a.status) ? a.matDate : null }],
         columns: [{ k: 'pos', label: 'Position in sequence' }, { k: 'start', label: 'Planned start', fmt: 'date' }, { k: 'fin', label: 'Projected finish', fmt: 'date' },
@@ -465,6 +469,16 @@ export const wo = {
     ];
   },
 };
+
+// a draft order for the factory schedule: its route and materials as they are on screen
+function woDraft(ctx) {
+  const d = ctx.doc;
+  const ops = (ctx.grids.ops || []).filter(o => o.work_center_id).map((o, i) => ({ id: o.id || `draft-${i}`, wo_id: d.id, seq: num(o.seq), work_center_id: o.work_center_id,
+    planned_labour_hours: num(o.planned_labour_hours), planned_machine_hours: num(o.planned_machine_hours), wait_days: num(o.wait_days), status: 'PENDING', qty_done: 0, run_group_id: null }));
+  if (!ops.length) return null;
+  return { wo: { ...d, status: 'DRAFT' }, ops,
+    req: (ctx.grids.materials || []).filter(m => m.item_id && num(m.required_qty) > 0).map(m => ({ wo_id: d.id, item_id: m.item_id, required_qty: num(m.required_qty) })) };
+}
 
 // ---------- FG receipt (batch or final) with QC outcome ----------
 async function receiveFg(c, final) {
