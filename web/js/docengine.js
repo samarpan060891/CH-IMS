@@ -10,7 +10,7 @@ const NO_FUTURE = {
   dispatch_notes: ['dispatch_date'], install_logs: ['log_date'], snags: ['snag_date'],
   sales_invoices: ['invoice_date', 'cert_date'], customer_receipts: ['receipt_date'], vendor_invoices: ['invoice_date'],
   vendor_debit_notes: ['dn_date'], vendor_payments: ['payment_date'], journal_entries: ['je_date'], expenses: ['exp_date'],
-  employee_advances: ['adv_date'],
+  employee_advances: ['adv_date'], purchase_orders: ['po_date'], purchase_requisitions: ['pr_date'],
 };
 import { pdfView } from './pdf.js';
 
