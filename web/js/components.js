@@ -123,6 +123,9 @@ export const RefSelect = {
   </div>`,
 };
 
+// today in the UAE (the server checks dates of things that already happened against this)
+export const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
+
 // ---------- field input ----------
 // field spec: { k, label, type, options, ref, filter(row, doc), required, ro, show, wide, full, cost, fmt }
 export const FieldInput = {
@@ -158,6 +161,7 @@ export const FieldInput = {
     tagText() { return (this.doc[this.f.k] || []).join(', '); },
   },
   methods: {
+    todayIso,
     // timestamptz <-> <input type="datetime-local"> (local time, minutes)
     toLocal(v) {
       if (!v) return '';
@@ -188,7 +192,7 @@ export const FieldInput = {
     <span v-else-if="f.type==='check'" class="row"><input type="checkbox" :checked="!!doc[f.k]" @change="set($event.target.checked)" :disabled="ro"> <span class="small">{{ f.hint || 'Yes' }}</span></span>
     <input v-else-if="f.type==='tags'" :value="tagText" @change="set($event.target.value)" :disabled="ro" placeholder="comma separated">
     <input v-else-if="f.type==='number'" type="number" :step="f.step || 'any'" :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro">
-    <input v-else-if="f.type==='date'" type="date" :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro">
+    <input v-else-if="f.type==='date'" type="date" :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro" :max="f.noFuture ? todayIso() : null">
     <input v-else-if="f.type==='datetime'" type="datetime-local" :value="toLocal(doc[f.k])" @change="setLocal($event.target.value)" :disabled="ro">
     <input v-else :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro" :placeholder="f.placeholder || ''">
   </label>
@@ -203,7 +207,7 @@ export const FieldInput = {
     <input v-else-if="f.type==='check'" type="checkbox" :checked="!!doc[f.k]" @change="set($event.target.checked)" :disabled="ro">
     <input v-else-if="f.type==='tags'" :value="tagText" @change="set($event.target.value)" :disabled="ro" placeholder="comma separated">
     <input v-else-if="f.type==='number'" type="number" :step="f.step || 'any'" :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro">
-    <input v-else-if="f.type==='date'" type="date" :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro">
+    <input v-else-if="f.type==='date'" type="date" :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro" :max="f.noFuture ? todayIso() : null">
     <input v-else :value="doc[f.k] ?? ''" @input="set($event.target.value)" :disabled="ro">
   </template>`,
 };

@@ -1,6 +1,17 @@
 // Generic document list + editor driven by per-document configuration (see documents.js)
 import { sb, state, must, run, hasRole, canSeeCost, go, route, loadRefs, label, money, toast, refreshPending, refRow } from './lib.js';
-import { FieldInput, DataTable, Badge, confirmBox } from './components.js';
+import { FieldInput, DataTable, Badge, confirmBox, todayIso } from './components.js';
+
+// header dates that record something that already happened: never in the future (same list as migration 076)
+const NO_FUTURE = {
+  grns: ['grn_date', 'vendor_dn_date', 'vendor_invoice_date'], material_issues: ['issue_date'], material_returns: ['return_date'],
+  stock_transfers: ['trf_date'], stock_adjustments: ['adj_date'], stock_counts: ['count_date'], scrap_notes: ['scrap_date'],
+  scrap_disposals: ['disposal_date'], purchase_returns: ['return_date'], stock_releases: ['release_date'],
+  dispatch_notes: ['dispatch_date'], install_logs: ['log_date'], snags: ['snag_date'],
+  sales_invoices: ['invoice_date', 'cert_date'], customer_receipts: ['receipt_date'], vendor_invoices: ['invoice_date'],
+  vendor_debit_notes: ['dn_date'], vendor_payments: ['payment_date'], journal_entries: ['je_date'], expenses: ['exp_date'],
+  employee_advances: ['adv_date'],
+};
 import { pdfView } from './pdf.js';
 
 const visible = (f, doc) => !(f.cost && !canSeeCost()) && !(f.show && !f.show(doc));
@@ -99,7 +110,10 @@ export const DocEditor = {
       const okStatus = (this.cfg.editStatuses || ['DRAFT']).includes(this.doc.status || 'DRAFT');
       return okStatus && hasRole(...(this.cfg.editRoles || this.cfg.createRoles || []));
     },
-    headerFields() { return this.cfg.header.filter(f => visible(f, this.doc)); },
+    headerFields() {
+      const nf = NO_FUTURE[this.cfg.table] || [];
+      return this.cfg.header.filter(f => visible(f, this.doc)).map(f => nf.includes(f.k) ? { ...f, noFuture: true } : f);
+    },
     actions() {
       if (!this.doc || this.isNew) return [];
       return (this.cfg.actions ? this.cfg.actions(this) : []).filter(a => a.show !== false);
@@ -174,6 +188,14 @@ export const DocEditor = {
       this.dirty = true;
     },
     validate() {
+      // dates of things that already happened (the server enforces the same list)
+      for (const k of NO_FUTURE[this.cfg.table] || []) {
+        const v = this.doc[k];
+        if (v && String(v).slice(0, 10) > todayIso()) {
+          const f = this.cfg.header.find(x => x.k === k);
+          throw new Error(`${f?.label || label(k)} cannot be in the future (${String(v).slice(0, 10)}) — today is ${todayIso()}`);
+        }
+      }
       for (const f of this.cfg.header) {
         if (f.required && visible(f, this.doc) && (this.doc[f.k] === null || this.doc[f.k] === undefined || this.doc[f.k] === '')) {
           throw new Error(`${f.label} is required`);
