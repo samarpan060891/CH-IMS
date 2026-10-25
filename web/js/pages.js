@@ -98,6 +98,12 @@ export const REPORTS = {
     { k: 'sale_value', label: 'Selling value', fmt: 'money', sum: true }, { k: 'margin', label: 'Margin', fmt: 'money', sum: true },
     { k: r => num(r.sale_value) ? Math.round(num(r.margin) / num(r.sale_value) * 1000) / 10 : null, label: 'Margin %', n: true },
     { k: 'plan_labour_hours', label: 'Plan man-h', n: true }, { k: 'act_labour_hours', label: 'Actual man-h', n: true }] },
+  // material issued to production orders and not yet consumed by FG receipts or returned — not part of store stock
+  wip: { title: 'WIP — material on the shop floor', src: 'v_wip_stock', order: 'wo_no', columns: [
+    { k: 'wo_no', label: 'Production order' }, { k: 'wo_status', label: 'Order status', fmt: 'badge' }, { k: 'wo_description', label: 'Order' },
+    { k: 'project_code', label: 'Project' }, { k: 'item_code', label: 'Code' }, { k: 'item_name', label: 'Item' },
+    { k: 'qty', label: 'Qty in WIP', fmt: 'qty' }, { k: 'uom', label: 'UoM' }, { k: 'value', label: 'Value AED', fmt: 'money', cost: true, sum: true },
+    { k: 'first_issued', label: 'First issued', fmt: 'date' }, { k: 'last_issued', label: 'Last issued', fmt: 'date' }] },
   wcload: { title: 'Work centre load & availability', src: 'v_work_center_load', order: 'sort_order', columns: [
     { k: 'code', label: 'Code' }, { k: 'name', label: 'Work centre' }, { k: 'kind', label: 'Type', fmt: 'label' }, { k: r => r.is_down ? 'DOWN' : 'RUNNING', label: 'Now', fmt: 'badge' },
     { k: 'open_stages', label: 'Open stages', n: true }, { k: 'running', label: 'Running', n: true }, { k: 'remaining_hours', label: 'Remaining hours', n: true },
