@@ -417,7 +417,7 @@ const App = {
     </div>
   </div>
   <Modal v-if="dialog.open" :title="dialog.title" small @close="dlgCancel">
-    <p v-if="dialog.message" style="margin-top:0">{{ dialog.message }}</p>
+    <p v-if="dialog.message" style="margin-top:0;white-space:pre-line">{{ dialog.message }}</p>
     <div class="grid" style="grid-template-columns:1fr" v-if="dialog.fields.length"><FieldInput v-for="f in dialog.fields" :key="f.k" :f="f" :doc="dialog.values" /></div>
     <template #footer><button class="btn" @click="dlgCancel">Cancel</button><button class="btn" :class="dialog.danger ? 'bad' : 'primary'" @click="dlgOk">{{ dialog.okText }}</button></template>
   </Modal>

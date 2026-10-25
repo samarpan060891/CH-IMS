@@ -480,9 +480,51 @@ function woDraft(ctx) {
     req: (ctx.grids.materials || []).filter(m => m.item_id && num(m.required_qty) > 0).map(m => ({ wo_id: d.id, item_id: m.item_id, required_qty: num(m.required_qty) })) };
 }
 
+// ---------- material check before the final receipt ----------
+// the final receipt costs the units with what was issued to the order, so material still to issue, far below plan,
+// above plan + approved excess, or issued but not yet received on the floor is shown first
+export async function materialGaps(d) {
+  const [mats, led, mrs, iss] = await Promise.all([
+    sb.from('wo_materials').select('item_id,required_qty').eq('wo_id', d.id),
+    sb.from('stock_ledger').select('item_id,qty').eq('production_order_id', d.id).in('txn_type', ['ISSUE', 'RETURN']),
+    sb.from('material_requests').select('mr_no,kind,status,mr_lines(item_id,requested_qty,approved_qty,issued_qty)').eq('production_order_id', d.id).not('status', 'in', '(CANCELLED,REJECTED,CLOSED)'),
+    sb.from('material_issues').select('issue_no').eq('production_order_id', d.id).eq('status', 'POSTED').eq('ack_status', 'PENDING')]);
+  const by = {}, row = id => (by[id] ||= { item: id, plan: 0, excess: 0, issued: 0, open: 0, held: 0 });
+  must(mats).forEach(m => { row(m.item_id).plan += num(m.required_qty); });
+  must(led).forEach(l => { row(l.item_id).issued -= num(l.qty); });
+  for (const m of must(mrs)) for (const l of m.mr_lines) {
+    const r = row(l.item_id), left = Math.max(0, num(l.approved_qty ?? l.requested_qty) - num(l.issued_qty));
+    if (m.kind === 'EXCESS' && ['APPROVED', 'PARTIALLY_ISSUED', 'ISSUED'].includes(m.status)) r.excess += num(l.approved_qty ?? l.requested_qty);
+    if (m.status === 'DRAFT' || m.status === 'PENDING_APPROVAL') r.held += left; else if (['APPROVED', 'PARTIALLY_ISSUED'].includes(m.status)) r.open += left;
+  }
+  const lines = [];
+  for (const r of Object.values(by)) {
+    const name = itemName(r.item), u = itemUom(r.item), allowed = r.plan + r.excess;
+    if (r.held > 1e-6) lines.push(`• ${name}: ${qty(r.held)} ${u} never sent to Stores (request not sent / awaiting approval)`);
+    if (r.open > 1e-6) lines.push(`• ${name}: ${qty(r.open)} ${u} requested but not issued yet`);
+    if (r.plan > 0 && r.issued < r.plan * 0.9 - 1e-6) lines.push(`• ${name}: issued ${qty(r.issued)} of ${qty(r.plan)} ${u} planned (${Math.round(100 * r.issued / r.plan)}%)`);
+    if (r.issued > allowed * 1.02 + 1e-6) lines.push(`• ${name}: issued ${qty(r.issued)} ${u}, more than plan${r.excess ? ' + approved excess' : ''} (${qty(allowed)})`);
+  }
+  const unack = must(iss).map(i => i.issue_no);
+  if (unack.length) lines.push(`• Issued but not yet received on the floor: ${unack.join(', ')}`);
+  return lines;
+}
+
 // ---------- FG receipt (batch or final) with QC outcome ----------
 async function receiveFg(c, final) {
   const d = c.doc, open = Math.max(0, num(d.qty) - num(d.qty_completed) - num(d.qty_rejected));
+  let override = '';
+  if (final) {
+    const gaps = await materialGaps(d);
+    if (gaps.length) {
+      const w = await ask({ title: '⚠ Check material before completing ' + d.wo_no, danger: true,
+        message: 'The final receipt costs the units with the material actually issued to this order, and closes what is still to issue:\n\n' + gaps.join('\n') +
+          '\n\nIssue or return the material first (Material request → Issue material; Return to store & offcuts), or give the reason to complete anyway.',
+        fields: [{ k: 'r', label: 'Reason to complete anyway (saved on the order)', type: 'textarea', required: true }], okText: 'Complete anyway' });
+      if (!w) return;
+      override = 'Material check: ' + gaps.map(g => g.replace(/^• /, '')).join('; ') + ' — completed anyway: ' + w.r;
+    }
+  }
   const v = await ask({
     title: (final ? 'Final receipt — ' : 'Receive batch — ') + d.wo_no,
     message: (final
@@ -495,7 +537,7 @@ async function receiveFg(c, final) {
     okText: final ? 'Receive & complete' : 'Receive batch' });
   if (!v) return;
   if ((num(v.rw) || num(v.sc)) && !v.m) throw new Error('Enter the QC remarks for the rejected units');
-  await rpc('wo_receive_fg', { p_wo: d.id, p_good: num(v.g), p_rework: num(v.rw), p_scrap: num(v.sc), p_final: final, p_remarks: v.m || null });
+  await rpc('wo_receive_fg', { p_wo: d.id, p_good: num(v.g), p_rework: num(v.rw), p_scrap: num(v.sc), p_final: final, p_remarks: [v.m, override].filter(Boolean).join(' · ') || null });
   const rej = num(v.rw) + num(v.sc);
   toast(`${final ? 'Order completed' : 'Batch received'} — ${qty(v.g)} to FG store${rej ? `; ${qty(rej)} rejected unit(s) sent to the Factory Manager for approval` : ''}`, 'ok', 7000);
 }
