@@ -258,6 +258,12 @@ export const wo = {
       if (t) { Object.assign(ctx.doc, { item_id: t.item_id, template_id: t.id }); setTimeout(() => tplFill(ctx), 0); }
     }
   },
+  // not more than the BOQ line still has to plan (the server enforces the same; rework orders are outside the limit)
+  validate(ctx) {
+    const d = ctx.doc, b = d.boq_line_id && woBoq.lines.find(x => x.id === d.boq_line_id);
+    if (b && !d.is_rework && num(d.qty) > b.left + 0.0005)
+      throw new Error(`BOQ ${b.boq_ref || b.line_no} (${b.description}) has ${qty(b.left)} of ${qty(b.qty)} still to plan — the quantity cannot be ${qty(d.qty)}. For more, raise a variation order on the project.`);
+  },
   // a cut list from the template still needs its sheets / edge banding worked out (server side, after the save)
   async afterSave(ctx) {
     if (ctx._tplAuto && ctx.grids.parts?.length && ctx.doc.status === 'DRAFT') await rpc('wo_compute_materials', { p_wo: ctx.doc.id });
