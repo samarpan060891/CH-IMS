@@ -31,6 +31,10 @@ async function loadSoIntoDispatch(ctx, soId) {
 }
 
 // ---------- field helpers ----------
+// people working together at one machine while it runs (operator + helper = 2); 1 for manual stages
+const wcOps = id => { const w = refRow('work_centers', id); return w?.kind === 'MACHINE' ? Math.max(1, num(w.operators) || 1) : 1; };
+// hours a stage occupies its work centre for one unit: the machine run, or the man-hours shared by the operators at it
+const stageHours = (wcId, mh, lh) => Math.max(num(mh), num(lh) / wcOps(wcId));
 const isFG = r => r.is_active && r.item_classes?.code === 'FG';
 const isMat = r => r.is_active && r.item_classes?.tracking === 'LOT' && !r.item_classes?.is_scrap && r.item_classes?.code !== 'FG';
 const itemF = (extra = {}) => ({ k: 'item_id', label: 'Item', type: 'ref', ref: 'items', required: true, width: '240px', filter: isMat, ...extra });
@@ -177,7 +181,11 @@ export const bom = {
       importers: [{ label: '+ Add stages', run: c => addRoute(c, 'routing') }],
       fields: [{ k: 'seq', label: 'Seq', type: 'number', required: true, width: '60px' },
         { k: 'work_center_id', label: 'Work centre', type: 'ref', ref: 'work_centers', required: true, width: '220px', filter: stageWc },
-        { k: 'std_labour_hours', label: 'Man-hours / unit', type: 'number' }, { k: 'std_machine_hours', label: 'Machine hours / unit', type: 'number' },
+        // a machine with operator + helper: man-hours = machine hours × operators (filled in, can be changed)
+        { k: 'std_machine_hours', label: 'Machine hours / unit', type: 'number',
+          onChange: r => { if (!num(r.std_labour_hours) || r._autoLh) { r.std_labour_hours = Math.round(num(r.std_machine_hours) * wcOps(r.work_center_id) * 1000) / 1000; r._autoLh = true; } } },
+        { k: 'std_labour_hours', label: 'Man-hours / unit', type: 'number', onChange: r => { r._autoLh = false; } },
+        { k: '_ops', label: 'Operators', type: 'ro', virtual: true, fmt: (v, r) => refRow('work_centers', r.work_center_id)?.kind === 'MACHINE' ? wcOps(r.work_center_id) : '' },
         { k: 'instructions', label: 'Instructions', width: '220px' }] },
   ],
   async afterLoad() { await loadRef('bom_templates', true); },
@@ -874,7 +882,7 @@ export const ProductionPlanner = {
       const rows = this.batches.map(b => {
         const q = num(b.qty); let t = 0, mh = 0, lh = 0;
         this.route.forEach((r, i) => {
-          const d = q > 0 ? Math.max(num(r.std_machine_hours), num(r.std_labour_hours)) * q / cap(r) : 0;
+          const d = q > 0 ? stageHours(r.work_center_id, r.std_machine_hours, r.std_labour_hours) * q / cap(r) : 0;
           mh += num(r.std_machine_hours) * q; lh += num(r.std_labour_hours) * q;
           const start = Math.max(t, free[r.work_center_id] || 0);
           t = start + d; free[r.work_center_id] = t; stageDays[i] += d;
@@ -938,7 +946,7 @@ export const ProductionPlanner = {
       const q = {};
       ops.forEach(o => {
         const left = o.status === 'IN_PROGRESS' ? Math.max(0, 1 - num(o.qty_done) / (num(o.production_orders.qty) || 1)) : 1;
-        q[o.work_center_id] = (q[o.work_center_id] || 0) + Math.max(num(o.planned_machine_hours), num(o.planned_labour_hours)) * left;
+        q[o.work_center_id] = (q[o.work_center_id] || 0) + stageHours(o.work_center_id, o.planned_machine_hours, o.planned_labour_hours) * left;
       });
       this.queue = q;
     },
@@ -1069,9 +1077,9 @@ export const ProductionPlanner = {
           <a href="javascript:void 0" @click="showStages = !showStages">{{ showStages ? 'Hide' : 'Show' }} stage load</a>
         </div>
         <div v-if="plan && showStages" class="tbl-wrap" style="margin-top:6px"><table class="t">
-          <thead><tr><th>Seq</th><th>Stage / work centre</th><th class="n">Machines / people</th><th class="n">Capacity h/day</th><th class="n">Machine h / unit</th><th class="n">Man-h / unit</th><th class="n">Days (these batches)</th><th class="n">Queued ahead (days)</th></tr></thead>
+          <thead><tr><th>Seq</th><th>Stage / work centre</th><th class="n">Machines / people</th><th class="n">Operators per machine</th><th class="n">Capacity h/day</th><th class="n">Machine h / unit</th><th class="n">Man-h / unit</th><th class="n">Days (these batches)</th><th class="n">Queued ahead (days)</th></tr></thead>
           <tbody><tr v-for="s in plan.stages" :key="s.seq + s.work_center_id">
-            <td>{{ s.seq }}</td><td>{{ s.wc?.name }}</td><td class="n">{{ s.wc?.crew_size || 1 }}</td><td class="n">{{ qty(s.cap) }}</td>
+            <td>{{ s.seq }}</td><td>{{ s.wc?.name }}</td><td class="n">{{ s.wc?.crew_size || 1 }}</td><td class="n">{{ s.wc?.kind === 'MACHINE' ? (s.wc?.operators || 1) : '' }}</td><td class="n">{{ qty(s.cap) }}</td>
             <td class="n">{{ qty(s.std_machine_hours) }}</td><td class="n">{{ qty(s.std_labour_hours) }}</td><td class="n">{{ d1(s.days) }}</td><td class="n">{{ d1(s.queueDays) }}</td>
           </tr></tbody>
         </table></div>

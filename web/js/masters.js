@@ -256,8 +256,8 @@ export const MASTERS = {
     title: 'Work Centres', single: 'Work Centre', table: 'work_centers', order: 'sort_order', editRoles: ['factory_manager', 'finance'], refs: ['labour_grades'],
     columns: [{ k: 'code', label: 'Code' }, { k: 'name', label: 'Name' }, { k: 'kind', label: 'Type', fmt: 'label' },
       { k: 'machine_rate_per_hour', label: 'Machine AED/h', n: true, cost: true }, { k: r => refRow('labour_grades', r.default_grade_id)?.name, label: 'Usual grade' },
-      { k: 'hours_per_day', label: 'Hours/day', n: true }, { k: 'crew_size', label: 'Machines / people', n: true }, { k: 'sort_order', label: 'Route order', n: true }, { k: 'is_active', label: 'Active', fmt: 'bool' }],
-    defaults: () => ({ kind: 'MACHINE', machine_rate_per_hour: 0, hours_per_day: 9, crew_size: 1, sort_order: 50, is_active: true }),
+      { k: 'hours_per_day', label: 'Hours/day', n: true }, { k: 'crew_size', label: 'Machines / people', n: true }, { k: r => r.kind === 'MACHINE' ? r.operators : '', label: 'Operators / machine', n: true }, { k: 'sort_order', label: 'Route order', n: true }, { k: 'is_active', label: 'Active', fmt: 'bool' }],
+    defaults: () => ({ kind: 'MACHINE', machine_rate_per_hour: 0, hours_per_day: 9, crew_size: 1, operators: 1, sort_order: 50, is_active: true }),
     sections: [{ title: 'Work centre / stage', fields: [{ k: 'code', label: 'Code', required: true }, { k: 'name', label: 'Name', required: true, wide: true },
       { k: 'kind', label: 'Type', type: 'select', required: true, options: [{ v: 'MACHINE', l: 'Machine (machine hours charged)' }, { v: 'MANUAL', l: 'Manual (labour only)' },
         { v: 'UTILITY', l: 'Utility (compressor, dust collector … — maintained, never a production stage)' }] },
@@ -266,6 +266,7 @@ export const MASTERS = {
       { k: 'labour_rate_per_hour', label: 'Planning labour rate override AED / man-hour (blank = grade rate)', type: 'number', cost: true },
       { k: 'hours_per_day', label: 'Available hours per day', type: 'number' },
       { k: 'crew_size', label: 'Capacity: machines in parallel (machine) / people (manual) — for completion dates', type: 'number', required: true },
+      { k: 'operators', label: 'Operators per machine while it runs (operator + helper = 2)', type: 'number', required: true, show: d => d.kind === 'MACHINE' },
       { k: 'sort_order', label: 'Default route order', type: 'number' }, { k: 'is_active', label: 'Active', type: 'check' }] },
       { title: 'Machine-rate calculator inputs (machines only)', cost: true, fields: [
         { k: 'power_kw', label: 'Connected power kW', type: 'number', show: d => d.kind !== 'MANUAL' },
