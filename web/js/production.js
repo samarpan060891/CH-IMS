@@ -401,14 +401,16 @@ export const wo = {
     }
     const c = ctx.extra.cost;
     if (c && canSeeCost()) {
-      const v = (p, a) => ({ plan: num(p), act: num(a), var: num(a) - num(p) });
-      out.push({ title: 'Job cost — planned vs actual (AED)', rows: [
+      // actual and variance only once work has started (material issued or time logged); before that the plan alone
+      const started = ctx.doc.status === 'COMPLETED' || num(c.act_material) !== 0 || num(c.act_labour_hours) > 0 || num(c.act_machine_hours) > 0;
+      const v = (p, a) => started ? { plan: num(p), act: num(a), var: num(a) - num(p) } : { plan: num(p), act: null, var: null };
+      out.push({ title: started ? 'Job cost — planned vs actual (AED)' : 'Job cost — planned (AED) · not started: no material issued or time logged yet, so no actual cost or variance', rows: [
         { el: 'Material', ...v(c.plan_material, c.act_material) }, { el: `Labour (${qty(c.act_labour_hours)} of ${qty(c.plan_labour_hours)} man-h)`, ...v(c.plan_labour, c.act_labour) },
         { el: `Machine (${qty(c.act_machine_hours)} of ${qty(c.plan_machine_hours)} h)`, ...v(c.plan_machine, c.act_machine) },
         { el: `Overhead (${num(state.company?.overhead_pct)}% of labour + machine)`, ...v(c.plan_overhead, c.act_overhead) },
         ...(num(c.carry_in_cost) ? [{ el: 'Carried in from rejected units', ...v(c.carry_in_cost, c.carry_in_cost) }] : []),
         { el: 'TOTAL', ...v(c.plan_total, c.act_total) },
-        ...(c.sale_value != null ? [{ el: 'Selling value', plan: num(c.sale_value), act: num(c.sale_value), var: 0 }, { el: 'MARGIN', ...v(num(c.sale_value) - num(c.plan_total), c.margin) }] : [])],
+        ...(c.sale_value != null ? [{ el: 'Selling value', plan: num(c.sale_value), act: started ? num(c.sale_value) : null, var: started ? 0 : null }, { el: 'MARGIN', ...v(num(c.sale_value) - num(c.plan_total), c.margin) }] : [])],
         columns: [{ k: 'el', label: 'Element' }, { k: 'plan', label: 'Planned', fmt: 'money' }, { k: 'act', label: 'Actual', fmt: 'money' }, { k: 'var', label: 'Variance', fmt: 'money' }] });
     }
     if (ctx.extra.receipts?.length) out.push({ title: 'Finished goods receipts & QC', rows: ctx.extra.receipts, columns: [
