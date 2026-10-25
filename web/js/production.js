@@ -727,7 +727,19 @@ export const StageBoard = {
       const g = wc?.default_grade_id || this.grades[0]?.id || null;
       // a combined run is logged once: quantity per order, the time split by their planned hours
       const run = r._run ? { ...r._run, qty: Object.fromEntries(r._run.members.map(m => [m.op, finish ? m.qty : 0])) } : null;
-      this.dlg = { r, run, d: today(), crew: [{ grade_id: g, workers: 1, hours: null, ot: 0 }], mh: null, q: 0, n: '', f: finish, machine: wc?.kind === 'MACHINE' };
+      // pre-filled from the plan: the man-hours still planned on the stage (all of the run's orders for a run), shared by
+      // the machine's operators — the whole balance when finishing, at most one shift otherwise; the quantity left when finishing
+      const stageRows = run ? this.rows.filter(x => run.members.some(m => m.op === x.operation_id)) : [r];
+      const left = Math.max(0, stageRows.reduce((s, x) => s + num(x.planned_labour_hours) - num(x.act_labour_hours), 0));
+      const workers = wcOps(r.work_center_id), shift = num(state.company?.plan_hours_per_day) || 8;
+      const each = left > 0 ? Math.round((finish ? left / workers : Math.min(left / workers, shift)) * 100) / 100 : null;
+      this.dlg = { r, run, d: today(), crew: [{ grade_id: g, workers, hours: each, ot: 0, _auto: true, _left: left, _finish: finish, _shift: shift }],
+        mh: null, q: finish && !run ? Math.max(0, num(r.qty) - num(r.qty_done)) : 0, n: '', f: finish, machine: wc?.kind === 'MACHINE' };
+    },
+    // a pre-filled line follows a change of the number of workers (until its hours are typed by hand)
+    crewWorkers(c) {
+      if (!c._auto || !(num(c.workers) > 0) || !(c._left > 0)) return;
+      c.hours = Math.round((c._finish ? c._left / num(c.workers) : Math.min(c._left / num(c.workers), c._shift)) * 100) / 100;
     },
     async startRun(r) { this.busy = true; await run(() => rpc('run_group_start', { p_group: r._run.id }), 'Combined run started'); this.busy = false; await this.reload(); },
     addCrew() { const c0 = this.dlg.crew[0] || {}; this.dlg.crew.push({ grade_id: null, workers: 1, hours: c0.hours ?? null, ot: c0.ot || 0 }); },
@@ -866,7 +878,8 @@ export const StageBoard = {
 
     <Modal v-if="dlg" :title="(dlg.run ? '🔗 ' + dlg.run.run_no : dlg.r.wo_no) + ' · ' + dlg.r.wc_name" @close="dlg = null">
       <p class="small muted" style="margin-top:0" v-if="dlg.run">Combined run — log the whole crew and hours once; they are split over the orders by their planned hours. Enter the quantity done for each order.</p>
-      <p class="small muted" style="margin-top:0" v-else>Planned {{ qty(dlg.r.planned_labour_hours) }} man-hours · logged so far {{ qty(dlg.r.act_labour_hours) }} · order qty {{ qty(dlg.r.qty) }}</p>
+      <p class="small muted" style="margin-top:0" v-else>Planned {{ qty(dlg.r.planned_labour_hours) }} man-hours · logged so far {{ qty(dlg.r.act_labour_hours) }} · order qty {{ qty(dlg.r.qty) }}
+        <span v-if="dlg.crew[0]?._left > 0"> · hours pre-filled from the plan ({{ dlg.f ? 'balance to finish' : 'up to one shift' }}) — change them to what was actually worked</span></p>
       <div class="grid" v-if="dlg.run" style="margin-bottom:6px">
         <label v-for="m in dlg.run.members" :key="m.op" class="f"><span>{{ m.wo_no }} — qty done ({{ qty(m.qty) }} open)</span><input type="number" step="any" v-model.number="dlg.run.qty[m.op]"></label>
       </div>
@@ -883,8 +896,8 @@ export const StageBoard = {
           <button class="btn sm bad" v-if="dlg.crew.length > 1" @click="dlg.crew.splice(i, 1)" aria-label="Remove line">✕</button>
         </div>
         <div class="crew-nums">
-          <label><span>Workers</span><input type="number" min="1" step="1" inputmode="numeric" v-model.number="c.workers"></label>
-          <label><span>Normal h each</span><input type="number" min="0" step="0.25" inputmode="decimal" v-model.number="c.hours"></label>
+          <label><span>Workers</span><input type="number" min="1" step="1" inputmode="numeric" v-model.number="c.workers" @input="crewWorkers(c)"></label>
+          <label><span>Normal h each</span><input type="number" min="0" step="0.25" inputmode="decimal" v-model.number="c.hours" @input="c._auto = false"></label>
           <label><span>Overtime h each</span><input type="number" min="0" step="0.25" inputmode="decimal" v-model.number="c.ot"></label>
           <div class="crew-tot"><span>Man-hours</span><b>{{ qty(lineHours(c)) }}</b><span v-if="canSeeCost()" class="muted small">AED {{ money(lineCost(c)) }}</span></div>
         </div>
