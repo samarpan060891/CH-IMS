@@ -532,8 +532,10 @@ export async function materialGaps(d) {
 async function receiveFg(c, final) {
   const d = c.doc, open = Math.max(0, num(d.qty) - num(d.qty_completed) - num(d.qty_rejected));
   let override = '', carry = [];
-  if (final) {
-    const { lines: gaps, excess } = await materialGaps(d);
+  {
+    // final receipt: the full material check; batch receipt: only WIP beyond what this order's open units still need
+    // (BOM per unit × units not yet received) — it can stay here (default) or go to another order
+    const mg = await materialGaps(d), gaps = final ? mg.lines : [], excess = mg.excess;
     if (gaps.length || excess.length) {
       // WIP left over (whole sheets / cans / rolls, part-used packs): carry it to another open order of the project that
       // uses it — the next batch of the same BOQ line first — or consume it into these units
@@ -545,24 +547,32 @@ async function receiveFg(c, final) {
         cand = os.map(o => ({ ...o, items: new Set(uses.filter(u => u.wo_id === o.id).map(u => u.item_id)) }))
           .sort((a, b) => (a.boq_line_id === d.boq_line_id ? 0 : 1) - (b.boq_line_id === d.boq_line_id ? 0 : 1));
       }
+      const stay = final ? 'CONSUME' : 'KEEP';
       const fields = excess.map((x, i) => {
         const to = cand.filter(o => o.items.has(x.item));
-        return { k: 'x' + i, type: 'select', required: true, default: to[0] ? to[0].id : 'CONSUME',
-          label: `${itemName(x.item)}: ${qty(x.wip)} ${itemUom(x.item)} in WIP, these ${qty(Math.max(0, num(d.qty) - num(d.qty_completed) - num(d.qty_rejected)))} unit(s) need ${qty(x.need)} — ${qty(x.extra)} extra`,
-          options: [...to.map(o => ({ v: o.id, l: `Carry ${qty(x.extra)} forward to ${o.wo_no}${o.batch_label ? ' (' + o.batch_label + ')' : ''}` })), { v: 'CONSUME', l: `Consume into these units` }] };
+        const carryOpts = to.map(o => ({ v: o.id, l: `Carry ${qty(x.extra)} forward to ${o.wo_no}${o.batch_label ? ' (' + o.batch_label + ')' : ''}` }));
+        return { k: 'x' + i, type: 'select', required: true, default: final && to[0] ? to[0].id : stay,
+          label: `${itemName(x.item)}: ${qty(x.wip)} ${itemUom(x.item)} in WIP, the ${qty(open)} open unit(s) of this order need ${qty(x.need)} — ${qty(x.extra)} extra`,
+          options: final ? [...carryOpts, { v: 'CONSUME', l: 'Consume into these units' }] : [{ v: 'KEEP', l: `Keep in ${d.wo_no} WIP` }, ...carryOpts] };
       });
-      const w = await ask({ title: '⚠ Check material before completing ' + d.wo_no, danger: !!gaps.length,
-        message: (gaps.length ? 'The final receipt costs the units with the material actually issued to this order, and closes what is still to issue:\n\n' + gaps.join('\n') +
-          '\n\nIssue or return the material first (Material request → Issue material; Return to store & offcuts), or give the reason to complete anyway.' : '') +
-          (excess.length ? (gaps.length ? '\n\n' : '') + 'Material left in WIP: carry it forward to the next batch (its material request is reduced), or consume it here. ' +
-            'At the last batch of the BOQ, return what is left to store before the final receipt.' : ''),
-        fields: [...fields, { k: 'r', label: gaps.length ? 'Reason to complete anyway (saved on the order)' : 'Remarks (optional)', type: 'textarea', required: !!gaps.length }],
-        okText: gaps.length ? 'Complete anyway' : 'Continue' });
-      if (!w) return;
-      carry = excess.map((x, i) => ({ item_id: x.item, qty: x.extra, to_wo: w['x' + i] })).filter(c => c.to_wo !== 'CONSUME');
+      // at a batch receipt the extra can only go somewhere if another order uses it; nothing to decide otherwise
+      let remark = '';
+      if (gaps.length || final || fields.some(f => f.options.length > 1)) {
+        const w = await ask({ title: (final ? '⚠ Check material before completing ' : 'Material in WIP — ') + d.wo_no, danger: !!gaps.length,
+          message: (gaps.length ? 'The final receipt costs the units with the material actually issued to this order, and closes what is still to issue:\n\n' + gaps.join('\n') +
+            '\n\nIssue or return the material first (Material request → Issue material; Return to store & offcuts), or give the reason to complete anyway.' : '') +
+            (excess.length ? (gaps.length ? '\n\n' : '') + (final
+              ? 'Material left in WIP: carry it forward to the next batch (its material request is reduced), or consume it here. At the last batch of the BOQ, return what is left to store before the final receipt.'
+              : 'This order holds more than its open units need. Keep it here, or carry the extra forward to another order that uses it now (its material request is reduced).') : ''),
+          fields: [...fields.filter(f => f.options.length > 1 || final), { k: 'r', label: gaps.length ? 'Reason to complete anyway (saved on the order)' : 'Remarks (optional)', type: 'textarea', required: !!gaps.length }],
+          okText: gaps.length ? 'Complete anyway' : 'Continue' });
+        if (!w) return;
+        carry = excess.map((x, i) => ({ item_id: x.item, qty: x.extra, to_wo: w['x' + i] || stay })).filter(c => !['CONSUME', 'KEEP'].includes(c.to_wo));
+        remark = w.r || '';
+      }
       const notes = [...gaps.map(g => g.replace(/^• /, '')),
         ...carry.map(c => `${itemName(c.item_id)} ${qty(c.qty)} carried forward to ${cand.find(o => o.id === c.to_wo)?.wo_no}`)];
-      if (notes.length || w.r) override = 'Material check: ' + notes.join('; ') + (w.r ? (gaps.length ? ' — completed anyway: ' : ' — ') + w.r : '');
+      if (notes.length || remark) override = 'Material check: ' + notes.join('; ') + (remark ? (gaps.length ? ' — completed anyway: ' : ' — ') + remark : '');
     }
   }
   const v = await ask({
