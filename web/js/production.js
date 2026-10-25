@@ -984,6 +984,22 @@ export const ProductionPlanner = {
       const old = this.batches;
       this.batches = Array.from({ length: n }, (_, i) => ({ qty: base + (i < rem ? 1 : 0), due_date: old[i]?.due_date || '', remarks: old[i]?.remarks || '' }));
     },
+    // a changed batch keeps its quantity; the batches after it share what is left (whole units, first ones take the
+    // remainder). Changing the last batch takes the difference from the one before it. Never more than is left to plan.
+    rebalance(i) {
+      const left = Math.round(this.line?.left || 0), bs = this.batches, last = i === bs.length - 1 && i > 0;
+      const sum = a => a.reduce((s, b) => s + Math.max(0, Math.round(num(b.qty))), 0);
+      // batches that stay as they are: those before the changed one (for the last batch, all but the one before it)
+      const fixed = sum(bs.slice(0, last ? i - 1 : i));
+      const me = bs[i];
+      me.qty = Math.min(Math.max(0, Math.round(num(me.qty))), Math.max(0, left - fixed));
+      const rest = left - fixed - me.qty;
+      if (last) bs[i - 1].qty = rest;
+      else if (i < bs.length - 1) {
+        const n = bs.length - i - 1, base = Math.floor(rest / n), rem = rest - base * n;
+        bs.slice(i + 1).forEach((b, k) => { b.qty = base + (k < rem ? 1 : 0); });
+      }
+    },
     async create() {
       const l = this.line, bs = this.batches.filter(b => num(b.qty) > 0);
       if (!bs.length) return toast('Enter a quantity for at least one batch', 'error');
@@ -1083,7 +1099,7 @@ export const ProductionPlanner = {
           <tbody>
             <tr v-for="(b, i) in batches" :key="i">
               <td>Batch {{ i + 1 }} of {{ batches.length }}</td>
-              <td class="n"><input type="number" min="0" step="1" style="width:90px;text-align:right" v-model.number="b.qty"></td>
+              <td class="n"><input type="number" min="0" step="1" style="width:90px;text-align:right" v-model.number="b.qty" @change="rebalance(i)"></td>
               <td class="n" v-if="plan">{{ qty(plan.rows[i]?.mh) }}</td><td class="n" v-if="plan">{{ qty(plan.rows[i]?.lh) }}</td>
               <td v-if="plan"><template v-if="plan.rows[i]?.date"><b>{{ dt(plan.rows[i].date) }}</b><div class="small muted">working day {{ plan.rows[i].days }} · <a href="javascript:void 0" @click="b.due_date = plan.rows[i].date">use as due date</a></div></template></td>
               <td><input type="date" v-model="b.due_date"></td>
