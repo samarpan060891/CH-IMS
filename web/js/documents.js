@@ -709,6 +709,17 @@ export const grn = {
     { label: '✔ Post GRN', cls: 'ok', show: statusIs(ctx, 'DRAFT') && hasRole('stores', 'site_supervisor'), done: 'GRN posted — stock updated',
       confirm: 'Post this GRN? Stock lots will be created and the PO updated. This cannot be undone.', run: c => rpc('post_grn', { p_grn: c.doc.id }) },
     { label: '🏷 Print lot labels', show: statusIs(ctx, 'POSTED') && hasRole('stores'), reload: false, run: c => go(`labels/lots/${c.doc.id}`) },
+    // supplier references can be filled in / corrected after posting (no effect on stock or cost; logged)
+    { label: '✎ Supplier references', show: statusIs(ctx, 'POSTED') && ctx.doc.receipt_type !== 'OPENING' && hasRole('stores', 'purchase', 'finance'), done: 'References updated',
+      run: async c => {
+        const d = c.doc;
+        const v = await ask({ title: 'Supplier references — ' + d.grn_no, message: 'Delivery note and invoice details from the supplier. Stock and cost are not affected; the change is logged.',
+          fields: [{ k: 'dn', label: 'Vendor delivery note no.', default: d.vendor_dn_no || '' }, { k: 'dnd', label: 'DN date', type: 'date', default: d.vendor_dn_date || '', noFuture: true },
+                   { k: 'inv', label: 'Vendor invoice no.', default: d.vendor_invoice_no || '' }, { k: 'invd', label: 'Invoice date', type: 'date', default: d.vendor_invoice_date || '', noFuture: true },
+                   { k: 'veh', label: 'Vehicle no.', default: d.vehicle_no || '' }], okText: 'Save references' });
+        if (!v) return;
+        return rpc('grn_update_refs', { p_grn: d.id, p_dn_no: v.dn || null, p_dn_date: v.dnd || null, p_inv_no: v.inv || null, p_inv_date: v.invd || null, p_vehicle: v.veh || null });
+      } },
     { label: 'Return to vendor', show: statusIs(ctx, 'POSTED') && hasRole('stores', 'purchase') && !!ctx.doc.vendor_id, reload: false, run: c => go(`d/prt/new/grn/${c.doc.id}`) },
     { label: 'Book vendor invoice', show: statusIs(ctx, 'POSTED') && hasRole('finance') && ctx.doc.receipt_type === 'PO', reload: false, run: c => go(`d/inv/new/grn/${c.doc.id}`) },
     { label: '🖨 GRN PDF', reload: false, run: c => {
