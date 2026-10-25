@@ -5,8 +5,8 @@
 // their work centre from today; the rest follow route order, each starting when the order has left the previous stage
 // (plus its wait) at the first time the work centre is free long enough — orders ahead in the sequence book first, a
 // later order can use a gap between them but never delays them.
-import { sb, state, must, run, num, qty, dt, today, refRow, loadRefs, go, label } from './lib.js';
-import { Badge } from './components.js';
+import { sb, state, must, run, rpc, num, qty, dt, today, refRow, loadRefs, go, label, hasRole, toast } from './lib.js';
+import { Badge, ask, confirmBox } from './components.js';
 
 export const OPEN_WO = ['PENDING_FM', 'APPROVED', 'RELEASED', 'IN_PROGRESS'];
 
@@ -47,11 +47,12 @@ export async function loadOpenWork() {
   const orders = must(await sb.from('production_orders').select('id,wo_no,description,qty,qty_completed,status,priority,due_date,project_id,item_id,is_rework,batch_label,boq_line_id')
     .in('status', OPEN_WO).order('wo_no'));
   const ids = orders.map(o => o.id);
-  const ops = ids.length ? must(await sb.from('wo_operations').select('id,wo_id,seq,work_center_id,planned_labour_hours,planned_machine_hours,wait_days,status,qty_done')
+  const ops = ids.length ? must(await sb.from('wo_operations').select('id,wo_id,seq,work_center_id,planned_labour_hours,planned_machine_hours,wait_days,status,qty_done,run_group_id')
     .in('wo_id', ids).order('seq')) : [];
   const holidays = must(await sb.from('public_holidays').select('holiday_date,name,confirmed').order('holiday_date'));
   setHolidays(holidays.map(h => h.holiday_date));
-  return { orders, ops, holidays };
+  const runs = must(await sb.from('wo_run_groups').select('id,run_no,work_center_id,notes,nested,sheets_saved,setup_saved,status,created_at').eq('status', 'OPEN').order('created_at'));
+  return { orders, ops, holidays, runs };
 }
 // ---------- material availability ----------
 // stock usable for production: available lots in the stores (not quarantine, scrap, shop floor or FG store)
@@ -162,7 +163,7 @@ export function jobsFrom(orders, ops) {
     id: w.id, wo: w, priority: w.priority, due_date: w.due_date, rank: w.wo_no,
     ops: (by[w.id] || []).filter(o => ['PENDING', 'IN_PROGRESS'].includes(o.status)).map(o => {
       const f = o.status === 'IN_PROGRESS' ? Math.max(0, 1 - num(o.qty_done) / (num(w.qty) || 1)) : 1;
-      return { id: o.id, seq: num(o.seq), wc: o.work_center_id, status: o.status, wait: num(o.wait_days),
+      return { id: o.id, seq: num(o.seq), wc: o.work_center_id, status: o.status, wait: num(o.wait_days), group: o.run_group_id || null,
                h: stageHours(o.work_center_id, num(o.planned_machine_hours) * f, num(o.planned_labour_hours) * f) };
     }),
   }));
@@ -172,7 +173,16 @@ const cmp = (a, b) => { for (let i = 0; i < a.length; i++) { if (a[i] < b[i]) re
 export const seqKey = j => [j.priority === 'URGENT' ? 0 : 1, j.due_date || '9999-12-31', j.rank || ''];
 
 // times are in working days from the start date (0 = start of the first working day)
+// a combined run is one block at its work centre: all its orders' hours together, starting when the last of them is
+// ready for that stage (found by a first pass without runs); every order of the run leaves the stage when the block ends
 export function schedule(jobs, startIso = today()) {
+  if (!jobs.some(j => j.ops.some(o => o.group && o.status === 'PENDING'))) return scheduleRuns(jobs, startIso, null);
+  const first = scheduleRuns(jobs, startIso, null), ready = {}, hours = {};
+  for (const r of first.res.values()) r.stages.forEach(s => { if (s.group && s.status === 'PENDING') ready[s.group] = Math.max(ready[s.group] || 0, s.ready || 0); });
+  jobs.forEach(j => j.ops.forEach(o => { if (o.group && o.status === 'PENDING') hours[o.group] = (hours[o.group] || 0) + o.h; }));
+  return scheduleRuns(jobs, startIso, { ready, hours, blocks: {} });
+}
+function scheduleRuns(jobs, startIso, runs) {
   const busy = {}, res = new Map();
   // book the earliest free slot of the work centre from `ready` that is long enough (a later order may use a gap
   // left by the orders ahead of it, without delaying them)
@@ -199,8 +209,14 @@ export function schedule(jobs, startIso = today()) {
     r.t = Math.max(r.t, num(j.ready));
     for (const s of [...j.ops].sort((a, b) => a.seq - b.seq)) {
       if (s.status !== 'PENDING') continue;
+      if (runs && s.group) {
+        // the first order of the run in the sequence books the whole run
+        const b = runs.blocks[s.group] ||= (() => { const d = runs.hours[s.group] / capOf(s.wc), st = book(s.wc, Math.max(r.t, runs.ready[s.group] || 0), d); return { start: st, end: st + d }; })();
+        r.stages.push({ ...s, ready: r.t, start: b.start, end: b.end }); r.t = Math.max(r.t, b.end) + s.wait;
+        continue;
+      }
       const d = s.h / capOf(s.wc), st = book(s.wc, r.t, d);
-      r.stages.push({ ...s, start: st, end: st + d }); r.t = st + d + s.wait;
+      r.stages.push({ ...s, ready: r.t, start: st, end: st + d }); r.t = st + d + s.wait;
     }
     r.stages.sort((a, b) => a.seq - b.seq);
     r.days = Math.ceil(r.t - 1e-9);
@@ -219,7 +235,7 @@ export const FLAG = { LATE: { t: '🔴 Late', c: 'OVERDUE' }, TIGHT: { t: '🟠 
 const WEEKS = 8;
 export const FactorySchedule = {
   components: { Badge },
-  data: () => ({ loading: true, data: null, mat: null, sch: null, proj: '', flag: '', matF: '', openId: null, startDate: today(), waitMat: false }),
+  data: () => ({ loading: true, data: null, mat: null, sch: null, proj: '', flag: '', matF: '', openId: null, startDate: today(), waitMat: false, sel: {}, busy: false }),
   computed: {
     rows() {
       if (!this.sch) return [];
@@ -243,9 +259,11 @@ export const FactorySchedule = {
     load() {
       if (!this.sch) return [];
       const start = this.sch.start, weekOf = iso => { const d = parseIso(iso); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return isoDate(d); };
-      const days = {}, by = {};
+      const days = {}, by = {}, seen = new Set();
       const dayDate = i => (days[i] ||= addWorkdays(start, i));
       for (const r of this.sch.res.values()) for (const s of r.stages) {
+        // a combined run is one block — count it once
+        if (s.group) { const k = s.group + '|' + s.start; if (seen.has(k)) continue; seen.add(k); }
         for (let i = Math.floor(s.start); i < Math.ceil(s.end - 1e-9) && i < 400; i++) {
           const ov = Math.min(s.end, i + 1) - Math.max(s.start, i);
           if (ov <= 0) continue;
@@ -260,6 +278,14 @@ export const FactorySchedule = {
         .sort((a, b) => num(a.w?.sort_order) - num(b.w?.sort_order));
     },
     neck() { return this.load.reduce((a, x) => (!a || x.total > a.total ? x : a), null); },
+    canPlan: () => hasRole('production_incharge', 'factory_manager'),
+    selected() { return (this.sch?.sorted || []).filter(j => this.sel[j.id]); },
+    // combined runs with their orders
+    runs() {
+      if (!this.data) return [];
+      const wo = Object.fromEntries(this.data.orders.map(o => [o.id, o]));
+      return this.data.runs.map(g => ({ ...g, ops: this.data.ops.filter(o => o.run_group_id === g.id).map(o => ({ ...o, wo: wo[o.wo_id] })) })).filter(g => g.ops.length);
+    },
   },
   async mounted() { await this.reload(); },
   methods: {
@@ -277,6 +303,37 @@ export const FactorySchedule = {
     at(t) { return dt(dateAt(this.sch.start, t)); },
     endAt(t) { return dt(addWorkdays(this.sch.start, Math.max(Math.ceil(t - 1e-9) - 1, 0))); },
     wcName(id) { return refRow('work_centers', id)?.name || ''; },
+    runNo(id) { return this.data?.runs.find(g => g.id === id)?.run_no || 'run'; },
+    runsOf(r) { return [...new Set(r.stages.filter(s => s.group).map(s => s.group))]; },
+    // combine the ticked orders at a work centre where each of them has a stage still to start
+    async combine() {
+      const js = this.selected;
+      const free = j => new Set(this.data.ops.filter(o => o.wo_id === j.id && o.status === 'PENDING' && !o.run_group_id).map(o => o.work_center_id));
+      const common = [...js.map(free).reduce((a, b) => new Set([...a].filter(x => b.has(x))))];
+      if (!common.length) return toast('These orders have no stage still to start at the same work centre', 'error');
+      const v = await ask({ title: `Combine ${js.length} orders`, message: js.map(j => `${j.wo.wo_no} — ${j.wo.description || ''}`).join(' · '),
+        fields: [{ k: 'wc', label: 'Run together at', type: 'select', required: true, options: common.map(id => ({ v: id, l: this.wcName(id) })) },
+          { k: 'nest', label: 'Nest boards together', type: 'check', hint: 'Sheets of the same board for all the orders worked out together (orders whose material is not yet sent to Stores)' },
+          { k: 'notes', label: 'Notes for the floor (board / colour / why combined)', type: 'textarea' }], okText: 'Combine' });
+      if (!v) return;
+      this.busy = true;
+      const ok = await run(async () => {
+        const id = await rpc('run_group_create', { p_wc: v.wc, p_wos: js.map(j => j.id), p_notes: v.notes || null, p_nest: !!v.nest });
+        const g = must(await sb.from('wo_run_groups').select('run_no,setup_saved,sheets_saved').eq('id', id).single());
+        toast(`${g.run_no}: setup counted once (saves ${qty(g.setup_saved)} h)${num(g.sheets_saved) ? `, ${qty(g.sheets_saved)} sheet(s) saved by nesting` : ''}`, 'ok', 7000);
+        return true;
+      });
+      this.busy = false;
+      if (ok) { this.sel = {}; await this.reload(); }
+    },
+    async dissolve(g) {
+      if (!(await confirmBox('Ungroup ' + g.run_no, 'Run these orders separately again? Each gets its own setup back (and its own board sheets, while its material is not yet sent to Stores).'))) return;
+      if (await run(() => rpc('run_group_dissolve', { p_group: g.id }), 'Ungrouped')) await this.reload();
+    },
+    async leave(g, o) {
+      if (!(await confirmBox('Take out ' + o.wo?.wo_no, `Take ${o.wo?.wo_no} out of ${g.run_no}?`))) return;
+      if (await run(() => rpc('run_group_remove', { p_op: o.id }), 'Taken out of the run')) await this.reload();
+    },
     projCode(id) { return refRow('projects', id)?.code || ''; },
     itemName(id) { const i = refRow('items', id); return i ? `${i.code} — ${i.name}` : ''; },
     cur(r) { const s = r.stages.find(x => x.status === 'IN_PROGRESS') || r.stages[0]; return s ? `${s.seq} · ${this.wcName(s.wc)}` : '—'; },
@@ -304,15 +361,19 @@ export const FactorySchedule = {
       </div>
       <div class="card">
         <div class="hd"><h3>Sequence — URGENT first, then earliest due date</h3><span class="spacer" style="flex:1"></span>
+          <button v-if="canPlan && selected.length >= 2" class="btn sm primary" :disabled="busy" @click="combine">🔗 Combine {{ selected.length }} orders…</button>
+          <span v-else-if="canPlan" class="small muted" style="margin-right:8px">tick orders to run together</span>
           <span class="small muted" v-if="flag || matF">showing {{ flag ? FLAG(flag).t : '' }} {{ matF ? MAT(matF).t : '' }} · <a href="javascript:void 0" @click="flag = ''; matF = ''">show all</a></span></div>
         <div class="tbl-wrap"><table class="t">
-          <thead><tr><th class="n">#</th><th>Order</th><th>Project</th><th>Product</th><th class="n">Qty</th><th>Status</th><th>Due</th><th>Projected finish</th><th class="n">Spare days</th><th>Flag</th><th>Material</th><th>Next stage</th></tr></thead>
+          <thead><tr><th v-if="canPlan"></th><th class="n">#</th><th>Order</th><th>Project</th><th>Product</th><th class="n">Qty</th><th>Status</th><th>Due</th><th>Projected finish</th><th class="n">Spare days</th><th>Flag</th><th>Material</th><th>Next stage</th></tr></thead>
           <tbody>
-            <tr v-if="!rows.length"><td colspan="12" class="empty">No open production orders</td></tr>
+            <tr v-if="!rows.length"><td colspan="13" class="empty">No open production orders</td></tr>
             <template v-for="x in rows" :key="x.j.id">
               <tr style="cursor:pointer" @click="openId = openId === x.j.id ? null : x.j.id">
+                <td v-if="canPlan" @click.stop><input type="checkbox" v-model="sel[x.j.id]"></td>
                 <td class="n">{{ x.n }}</td>
                 <td><a href="javascript:void 0" @click.stop="go('d/wo/' + x.j.id)"><b>{{ x.j.wo.wo_no }}</b></a><Badge v-if="x.j.priority === 'URGENT'" v="URGENT" style="margin-left:4px" />
+                  <span v-for="g in runsOf(x.r)" :key="g" class="b BLUE" style="margin-left:4px" title="Combined run">🔗 {{ runNo(g) }}</span>
                   <div class="small muted">{{ x.j.wo.batch_label || (x.j.wo.is_rework ? 'Rework' : '') }}</div></td>
                 <td>{{ projCode(x.j.wo.project_id) }}</td>
                 <td>{{ x.j.wo.description || itemName(x.j.wo.item_id) }}</td>
@@ -327,9 +388,9 @@ export const FactorySchedule = {
                   <div class="small muted" v-else-if="['ON_PO', 'PO_LATE', 'PO_PENDING'].includes(matOf(x.j).status)">all by {{ matOf(x.j).matDate ? dt(matOf(x.j).matDate) : '?' }}</div></td>
                 <td class="small">{{ cur(x.r) }}<div class="muted" v-if="x.r.stages[0]">from {{ at(x.r.stages[0].start) }}</div></td>
               </tr>
-              <tr v-if="openId === x.j.id"><td></td><td colspan="11">
+              <tr v-if="openId === x.j.id"><td :colspan="canPlan ? 2 : 1"></td><td colspan="11">
                 <table class="t" style="margin:4px 0"><thead><tr><th>Stage</th><th>Work centre</th><th>Status</th><th class="n">Hours left</th><th>Starts</th><th>Ends</th><th class="n">Wait after (days)</th></tr></thead>
-                  <tbody><tr v-for="s in x.r.stages" :key="s.id"><td>{{ s.seq }}</td><td>{{ wcName(s.wc) }}</td><td><Badge :v="s.status" /></td><td class="n">{{ qty(Math.round(s.h * 10) / 10) }}</td>
+                  <tbody><tr v-for="s in x.r.stages" :key="s.id"><td>{{ s.seq }}</td><td>{{ wcName(s.wc) }}<span v-if="s.group" class="b BLUE" style="margin-left:4px">🔗 {{ runNo(s.group) }}</span></td><td><Badge :v="s.status" /></td><td class="n">{{ qty(Math.round(s.h * 10) / 10) }}</td>
                     <td>{{ at(s.start) }}</td><td>{{ endAt(s.end) }}</td><td class="n">{{ qty(s.wait) }}</td></tr></tbody></table>
                 <table class="t" style="margin:4px 0" v-if="matOf(x.j).lines.length"><thead><tr><th>Material (needed by {{ dt(matOf(x.j).need) || '—' }})</th><th class="n">Required</th><th class="n">Issued</th><th class="n">From stock</th><th>From POs</th><th class="n">Short</th><th class="n">On requisition (no PO)</th></tr></thead>
                   <tbody><tr v-for="l in matOf(x.j).lines" :key="l.item" :style="l.short ? 'background:#fef2f2' : ''"><td>{{ itemName(l.item) }} <span class="muted small">{{ uom(l.item) }}</span></td>
@@ -341,6 +402,19 @@ export const FactorySchedule = {
         </table></div>
         <p class="small muted" style="margin:8px 0 0">Click a row for its stages. Finish dates are recalculated from what is still open each time this page opens — logged quantities and closed stages bring them forward,
           new urgent or earlier-due orders push others back. Draft orders are not scheduled until they are sent to the Factory Manager.<br>Material: each order's BOM materials not yet issued are shared out in this sequence — the project's own stock, then free stock in the stores, then approved POs by delivery date (POs awaiting approval shown separately); needed by the start of the order's first stage. Tick <b>Wait for material</b> to hold each order's start until its material is due.</p>
+      </div>
+      <div class="card" v-if="runs.length">
+        <div class="hd"><h3>🔗 Combined runs</h3></div>
+        <div class="tbl-wrap"><table class="t">
+          <thead><tr><th>Run</th><th>Work centre</th><th>Orders</th><th class="n">Setup saved (h)</th><th class="n">Sheets saved</th><th>Notes</th><th></th></tr></thead>
+          <tbody><tr v-for="g in runs" :key="g.id">
+            <td><b>{{ g.run_no }}</b></td><td>{{ wcName(g.work_center_id) }}</td>
+            <td><span v-for="o in g.ops" :key="o.id" class="chip" style="margin:2px">{{ o.wo?.wo_no }} · {{ projCode(o.wo?.project_id) }} · {{ qty(o.wo?.qty) }}
+              <a v-if="canPlan && o.status === 'PENDING'" href="javascript:void 0" @click="leave(g, o)" title="Take out of the run"> ✕</a></span></td>
+            <td class="n">{{ qty(g.setup_saved) }}</td><td class="n">{{ g.nested ? qty(g.sheets_saved) : '' }}</td><td class="small">{{ g.notes }}</td>
+            <td><button v-if="canPlan" class="btn sm" @click="dissolve(g)">Ungroup</button></td></tr></tbody>
+        </table></div>
+        <p class="small muted" style="margin:8px 0 0">A combined run is scheduled as one block at its work centre (setup once) and logged once on the stage board — the time is split over the orders by their planned hours. Material, cost and FG stay per order.</p>
       </div>
       <div class="card" v-if="load.length">
         <div class="hd"><h3>Work centre load by week (% of capacity)</h3></div>

@@ -614,6 +614,13 @@ export const StageBoard = {
         rows.sort((a, b) => a._t - b._t || String(a.wo_no).localeCompare(String(b.wo_no)) || a.seq - b.seq);
         const nAt = {};
         rows.forEach(r => { r._pos = (nAt[r.work_center_id] = (nAt[r.work_center_id] || 0) + 1); });
+        // combined runs: the stage carries its run and the other orders in it
+        const grp = Object.fromEntries(w.ops.filter(o => o.run_group_id).map(o => [o.id, o.run_group_id]));
+        const woNo = Object.fromEntries(w.orders.map(o => [o.id, o]));
+        rows.forEach(r => {
+          const g = grp[r.operation_id], run = g && w.runs.find(x => x.id === g);
+          r._run = run ? { ...run, members: w.ops.filter(o => o.run_group_id === g && !['DONE', 'SKIPPED'].includes(o.status)).map(o => ({ op: o.id, wo_no: woNo[o.wo_id]?.wo_no, qty: num(woNo[o.wo_id]?.qty) - num(o.qty_done), status: o.status })) } : null;
+        });
         this.rows = rows;
       });
       this.loading = false;
@@ -625,8 +632,11 @@ export const StageBoard = {
     log(r, finish = false) {
       const wc = refRow('work_centers', r.work_center_id);
       const g = wc?.default_grade_id || this.grades[0]?.id || null;
-      this.dlg = { r, d: today(), crew: [{ grade_id: g, workers: 1, hours: null, ot: 0 }], mh: null, q: 0, n: '', f: finish, machine: wc?.kind === 'MACHINE' };
+      // a combined run is logged once: quantity per order, the time split by their planned hours
+      const run = r._run ? { ...r._run, qty: Object.fromEntries(r._run.members.map(m => [m.op, finish ? m.qty : 0])) } : null;
+      this.dlg = { r, run, d: today(), crew: [{ grade_id: g, workers: 1, hours: null, ot: 0 }], mh: null, q: 0, n: '', f: finish, machine: wc?.kind === 'MACHINE' };
     },
+    async startRun(r) { this.busy = true; await run(() => rpc('run_group_start', { p_group: r._run.id }), 'Combined run started'); this.busy = false; await this.reload(); },
     addCrew() { const c0 = this.dlg.crew[0] || {}; this.dlg.crew.push({ grade_id: null, workers: 1, hours: c0.hours ?? null, ot: c0.ot || 0 }); },
     lineHours(c) { return num(c.workers) * (num(c.hours) + num(c.ot)); },
     lineCost(c) { const g = refRow('labour_grades', c.grade_id); return num(c.workers) * (num(c.hours) * num(g?.rate_per_hour) + num(c.ot) * num(g?.ot_rate_per_hour)); },
@@ -640,6 +650,15 @@ export const StageBoard = {
       if (!crew.length) return toast('Enter at least one crew line: grade, workers and hours', 'error');
       if (crew.length < v.crew.length) return toast('Complete or remove the empty crew lines', 'error');
       this.busy = true;
+      if (v.run) {
+        const ok = await run(() => rpc('run_group_log', { p_group: v.run.id, p_date: v.d,
+          p_crew: crew.map(c => ({ grade_id: c.grade_id, workers: num(c.workers), hours: num(c.hours), ot_hours: num(c.ot) })),
+          p_machine_hours: v.mh === null || v.mh === '' ? null : num(v.mh), p_qty: Object.fromEntries(Object.entries(v.run.qty).map(([k, q]) => [k, num(q)])),
+          p_notes: v.n || null, p_complete: !!v.f }), v.f ? 'Combined run logged — stages closed' : 'Combined run logged');
+        this.busy = false;
+        if (ok) { this.dlg = null; await this.reload(); }
+        return;
+      }
       const ok = await run(() => rpc('wo_log_time', { p_op: v.r.operation_id, p_date: v.d,
         p_crew: crew.map(c => ({ grade_id: c.grade_id, workers: num(c.workers), hours: num(c.hours), ot_hours: num(c.ot) })),
         p_machine_hours: v.mh === null || v.mh === '' ? null : num(v.mh), p_qty_done: num(v.q), p_notes: v.n || null, p_complete: !!v.f }),
@@ -690,16 +709,24 @@ export const StageBoard = {
         </div>
         <div class="small muted" v-if="!r.is_current">Waiting for an earlier stage</div>
         <div class="small" v-if="r._start">📅 Planned start {{ dt(r._start) }} · #{{ r._pos }} in the queue here</div>
+        <div class="small" v-if="r._run" style="color:#1e40af">🔗 Combined run {{ r._run.run_no }}: {{ r._run.members.map(m => m.wo_no).join(' + ') }}<span v-if="r._run.notes"> · {{ r._run.notes }}</span></div>
         <div class="small" v-if="r.instructions">📝 {{ r.instructions }}</div>
         <div class="stage-nums">
           <div><span class="muted">Man-hours</span><b :class="{warn: over(r)}">{{ qty(r.act_labour_hours) }} / {{ qty(r.planned_labour_hours) }}</b></div>
           <div><span class="muted">Qty done</span><b>{{ qty(r.qty_done) }} / {{ qty(r.qty) }}</b></div>
         </div>
         <div class="stage-btns">
+          <template v-if="r._run">
+            <button v-if="r.status==='PENDING'" class="btn" :disabled="busy" @click="startRun(r)">▶ Start run</button>
+            <button class="btn primary" :disabled="busy" @click="log(r)">⏱ Log run</button>
+            <button class="btn ok" :disabled="busy" @click="log(r, true)">✔ Finish run</button>
+          </template>
+          <template v-else>
           <button v-if="r.status==='PENDING'" class="btn" :disabled="busy" @click="start(r)">▶ Start</button>
           <button class="btn primary" :disabled="busy" @click="log(r)">⏱ Log time</button>
           <button class="btn ok" :disabled="busy" @click="log(r, true)">✔ Finish</button>
           <button v-if="r.status==='IN_PROGRESS'" class="btn" :disabled="busy" @click="done(r)">Close</button>
+          </template>
           <button v-if="!isDown(r.work_center_id)" class="btn tool" @click="reportDown(r)" title="Report a breakdown or stoppage" aria-label="Report a breakdown">🔧</button>
         </div>
       </div>
@@ -718,16 +745,24 @@ export const StageBoard = {
             <td :style="late(r) ? 'color:#b91c1c;font-weight:600' : ''">{{ dt(r.due_date) }}<div v-if="r.priority==='URGENT'"><Badge v="URGENT" /></div></td>
             <td>{{ r.seq }} · <b>{{ r.wc_name }}</b> <Badge v-if="isDown(r.work_center_id)" v="DOWN" />
               <div class="small muted">{{ r.is_current ? 'Current stage' : 'Waiting for earlier stage' }}<span v-if="r._start"> · planned {{ dt(r._start) }} · #{{ r._pos }} here</span></div>
+              <div class="small" v-if="r._run" style="color:#1e40af">🔗 {{ r._run.run_no }}: {{ r._run.members.map(m => m.wo_no).join(' + ') }}</div>
               <div class="small" v-if="r.instructions">{{ r.instructions }}</div></td>
             <td><Badge :v="r.status" /></td>
             <td class="n">{{ qty(r.planned_labour_hours) }}</td>
             <td class="n" :style="Number(r.act_labour_hours) > Number(r.planned_labour_hours) && Number(r.planned_labour_hours) ? 'color:#b45309;font-weight:600' : ''">{{ qty(r.act_labour_hours) }}</td>
             <td class="n">{{ qty(r.qty_done) }}</td>
             <td style="white-space:nowrap">
+              <template v-if="r._run">
+                <button v-if="r.status==='PENDING'" class="btn sm" :disabled="busy" @click="startRun(r)">▶ Start run</button>
+                <button class="btn sm primary" :disabled="busy" @click="log(r)">⏱ Log run</button>
+                <button class="btn sm ok" :disabled="busy" @click="log(r, true)" title="Log the last session of the run and close its stages">✔ Finish run</button>
+              </template>
+              <template v-else>
               <button v-if="r.status==='PENDING'" class="btn sm" :disabled="busy" @click="start(r)">▶ Start</button>
               <button class="btn sm primary" :disabled="busy" @click="log(r)">⏱ Log time</button>
               <button class="btn sm ok" :disabled="busy" @click="log(r, true)" title="Log the last session and close the stage">✔ Finish</button>
               <button v-if="r.status==='IN_PROGRESS'" class="btn sm" :disabled="busy" @click="done(r)" title="Close without logging">Close</button>
+              </template>
               <button v-if="!isDown(r.work_center_id)" class="btn sm" @click="reportDown(r)" title="Report a breakdown or stoppage at this work centre">🔧</button>
             </td>
           </tr>
@@ -736,11 +771,15 @@ export const StageBoard = {
     </div>
     <p class="small muted">Stages are listed in the <b>factory schedule</b> order (URGENT first, then earliest due date) — take them top to bottom at each work centre. Supervisors log the crew by <b>worker grade × workers × hours</b> for each stage; machine hours default to the longest crew line on machine stages. Scan the QR on the job card to open one order directly.</p>
 
-    <Modal v-if="dlg" :title="dlg.r.wo_no + ' · ' + dlg.r.wc_name" @close="dlg = null">
-      <p class="small muted" style="margin-top:0">Planned {{ qty(dlg.r.planned_labour_hours) }} man-hours · logged so far {{ qty(dlg.r.act_labour_hours) }} · order qty {{ qty(dlg.r.qty) }}</p>
+    <Modal v-if="dlg" :title="(dlg.run ? '🔗 ' + dlg.run.run_no : dlg.r.wo_no) + ' · ' + dlg.r.wc_name" @close="dlg = null">
+      <p class="small muted" style="margin-top:0" v-if="dlg.run">Combined run — log the whole crew and hours once; they are split over the orders by their planned hours. Enter the quantity done for each order.</p>
+      <p class="small muted" style="margin-top:0" v-else>Planned {{ qty(dlg.r.planned_labour_hours) }} man-hours · logged so far {{ qty(dlg.r.act_labour_hours) }} · order qty {{ qty(dlg.r.qty) }}</p>
+      <div class="grid" v-if="dlg.run" style="margin-bottom:6px">
+        <label v-for="m in dlg.run.members" :key="m.op" class="f"><span>{{ m.wo_no }} — qty done ({{ qty(m.qty) }} open)</span><input type="number" step="any" v-model.number="dlg.run.qty[m.op]"></label>
+      </div>
       <div class="grid">
         <label class="f"><span>Date <span class="req">*</span></span><input type="date" v-model="dlg.d"></label>
-        <label class="f"><span>Qty completed this session</span><input type="number" step="any" v-model.number="dlg.q"></label>
+        <label class="f" v-if="!dlg.run"><span>Qty completed this session</span><input type="number" step="any" v-model.number="dlg.q"></label>
         <label class="f" v-if="dlg.machine"><span>Machine hours (blank = longest crew line)</span><input type="number" step="any" v-model.number="dlg.mh"></label>
       </div>
       <h3 style="margin:14px 0 6px">Crew</h3>
