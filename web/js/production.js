@@ -852,7 +852,7 @@ const PLAN_FLOOR = ['RELEASED', 'IN_PROGRESS'];
 // working-day calendar for completion estimates (weekly off day(s) from Settings)
 const isoDate = d => d.toISOString().slice(0, 10);
 const parseIso = s => new Date(s + 'T00:00:00Z');
-const weekOff = () => state.company?.plan_week_off?.length ? state.company.plan_week_off : [5];
+const weekOff = () => state.company?.plan_week_off?.length ? state.company.plan_week_off : [0];
 function workday(s) { const d = parseIso(s); while (weekOff().includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() + 1); return isoDate(d); }
 function addWorkdays(s, n) { const d = parseIso(workday(s)); for (let i = 0; i < n; i++) { d.setUTCDate(d.getUTCDate() + 1); while (weekOff().includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() + 1); } return isoDate(d); }
 export const ProductionPlanner = {

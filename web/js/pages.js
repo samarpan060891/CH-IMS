@@ -1030,14 +1030,14 @@ export const Settings = {
       ];
     },
   },
-  mounted() { const c = state.company || {}; this.c = { ...c, auth_sign_user_id: c.auth_sign_user_id || '', _terms_goods: (c.po_terms_goods || []).join('\n'), _terms_works: (c.po_terms_works || []).join('\n'), _week_off: (c.plan_week_off || [5])[0] }; },
+  mounted() { const c = state.company || {}; this.c = { ...c, auth_sign_user_id: c.auth_sign_user_id || '', _terms_goods: (c.po_terms_goods || []).join('\n'), _terms_works: (c.po_terms_works || []).join('\n'), _week_off: (c.plan_week_off || [0])[0] }; },
   methods: {
     async save() {
       const row = {}; this.fields.filter(f => !f.k.startsWith('_')).forEach(f => { row[f.k] = this.c[f.k]; });
       const lines = t => String(t || '').split('\n').map(s => s.trim()).filter(Boolean);
       row.po_terms_goods = lines(this.c._terms_goods); row.po_terms_works = lines(this.c._terms_works);
       row.auth_sign_user_id = row.auth_sign_user_id || null;
-      row.plan_week_off = [Number(this.c._week_off ?? 5)];
+      row.plan_week_off = [Number(this.c._week_off ?? 0)];
       row.doc_company_code = String(row.doc_company_code || '').trim().toUpperCase();
       row.vat_quarter_start_month = Number(row.vat_quarter_start_month) || 1;
       const ok = await run(async () => must(await sb.from('company_settings').update(row).eq('id', 1)), 'Settings saved');

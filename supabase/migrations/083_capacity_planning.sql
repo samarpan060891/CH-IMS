@@ -5,7 +5,7 @@
 alter table company_settings
   add column if not exists plan_hours_per_day numeric not null default 8,
   add column if not exists plan_efficiency_pct numeric not null default 85,
-  add column if not exists plan_week_off int[] not null default '{5}';   -- 0 = Sunday … 5 = Friday, 6 = Saturday
+  add column if not exists plan_week_off int[] not null default '{0}';   -- 0 = Sunday (weekly off) … 6 = Saturday
 alter table work_centers add column if not exists crew_size int not null default 1;
 alter table work_centers drop constraint if exists work_centers_crew_size_check;
 alter table work_centers add constraint work_centers_crew_size_check check (crew_size >= 1);
