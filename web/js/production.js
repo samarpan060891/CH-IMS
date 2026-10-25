@@ -984,19 +984,17 @@ export const ProductionPlanner = {
       const old = this.batches;
       this.batches = Array.from({ length: n }, (_, i) => ({ qty: base + (i < rem ? 1 : 0), due_date: old[i]?.due_date || '', remarks: old[i]?.remarks || '' }));
     },
-    // a changed batch keeps its quantity; the batches after it share what is left (whole units, first ones take the
-    // remainder). Changing the last batch takes the difference from the one before it. Never more than is left to plan.
+    // a changed batch keeps its quantity and only the batches after it share what is left (whole units, first ones take
+    // the remainder); earlier batches never change. The last batch can be lowered (the rest stays to plan later) but
+    // not raised above what the earlier batches leave.
     rebalance(i) {
-      const left = Math.round(this.line?.left || 0), bs = this.batches, last = i === bs.length - 1 && i > 0;
-      const sum = a => a.reduce((s, b) => s + Math.max(0, Math.round(num(b.qty))), 0);
-      // batches that stay as they are: those before the changed one (for the last batch, all but the one before it)
-      const fixed = sum(bs.slice(0, last ? i - 1 : i));
+      const left = Math.round(this.line?.left || 0), bs = this.batches;
+      const before = bs.slice(0, i).reduce((s, b) => s + Math.max(0, Math.round(num(b.qty))), 0);
       const me = bs[i];
-      me.qty = Math.min(Math.max(0, Math.round(num(me.qty))), Math.max(0, left - fixed));
-      const rest = left - fixed - me.qty;
-      if (last) bs[i - 1].qty = rest;
-      else if (i < bs.length - 1) {
-        const n = bs.length - i - 1, base = Math.floor(rest / n), rem = rest - base * n;
+      me.qty = Math.min(Math.max(0, Math.round(num(me.qty))), Math.max(0, left - before));
+      const n = bs.length - i - 1;
+      if (n > 0) {
+        const rest = left - before - me.qty, base = Math.floor(rest / n), rem = rest - base * n;
         bs.slice(i + 1).forEach((b, k) => { b.qty = base + (k < rem ? 1 : 0); });
       }
     },
