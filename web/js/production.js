@@ -849,11 +849,43 @@ export const dsp = {
 // ======================================================================
 const PLAN_OPEN = ['DRAFT', 'PENDING_FM', 'APPROVED'];
 const PLAN_FLOOR = ['RELEASED', 'IN_PROGRESS'];
+// working-day calendar for completion estimates (weekly off day(s) from Settings)
+const isoDate = d => d.toISOString().slice(0, 10);
+const parseIso = s => new Date(s + 'T00:00:00Z');
+const weekOff = () => state.company?.plan_week_off?.length ? state.company.plan_week_off : [5];
+function workday(s) { const d = parseIso(s); while (weekOff().includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() + 1); return isoDate(d); }
+function addWorkdays(s, n) { const d = parseIso(workday(s)); for (let i = 0; i < n; i++) { d.setUTCDate(d.getUTCDate() + 1); while (weekOff().includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() + 1); } return isoDate(d); }
 export const ProductionPlanner = {
   components: { Badge },
   props: { projectId: String, lineId: String },
-  data: () => ({ loading: true, busy: false, projects: [], lines: [], orders: [], nb: 1, batches: [] }),
+  data: () => ({ loading: true, busy: false, projects: [], lines: [], orders: [], nb: 1, batches: [], route: [], queue: {}, useQueue: true, startDate: today(), showStages: false }),
   computed: {
+    // capacity per work centre per day: hours × planning % × machines / people
+    perDay() { const c = state.company || {}; return num(c.plan_hours_per_day || 8) * num(c.plan_efficiency_pct || 85) / 100; },
+    capText() { const c = state.company || {}; return `Capacity: ${qty(this.perDay)} h per machine / person per day (${qty(c.plan_hours_per_day || 8)} h × ${qty(c.plan_efficiency_pct || 85)}%) · ${this.weekOffText} off · change in Settings / Work centres`; },
+    weekOffText() { return weekOff().map(d => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d]).join(', '); },
+    // each batch goes through the BOM route stage by stage; a stage starts when the batch has left the previous stage
+    // and the work centre has finished the batch before it (and, if ticked, the orders already queued there)
+    plan() {
+      if (!this.route.length) return null;
+      const free = {}, cap = r => this.perDay * Math.max(1, num(r.wc?.crew_size) || 1);
+      this.route.forEach(r => { free[r.work_center_id] = this.useQueue ? (this.queue[r.work_center_id] || 0) / cap(r) : 0; });
+      const stageDays = this.route.map(() => 0);
+      const rows = this.batches.map(b => {
+        const q = num(b.qty); let t = 0, mh = 0, lh = 0;
+        this.route.forEach((r, i) => {
+          const d = q > 0 ? Math.max(num(r.std_machine_hours), num(r.std_labour_hours)) * q / cap(r) : 0;
+          mh += num(r.std_machine_hours) * q; lh += num(r.std_labour_hours) * q;
+          const start = Math.max(t, free[r.work_center_id] || 0);
+          t = start + d; free[r.work_center_id] = t; stageDays[i] += d;
+        });
+        const days = Math.ceil(t - 1e-9);
+        return { mh, lh, days, date: q > 0 ? addWorkdays(this.startDate || today(), Math.max(days - 1, 0)) : null };
+      });
+      const stages = this.route.map((r, i) => ({ ...r, cap: cap(r), days: stageDays[i], queueDays: (this.queue[r.work_center_id] || 0) / cap(r) }));
+      const neck = stages.reduce((a, s) => (!a || s.days > a.days ? s : a), null);
+      return { rows, stages, neck };
+    },
     project() { return this.projects.find(p => p.id === this.projectId) || null; },
     line() { return this.lines.find(l => l.id === this.lineId) || null; },
     canPlan() { return hasRole('production_incharge', 'factory_manager'); },
@@ -890,10 +922,28 @@ export const ProductionPlanner = {
         });
         this.projects = Object.values(pm).sort((a, b) => a.code.localeCompare(b.code));
         if (this.projectId) this.lines = this.lines.filter(l => l.project_id === this.projectId);
-        if (this.line) this.split(1);
+        if (this.line) { this.split(1); await this.loadCapacity(); }
       });
       this.loading = false;
     },
+    // the product's BOM route (hours per unit) and the hours already queued on each work centre by open orders
+    async loadCapacity() {
+      await loadRefs(['work_centers']);
+      const l = this.line;
+      const tpl = l.template_id || must(await sb.from('bom_templates').select('id').eq('item_id', l.item_id).eq('is_active', true).order('version', { ascending: false }).limit(1))[0]?.id;
+      this.route = tpl ? must(await sb.from('bom_template_routing').select('seq,work_center_id,std_labour_hours,std_machine_hours').eq('template_id', tpl).order('seq'))
+        .map(r => ({ ...r, wc: refRow('work_centers', r.work_center_id) })) : [];
+      const ops = must(await sb.from('wo_operations').select('work_center_id,planned_labour_hours,planned_machine_hours,qty_done,status,production_orders!inner(qty,status)')
+        .in('status', ['PENDING', 'IN_PROGRESS']).in('production_orders.status', ['PENDING_FM', 'APPROVED', 'RELEASED', 'IN_PROGRESS']));
+      const q = {};
+      ops.forEach(o => {
+        const left = o.status === 'IN_PROGRESS' ? Math.max(0, 1 - num(o.qty_done) / (num(o.production_orders.qty) || 1)) : 1;
+        q[o.work_center_id] = (q[o.work_center_id] || 0) + Math.max(num(o.planned_machine_hours), num(o.planned_labour_hours)) * left;
+      });
+      this.queue = q;
+    },
+    d1: v => (Math.round(num(v) * 10) / 10).toFixed(1),
+    useEstimates() { this.plan?.rows.forEach((r, i) => { if (r.date) this.batches[i].due_date = r.date; }); },
     pct(a, b) { return b ? Math.min(100, Math.round(100 * a / b)) : 0; },
     // split what is left into n batches of whole units (the first batches take the remainder)
     split(n) {
@@ -992,17 +1042,38 @@ export const ProductionPlanner = {
           <button class="btn sm" @click="split(nb)">⇆ Split {{ qty(line.left) }} equally</button>
           <span class="small muted">Each batch becomes one production order with materials, man-hours and machine hours from the BOM × batch qty.</span>
         </div>
+        <div class="row small" style="gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+          <label>Production starts <input type="date" v-model="startDate"></label>
+          <label class="row" style="gap:4px"><input type="checkbox" v-model="useQueue"> include orders already queued on the machines</label>
+          <span class="muted">{{ capText }}</span>
+        </div>
+        <div v-if="!route.length" class="small" style="color:var(--warn);margin-bottom:8px">⚠ No BOM route (stages with hours) for this product — completion dates cannot be estimated.</div>
         <div class="tbl-wrap"><table class="t">
-          <thead><tr><th>Batch</th><th class="n">Quantity</th><th>Due date</th><th>Remarks (units / floor / building)</th></tr></thead>
+          <thead><tr><th>Batch</th><th class="n">Quantity</th><th class="n" v-if="plan">Machine h</th><th class="n" v-if="plan">Man-h</th><th v-if="plan">Est. completion</th><th>Due date</th><th>Remarks (units / floor / building)</th></tr></thead>
           <tbody>
             <tr v-for="(b, i) in batches" :key="i">
               <td>Batch {{ i + 1 }} of {{ batches.length }}</td>
               <td class="n"><input type="number" min="0" step="1" style="width:90px;text-align:right" v-model.number="b.qty"></td>
+              <td class="n" v-if="plan">{{ qty(plan.rows[i]?.mh) }}</td><td class="n" v-if="plan">{{ qty(plan.rows[i]?.lh) }}</td>
+              <td v-if="plan"><template v-if="plan.rows[i]?.date"><b>{{ dt(plan.rows[i].date) }}</b><div class="small muted">working day {{ plan.rows[i].days }} · <a href="javascript:void 0" @click="b.due_date = plan.rows[i].date">use as due date</a></div></template></td>
               <td><input type="date" v-model="b.due_date"></td>
               <td><input style="width:100%" v-model="b.remarks"></td>
             </tr>
           </tbody>
-          <tfoot><tr><th>Total</th><th class="n" :style="{ color: batchTotal > line.left + 0.0005 ? 'var(--bad)' : '' }">{{ qty(batchTotal) }} / {{ qty(line.left) }}</th><th colspan="2"></th></tr></tfoot>
+          <tfoot><tr><th>Total</th><th class="n" :style="{ color: batchTotal > line.left + 0.0005 ? 'var(--bad)' : '' }">{{ qty(batchTotal) }} / {{ qty(line.left) }}</th>
+            <th class="n" v-if="plan">{{ qty(plan.rows.reduce((s, r) => s + r.mh, 0)) }}</th><th class="n" v-if="plan">{{ qty(plan.rows.reduce((s, r) => s + r.lh, 0)) }}</th>
+            <th v-if="plan"><button class="btn sm" @click="useEstimates">↓ Use all as due dates</button></th><th colspan="2"></th></tr></tfoot>
+        </table></div>
+        <div v-if="plan" class="small" style="margin-top:6px">
+          Bottleneck: <b>{{ plan.neck?.wc?.name || '' }}</b> — {{ d1(plan.neck?.days) }} working days for all batches.
+          <a href="javascript:void 0" @click="showStages = !showStages">{{ showStages ? 'Hide' : 'Show' }} stage load</a>
+        </div>
+        <div v-if="plan && showStages" class="tbl-wrap" style="margin-top:6px"><table class="t">
+          <thead><tr><th>Seq</th><th>Stage / work centre</th><th class="n">Machines / people</th><th class="n">Capacity h/day</th><th class="n">Machine h / unit</th><th class="n">Man-h / unit</th><th class="n">Days (these batches)</th><th class="n">Queued ahead (days)</th></tr></thead>
+          <tbody><tr v-for="s in plan.stages" :key="s.seq + s.work_center_id">
+            <td>{{ s.seq }}</td><td>{{ s.wc?.name }}</td><td class="n">{{ s.wc?.crew_size || 1 }}</td><td class="n">{{ qty(s.cap) }}</td>
+            <td class="n">{{ qty(s.std_machine_hours) }}</td><td class="n">{{ qty(s.std_labour_hours) }}</td><td class="n">{{ d1(s.days) }}</td><td class="n">{{ d1(s.queueDays) }}</td>
+          </tr></tbody>
         </table></div>
         <div style="margin-top:10px"><button class="btn primary" :disabled="busy || !batchTotal" @click="create">🏭 Create production orders → Factory Manager</button></div>
       </div>

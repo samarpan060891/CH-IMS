@@ -90,7 +90,7 @@ export const REF = {
     label: r => { const p = r.parent_id && refRow('item_categories', r.parent_id); return p ? `${p.name} › ${r.name}` : `${r.code} — ${r.name}`; } },
   payment_terms: { table: 'payment_terms', order: 'code', select: 'id,code,name,credit_days,basis,advance_pct', label: r => r.name },
   profiles: { table: 'profiles', order: 'full_name', select: 'id,full_name,email,role', label: r => r.full_name || r.email },
-  work_centers: { table: 'work_centers', order: 'sort_order', select: 'id,code,name,kind,machine_rate_per_hour,labour_rate_per_hour,default_grade_id,sort_order,is_active', label: r => `${r.code} — ${r.name}` },
+  work_centers: { table: 'work_centers', order: 'sort_order', select: 'id,code,name,kind,machine_rate_per_hour,labour_rate_per_hour,default_grade_id,sort_order,is_active,crew_size', label: r => `${r.code} — ${r.name}` },
   boq_lines: { table: 'boq_lines', order: 'line_no', select: 'id,project_id,line_no,boq_ref,description,category,item_id,qty,uom', label: r => `${r.boq_ref || r.line_no} — ${r.description}` },
   labour_grades: { table: 'labour_grades', order: 'sort_order', select: 'id,code,name,rate_per_hour,ot_rate_per_hour,is_active', label: r => r.name },
   bom_templates: { table: 'bom_templates', order: 'name', select: 'id,item_id,name,version,is_active', label: r => `${r.name} (v${r.version})` },
