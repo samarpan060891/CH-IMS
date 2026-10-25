@@ -213,6 +213,30 @@ async function loadWoBoq(projectId, selfId = null) {
   for (const w of must(wos)) if (w.id !== selfId) planned[w.boq_line_id] = (planned[w.boq_line_id] || 0) + num(w.qty);
   woBoq.lines = must(lines).map(b => ({ ...b, left: Math.max(0, num(b.qty) - (planned[b.id] || 0)) }));
 }
+// the order's cut list, material requirement and route = BOM template × order quantity, filled on screen as soon as the
+// product / template / quantity is set (same as Apply template on the server); saved with the order
+async function tplFill(ctx) {
+  const d = ctx.doc;
+  if ((d.status && d.status !== 'DRAFT') || !d.template_id || !(num(d.qty) > 0)) return;
+  const hasRows = ['parts', 'materials', 'ops'].some(k => (ctx.grids[k] || []).length);
+  if (hasRows && !ctx._tplAuto && !(await confirmBox('Refresh from the BOM template',
+    `Recalculate the cut list, materials and stage hours for ${qty(d.qty)} unit(s) from the BOM template? Lines changed by hand are replaced.`))) return;
+  const [parts, mats, route] = await Promise.all([
+    sb.from('bom_template_parts').select('*').eq('template_id', d.template_id).order('line_no'),
+    sb.from('bom_template_materials').select('item_id,qty,notes,line_no').eq('template_id', d.template_id).order('line_no'),
+    sb.from('bom_template_routing').select('seq,work_center_id,std_labour_hours,std_machine_hours,instructions').eq('template_id', d.template_id).order('seq')]);
+  const q = num(d.qty), r4 = v => Math.round(v * 10000) / 10000, r2 = v => Math.round(v * 100) / 100;
+  for (const k of ['parts', 'materials', 'ops']) (ctx.grids[k] || []).forEach(r => { if (r.id) (ctx.removed[k] ||= []).push(r.id); });
+  ctx.grids.parts = must(parts).map(p => ({ part_name: p.part_name, material_id: p.material_id, length_mm: p.length_mm, width_mm: p.width_mm, pieces: num(p.pieces) * q,
+    edge_item_id: p.edge_item_id, edge_l1: p.edge_l1, edge_l2: p.edge_l2, edge_w1: p.edge_w1, edge_w2: p.edge_w2, grain: p.grain, notes: p.notes }));
+  ctx.grids.materials = must(mats).map(m => ({ item_id: m.item_id, source: 'TEMPLATE', net_qty: r4(num(m.qty) * q), required_qty: r4(num(m.qty) * q), notes: m.notes }));
+  ctx.grids.ops = must(route).map(o => ({ seq: o.seq, work_center_id: o.work_center_id, planned_labour_hours: r2(num(o.std_labour_hours) * q),
+    planned_machine_hours: r2(num(o.std_machine_hours) * q), instructions: o.instructions }));
+  ctx._tplAuto = true; ctx.dirty = true;
+}
+// quantity typed digit by digit: recalculate once typing pauses
+const tplFillSoon = ctx => { clearTimeout(ctx._tplTimer); ctx._tplTimer = setTimeout(() => run(() => tplFill(ctx)), 600); };
+const latestTpl = itemId => (state.refs.bom_templates || []).filter(t => t.item_id === itemId && t.is_active).sort((x, y) => num(y.version) - num(x.version))[0]?.id || null;
 const woBoqLabel = b => `${b.boq_ref || b.line_no} — ${b.description} · ${itemCode(b.item_id) || 'no product set'} · ${qty(b.left)} of ${qty(b.qty)} still to plan`;
 export const wo = {
   key: 'wo', title: 'Production Orders', single: 'Production Order', table: 'production_orders', noField: 'wo_no', dateField: 'wo_date',
@@ -231,8 +255,13 @@ export const wo = {
     if (parts[0] === 'proj' && parts[1]) { ctx.doc.project_id = parts[1]; await loadWoBoq(parts[1]); }
     if (parts[0] === 'tpl' && parts[1]) {
       const t = refRow('bom_templates', parts[1]);
-      if (t) Object.assign(ctx.doc, { item_id: t.item_id, template_id: t.id });
+      if (t) { Object.assign(ctx.doc, { item_id: t.item_id, template_id: t.id }); setTimeout(() => tplFill(ctx), 0); }
     }
+  },
+  // a cut list from the template still needs its sheets / edge banding worked out (server side, after the save)
+  async afterSave(ctx) {
+    if (ctx._tplAuto && ctx.grids.parts?.length && ctx.doc.status === 'DRAFT') await rpc('wo_compute_materials', { p_wo: ctx.doc.id });
+    ctx._tplAuto = false;
   },
   header: [
     { k: 'project_id', label: 'Project / MTS order', type: 'ref', ref: 'projects', required: true, wide: true, filter: r => r.status === 'OPEN',
@@ -241,20 +270,23 @@ export const wo = {
     { k: 'boq_line_id', label: 'In-house product from the project BOQ', type: 'ref', wide: true,
       show: d => !!d.project_id && (woBoq.lines.length > 0 || !!d.boq_line_id),
       refOptions: d => woBoq.lines.filter(b => b.left > 0.0005 || b.id === d.boq_line_id).map(b => ({ id: b.id, label: woBoqLabel(b) })),
-      onChange: (d, v) => {
+      onChange: (d, v, ctx) => {
         const b = woBoq.lines.find(x => x.id === v); if (!b) return;
         if (!b.item_id) toast('Set the product (FG item) on this BOQ line in the project first', 'error');
-        const tpl = b.template_id || (state.refs.bom_templates || []).filter(t => t.item_id === b.item_id && t.is_active).sort((x, y) => num(y.version) - num(x.version))[0]?.id || null;
+        const tpl = b.template_id || latestTpl(b.item_id);
         Object.assign(d, { item_id: b.item_id, qty: b.left || d.qty, description: `${b.boq_ref ? b.boq_ref + ' — ' : ''}${b.description}`, template_id: tpl });
+        return tplFill(ctx);
       } },
-    { k: 'item_id', label: 'Product', type: 'ref', ref: 'items', required: true, wide: true, filter: isFG, ro: d => !!d.boq_line_id },
+    { k: 'item_id', label: 'Product', type: 'ref', ref: 'items', required: true, wide: true, filter: isFG, ro: d => !!d.boq_line_id,
+      onChange: (d, v, ctx) => { d.template_id = latestTpl(v); return tplFill(ctx); } },
     { k: 'description', label: 'Description (unit / type / drawing)', wide: true },
-    { k: 'qty', label: 'Quantity', type: 'number', required: true },
+    { k: 'qty', label: 'Quantity', type: 'number', required: true, onChange: (d, v, ctx) => tplFillSoon(ctx) },
     { k: 'wo_date', label: 'Order date', type: 'date', required: true },
     { k: 'due_date', label: 'Due date', type: 'date' },
     { k: 'priority', label: 'Priority', type: 'select', required: true, options: ['NORMAL', 'URGENT'] },
     { k: 'template_id', label: 'Standard BOM template (optional)', type: 'ref', wide: true,
-      refOptions: d => (state.refs.bom_templates || []).filter(t => t.item_id === d.item_id && t.is_active).map(t => ({ id: t.id, label: `${t.name} (v${t.version})` })) },
+      refOptions: d => (state.refs.bom_templates || []).filter(t => t.item_id === d.item_id && t.is_active).map(t => ({ id: t.id, label: `${t.name} (v${t.version})` })),
+      onChange: (d, v, ctx) => tplFill(ctx) },
     { k: 'board_waste_pct', label: 'Board waste % (blank = Settings default)', type: 'number' },
     { k: 'edge_waste_pct', label: 'Edge band waste % (blank = Settings default)', type: 'number' },
     { k: 'sale_value', label: 'Selling value of this order AED (optional, for margin)', type: 'number', cost: true },
@@ -270,13 +302,13 @@ export const wo = {
     if (ctx.doc.is_rework && ctx.doc.status === 'DRAFT') return '<b>Rework order</b> created at QC. The original route was copied — delete the stages that are not needed (or skip them later), add any replacement material, then <b>Release</b>.';
     if (ctx.doc.status !== 'DRAFT') return 'Stages are tracked on the <b>Stage board</b> (Production menu or scan the job card QR). Material comes through the linked material request. ' +
       'Send finished units to the FG store in batches with <b>Receive batch</b>; the <b>Final receipt</b> closes the order and absorbs all remaining cost.';
-    return 'Pick a template and <b>Apply template</b>, or import / type the cut list. <b>Calculate materials</b> turns the cut list into sheets (with board waste %) and edge banding metres. ' +
-      'Add hardware lines manually. Then <b>Release</b> — a material request goes to the Production In-charge and Stores.';
+    return 'Choosing the product (or BOQ line), BOM template and quantity fills the <b>cut list, material requirement and stage man-hours / machine hours</b> = template × quantity; ' +
+      'they are recalculated when the quantity changes. Adjust or add lines if needed, <b>Save</b>, then <b>Release</b> — a material request goes to the Production In-charge and Stores.';
   },
   grids: [
     { key: 'parts', title: 'Cut list (whole order)', table: 'wo_parts', fk: 'wo_id', order: 'line_no', fields: partFields,
       importers: [{ label: '⬆ Import Excel / CSV', run: c => importCutList(c, 'parts') }, { label: 'Template', run: () => cutTemplate() }] },
-    { key: 'materials', title: 'Material requirement', table: 'wo_materials', fk: 'wo_id', order: 'line_no', fields: [
+    { key: 'materials', title: 'Material requirement', table: 'wo_materials', fk: 'wo_id', order: 'line_no', saveKeys: ['source', 'net_qty'], fields: [
       itemF(), uomF(), { k: 'source', label: 'Source', type: 'ro', fmt: v => label(v || 'MANUAL') },
       { k: 'net_qty', label: 'Net (no waste)', type: 'ro', fmt: (v, r) => r.source === 'CUTLIST' ? qty(v) : '' },
       { k: 'required_qty', label: 'Required', type: 'number', required: true }, { k: 'notes', label: 'Notes', width: '200px' }] },
