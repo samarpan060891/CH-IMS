@@ -100,7 +100,7 @@ export const Dashboard = {
     stockValue() { return (this.d.val || []).filter(v => v.kind === 'STOCK').reduce((s, v) => s + num(v.value), 0); },
     // material issued to production orders, on the shop floor until FG receipts consume it
     wipValue() { return (this.d.wip || []).reduce((s, w) => s + num(w.value), 0); },
-    wipOrders() { return new Set((this.d.wip || []).map(w => w.wo_id)).size; },
+    wipOrders() { return new Set((this.d.wip || []).map(w => w.project_id)).size; },
     assetValue() { return (this.d.val || []).filter(v => v.kind === 'ASSET').reduce((s, v) => s + num(v.value), 0); },
     stockOuts() { return this.stock.filter(s => s.stock_status === 'STOCK_OUT').length; },
     redZone() { return this.stock.filter(s => ['RED', 'BLACK'].includes(s.buffer_zone)).length; },
@@ -247,7 +247,7 @@ export const Dashboard = {
         if (this.any('mgmtKpis', 'stockKpis', 'purKpis', 'stockCharts', 'zoneChart'))
           get('stock', sb.from('v_item_stock').select('item_id,code,name,class_code,stock_status,buffer_zone,stock_value,on_hand,available,suggested_order_qty,uom').eq('is_active', true));
         if (this.cost && this.any('mgmtKpis', 'stockKpis', 'stockCharts', 'valuation')) { get('val', sb.from('v_valuation_by_category').select('*')); get('aging', sb.from('v_aging_summary').select('*')); }
-        if (this.cost && this.any('stockKpis', 'mgmtKpis', 'prodKpis', 'production')) get('wip', sb.from('v_wip_stock').select('wo_id,value'));
+        if (this.cost && this.any('stockKpis', 'mgmtKpis', 'prodKpis', 'production')) get('wip', sb.from('v_wip_stock').select('project_id,value'));
         if (this.any('stockKpis', 'mgmtKpis')) get('assets', sb.from('v_asset_register').select('id,is_overdue,calibration_status'));
         if (this.has('projects')) get('projects', sb.from('v_project_overview').select('*').order('end_date', { nullsFirst: false }));
         if (this.cost && this.any('payables', 'mgmtKpis', 'finKpis')) get('pay', sb.from('v_vendor_payables').select('*'));
@@ -469,7 +469,7 @@ export const Dashboard = {
     <!-- management -->
     <div class="kpis" data-sec="mgmtKpis" :draggable="!!ed" :style="o('mgmtKpis')" v-if="has('mgmtKpis')">
       <div class="kpi" v-if="cost"><div class="l">Inventory value</div><div class="v">{{ aed(stockValue) }}</div><div class="s">assets at cost {{ aed(assetValue) }}</div></div>
-      <div class="kpi" v-if="cost" style="cursor:pointer" @click="go('r/wip')"><div class="l">WIP — material on the floor</div><div class="v">{{ aed(wipValue) }}</div><div class="s">{{ wipOrders }} production order(s) · report →</div></div>
+      <div class="kpi" v-if="cost" style="cursor:pointer" @click="go('r/wip')"><div class="l">WIP — material on the floor</div><div class="v">{{ aed(wipValue) }}</div><div class="s">{{ wipOrders }} project(s) · report →</div></div>
       <div class="kpi bad"><div class="l">Stock-outs</div><div class="v">{{ stockOuts }}</div><div class="s">buffer in red: {{ redZone }}</div></div>
       <div class="kpi" v-if="cost"><div class="l">Overstock / non-moving</div><div class="v">{{ aed(overstockVal) }}</div><div class="s">older than 90 days {{ aed(over90) }}</div></div>
       <div class="kpi" v-if="(d.pay || []).length"><div class="l">Net payables</div><div class="v">{{ aed(netPayable) }}</div><div class="s">overdue {{ aed(overduePay) }}</div></div>
@@ -514,7 +514,7 @@ export const Dashboard = {
     <!-- stores -->
     <div class="kpis" data-sec="stockKpis" :draggable="!!ed" :style="o('stockKpis')" v-if="has('stockKpis')">
       <div class="kpi" v-if="cost"><div class="l">Inventory value (stock)</div><div class="v">{{ aed(stockValue) }}</div><div class="s">FIFO / weighted average</div></div>
-      <div class="kpi" v-if="cost" style="cursor:pointer" @click="go('r/wip')"><div class="l">WIP — material on the floor</div><div class="v">{{ aed(wipValue) }}</div><div class="s">issued, not yet consumed · {{ wipOrders }} order(s) →</div></div>
+      <div class="kpi" v-if="cost" style="cursor:pointer" @click="go('r/wip')"><div class="l">WIP — material on the floor</div><div class="v">{{ aed(wipValue) }}</div><div class="s">issued, not yet consumed · {{ wipOrders }} project(s) →</div></div>
       <div class="kpi bad"><div class="l">Stock-outs</div><div class="v">{{ stockOuts }}</div><div class="s">items with zero available</div></div>
       <div class="kpi warn"><div class="l">Buffer in RED</div><div class="v">{{ redZone }}</div><div class="s">order urgently</div></div>
       <div class="kpi" v-if="cost"><div class="l">Stock older than 90 days</div><div class="v">{{ aed(over90) }}</div></div>
@@ -533,7 +533,7 @@ export const Dashboard = {
       <div class="kpi" :class="{bad: woLate.length}"><div class="l">Late orders</div><div class="v">{{ woLate.length }}</div><div class="s">past due date</div></div>
       <div class="kpi"><div class="l">Stages running</div><div class="v">{{ count('stagesRunning') }}</div><div class="s"><a href="#/floor">stage board →</a></div></div>
       <div class="kpi" :class="{warn: count('qc')}"><div class="l">QC rejects awaiting FM</div><div class="v">{{ count('qc') }}</div></div>
-      <div class="kpi" v-if="cost && !has('mgmtKpis') && !has('stockKpis')" style="cursor:pointer" @click="go('r/wip')"><div class="l">WIP — material on the floor</div><div class="v">{{ aed(wipValue) }}</div><div class="s">{{ wipOrders }} order(s) · report →</div></div>
+      <div class="kpi" v-if="cost && !has('mgmtKpis') && !has('stockKpis')" style="cursor:pointer" @click="go('r/wip')"><div class="l">WIP — material on the floor</div><div class="v">{{ aed(wipValue) }}</div><div class="s">{{ wipOrders }} project(s) · report →</div></div>
       <div class="kpi" v-if="has('prodKpis')" :class="{bad: (d.wc || []).some(w => w.is_down)}"><div class="l">Machines down</div><div class="v">{{ (d.wc || []).filter(w => w.is_down).length }}</div></div>
     </div>
     <div class="card" data-sec="woLate" :draggable="!!ed" :style="o('woLate')" v-if="has('woLate')">

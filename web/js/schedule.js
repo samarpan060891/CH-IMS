@@ -44,7 +44,7 @@ export const capOf = wcId => perDay() * Math.max(1, num(refRow('work_centers', w
 // ---------- open work ----------
 export async function loadOpenWork() {
   await loadRefs(['work_centers', 'projects', 'items']);
-  const orders = must(await sb.from('production_orders').select('id,wo_no,description,qty,qty_completed,status,priority,due_date,project_id,item_id,is_rework,batch_label,boq_line_id')
+  const orders = must(await sb.from('production_orders').select('id,wo_no,description,qty,qty_completed,qty_rejected,status,priority,due_date,project_id,item_id,is_rework,batch_label,boq_line_id')
     .in('status', OPEN_WO).order('wo_no'));
   const ids = orders.map(o => o.id);
   const ops = ids.length ? must(await sb.from('wo_operations').select('id,wo_id,seq,work_center_id,planned_labour_hours,planned_machine_hours,wait_days,status,qty_done,run_group_id')
@@ -67,17 +67,22 @@ export async function loadMaterials(orders, extra = null) {
   const saved = ids.filter(id => !extra || id !== extra.wo_id);
   let req = saved.length ? must(await sb.from('wo_materials').select('wo_id,item_id,required_qty').in('wo_id', saved).gt('required_qty', 0)) : [];
   if (extra) req = [...req, ...extra.req];
+  // what each order still needs: BOM × units not yet received (material for received units was consumed from WIP)
+  const ord = Object.fromEntries(orders.map(o => [o.id, o]));
+  req = req.map(r => { const o = ord[r.wo_id] || {}, q = num(o.qty);
+    return { ...r, required_qty: q > 0 ? num(r.required_qty) * Math.max(0, q - num(o.qty_completed) - num(o.qty_rejected)) / q : num(r.required_qty) }; });
   const items = [...new Set(req.map(r => r.item_id))];
   if (!items.length) return { ...empty, req };
-  const [led, lots, sched, lines, prl] = await Promise.all([
-    sb.from('stock_ledger').select('production_order_id,item_id,qty').in('production_order_id', ids).in('txn_type', ['ISSUE', 'RETURN']),
+  const [wip, lots, sched, lines, prl] = await Promise.all([
+    sb.from('v_wip_stock').select('project_id,item_id,qty').in('item_id', items),
     sb.from('v_lot_values').select('item_id,qty_on_hand,project_id').in('item_id', items).eq('lot_status', 'AVAILABLE').in('loc_type', STOCK_LOC).gt('qty_on_hand', 0),
     sb.from('v_po_schedule').select('po_line_id,delivery_date,qty,received_qty').in('item_id', items).in('po_status', [...FIRM_PO, ...PENDING_PO]),
     sb.from('po_lines').select('id,item_id,qty,received_qty,required_date,project_id,purchase_orders!inner(po_no,status,delivery_date,project_id)')
       .in('item_id', items).in('purchase_orders.status', [...FIRM_PO, ...PENDING_PO]),
     sb.from('pr_lines').select('item_id,qty,ordered_qty,purchase_requisitions!inner(status)').in('item_id', items).in('purchase_requisitions.status', ['SUBMITTED', 'PARTIAL_PO'])]);
+  // the projects' common WIP: material already on the floor, shared by the project's orders
   const issued = {};
-  must(led).forEach(l => { const k = l.production_order_id + '|' + l.item_id; issued[k] = (issued[k] || 0) - num(l.qty); });
+  must(wip).forEach(w => { const k = w.project_id + '|' + w.item_id; issued[k] = (issued[k] || 0) + num(w.qty); });
   // open PO quantity by delivery date: the PO delivery schedule where there is one, else the line's required / PO date
   const sch = {};
   must(sched).forEach(s => { (sch[s.po_line_id] ||= []).push(s); });
@@ -101,16 +106,17 @@ export const MAT = {
 export function allocate(sorted, mat, needOf) {
   const proj = {}, free = {};
   mat.lots.forEach(l => { if (l.project_id) { const k = l.project_id + '|' + l.item_id; proj[k] = (proj[k] || 0) + num(l.qty_on_hand); } else free[l.item_id] = (free[l.item_id] || 0) + num(l.qty_on_hand); });
-  const po = mat.po.map(p => ({ ...p, left: p.qty }));
+  const po = mat.po.map(p => ({ ...p, left: p.qty })), wip = { ...mat.issued };
   const reqBy = {};
   mat.req.forEach(r => { const m = (reqBy[r.wo_id] ||= {}); m[r.item_id] = (m[r.item_id] || 0) + num(r.required_qty); });
   const out = new Map();
   for (const j of sorted) {
     const w = j.wo, need = needOf(j), lines = [];
     for (const [item, rq] of Object.entries(reqBy[j.id] || {})) {
-      const issued = Math.max(0, mat.issued[j.id + '|' + item] || 0);
-      let n = Math.max(0, rq - issued);
+      let n = rq;
       const take = (pool, k) => { const t = Math.min(n, pool[k] || 0); if (t > 0) { pool[k] -= t; n -= t; } return t; };
+      // the project's WIP first (already on the floor), then the project's stock, then free stock
+      const issued = take(wip, w.project_id + '|' + item);
       const stock = take(proj, w.project_id + '|' + item) + take(free, item);
       const fromPo = firm => {
         const used = [];
@@ -407,7 +413,7 @@ export const FactorySchedule = {
                 <table class="t" style="margin:4px 0"><thead><tr><th>Stage</th><th>Work centre</th><th>Status</th><th class="n">Hours left</th><th>Starts</th><th>Ends</th><th class="n">Wait after (days)</th></tr></thead>
                   <tbody><tr v-for="s in x.r.stages" :key="s.id"><td>{{ s.seq }}</td><td>{{ wcName(s.wc) }}<span v-if="s.group" class="b BLUE" style="margin-left:4px">🔗 {{ runNo(s.group) }}</span></td><td><Badge :v="s.status" /></td><td class="n">{{ qty(Math.round(s.h * 10) / 10) }}</td>
                     <td>{{ at(s.start) }}</td><td>{{ endAt(s.end) }}</td><td class="n">{{ qty(s.wait) }}</td></tr></tbody></table>
-                <table class="t" style="margin:4px 0" v-if="matOf(x.j).lines.length"><thead><tr><th>Material (needed by {{ dt(matOf(x.j).need) || '—' }})</th><th class="n">Required</th><th class="n">Issued</th><th class="n">From stock</th><th>From POs</th><th class="n">Short</th><th class="n">On requisition (no PO)</th></tr></thead>
+                <table class="t" style="margin:4px 0" v-if="matOf(x.j).lines.length"><thead><tr><th>Material (needed by {{ dt(matOf(x.j).need) || '—' }})</th><th class="n">Required</th><th class="n">From project WIP</th><th class="n">From stock</th><th>From POs</th><th class="n">Short</th><th class="n">On requisition (no PO)</th></tr></thead>
                   <tbody><tr v-for="l in matOf(x.j).lines" :key="l.item" :style="l.short ? 'background:#fef2f2' : ''"><td>{{ itemName(l.item) }} <span class="muted small">{{ uom(l.item) }}</span></td>
                     <td class="n">{{ qty(l.req) }}</td><td class="n">{{ qty(l.issued) }}</td><td class="n">{{ qty(l.stock) }}</td><td class="small">{{ poText(l) }}</td>
                     <td class="n" :style="l.short ? 'color:#b91c1c;font-weight:600' : ''">{{ l.short ? qty(Math.round(l.short * 1000) / 1000) : '' }}</td><td class="n">{{ l.short && l.pr ? qty(l.pr) : '' }}</td></tr></tbody></table>
@@ -416,7 +422,7 @@ export const FactorySchedule = {
           </tbody>
         </table></div>
         <p class="small muted" style="margin:8px 0 0">Click a row for its stages. Finish dates are recalculated from what is still open each time this page opens — logged quantities and closed stages bring them forward,
-          new urgent or earlier-due orders push others back. Draft orders are not scheduled until they are sent to the Factory Manager.<br>Material: each order's BOM materials not yet issued are shared out in this sequence — the project's own stock, then free stock in the stores, then approved POs by delivery date (POs awaiting approval shown separately); needed by the start of the order's first stage. Tick <b>Wait for material</b> to hold each order's start until its material is due.</p>
+          new urgent or earlier-due orders push others back. Draft orders are not scheduled until they are sent to the Factory Manager.<br>Material: what each order's open units still need by the BOM is shared out in this sequence — the project's WIP (material already on the floor), then the project's own stock, then free stock in the stores, then approved POs by delivery date (POs awaiting approval shown separately); needed by the start of the order's first stage. Tick <b>Wait for material</b> to hold each order's start until its material is due.</p>
       </div>
       <div class="card" v-if="runs.length">
         <div class="hd"><h3>🔗 Combined runs</h3></div>

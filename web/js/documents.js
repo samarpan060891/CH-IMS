@@ -918,30 +918,29 @@ export const mr = {
     }
     ctx.extra.prs = must(await sb.from('purchase_requisitions').select('id,pr_no,status,pr_date').eq('mr_id', ctx.doc.id).order('created_at'));
     if (ctx.doc.production_order_id) ctx.doc._woNo = must(await sb.from('production_orders').select('wo_no').eq('id', ctx.doc.production_order_id).single()).wo_no;
-    // production request: material already in the order's WIP, carried forward from earlier batches — Stores issues less
+    // production request: the order's BOM against the project's common WIP — Stores issues only what the WIP cannot cover
     ctx.extra.carried = [];
     if (ctx.doc.kind === 'PRODUCTION' && ctx.doc.production_order_id) {
       const wo = ctx.doc.production_order_id;
-      const [moves, bom, wip] = await Promise.all([
-        sb.from('wip_moves').select('item_id,qty,value,doc_no').eq('wo_id', wo).eq('move_type', 'XFER_IN'),
-        sb.from('wo_materials').select('item_id,required_qty').eq('wo_id', wo),
-        sb.from('v_wip_by_order').select('item_id,qty_wip').eq('wo_id', wo)]);
-      const by = {};
-      must(moves).forEach(m => { const r = (by[m.item_id] ||= { item_id: m.item_id, qty: 0, value: 0, from: new Set() }); r.qty += num(m.qty); r.value += num(m.value); r.from.add(m.doc_no); });
-      const need = {}; must(bom).forEach(b => { need[b.item_id] = (need[b.item_id] || 0) + num(b.required_qty); });
-      const now = Object.fromEntries(must(wip).map(w => [w.item_id, num(w.qty_wip)]));
-      ctx.extra.carried = Object.values(by).map(r => ({ ...r, from: [...r.from].join(', '), need: need[r.item_id] || 0, wipNow: now[r.item_id] || 0,
-        line: ctx.grids.lines.find(l => l.item_id === r.item_id) || null }));
-      ctx.grids.lines.forEach(l => { l._carry = by[l.item_id]?.qty || 0; });
+      const bom = must(await sb.from('wo_materials').select('item_id,required_qty').eq('wo_id', wo));
+      const need = {}; bom.forEach(b => { need[b.item_id] = (need[b.item_id] || 0) + num(b.required_qty); });
+      const ids = Object.keys(need);
+      const pool = ids.length ? Object.fromEntries(must(await sb.from('v_wip_stock').select('item_id,qty').eq('project_id', ctx.doc.project_id).in('item_id', ids)).map(p => [p.item_id, num(p.qty)])) : {};
+      const lines = id => ctx.grids.lines.filter(l => l.item_id === id);
+      const req = id => lines(id).reduce((s, l) => s + num(l.approved_qty ?? l.requested_qty), 0);
+      // what the project WIP covered at release ("… from project WIP" on the line; no line = all of it)
+      const fromWip = id => { const ls = lines(id); if (!ls.length) return need[id];
+        return ls.reduce((s, l) => s + num((/([\d.]+) from project WIP/.exec(l.remarks || '') || [])[1]), 0); };
+      ctx.extra.carried = ids.map(id => ({ item_id: id, need: need[id], requested: req(id), covered: fromWip(id), pool: pool[id] || 0 })).filter(x => x.covered > 0.0005);
+      ctx.grids.lines.forEach(l => { l._carry = ctx.extra.carried.find(x => x.item_id === l.item_id)?.covered || 0; });
     }
   },
   async loadInfo(ctx) {
     const out = [], prs = ctx.extra.prs || [], cf = ctx.extra.carried || [];
-    if (cf.length) out.push({ title: `🏭 Already in WIP for ${ctx.doc._woNo || 'the order'} — carried forward from earlier batches (Stores issues only the rest)`, rows: cf, columns: [
+    if (cf.length) out.push({ title: `🏭 Covered from the project WIP — material left over from earlier batches (Stores issues only the rest)`, rows: cf, columns: [
       { k: r => itemName(r.item_id), label: 'Material' }, { k: r => itemUom(r.item_id), label: 'UoM' }, { k: 'need', label: 'BOM need', fmt: 'qty' },
-      { k: r => Math.round(r.qty * 1000) / 1000, label: 'Carried in', fmt: 'qty' }, { k: 'from', label: 'From order(s)' },
-      { k: r => r.line ? num(r.line.approved_qty ?? r.line.requested_qty) : 0, label: 'Requested from Stores', fmt: 'qty' },
-      { k: r => Math.round(r.wipNow * 1000) / 1000, label: 'In WIP now', fmt: 'qty' }, { k: 'value', label: 'Carried value AED', fmt: 'money', cost: true, sum: true }] });
+      { k: r => Math.round(r.covered * 1000) / 1000, label: 'From project WIP', fmt: 'qty' }, { k: 'requested', label: 'Requested from Stores', fmt: 'qty' },
+      { k: r => Math.round(r.pool * 1000) / 1000, label: 'In project WIP now', fmt: 'qty' }] });
     if (prs.length) out.push({ title: 'Requisitions raised for this request', rows: prs,
       columns: [{ k: 'pr_no', label: 'Requisition' }, { k: 'pr_date', label: 'Date', fmt: 'date' }, { k: 'status', label: 'Status', fmt: 'badge' }] });
     return out;
@@ -978,7 +977,7 @@ export const mr = {
         onChange: r => { const p = mrLotPpu(r); if (p) r.requested_qty = cbmOf(r.pcs, p); } },
       { k: 'requested_qty', label: 'Requested', type: 'number', required: true, whole: true, ro: r => !!(opts.mrLots?.[r.item_id] || []).find(x => x.id === r.lot_id)?.offcut,
         onChange: r => { const p = mrLotPpu(r); if (p) r.pcs = pcsOf(r.requested_qty, p); } },
-      { k: '_carry', label: 'Carried in (WIP)', type: 'ro', virtual: true, fmt: v => num(v) ? '+' + qty(Math.round(num(v) * 1000) / 1000) : '',
+      { k: '_carry', label: 'From project WIP', type: 'ro', virtual: true, fmt: v => num(v) ? '+' + qty(Math.round(num(v) * 1000) / 1000) : '',
         show: () => (mrCur.ctx?.extra.carried || []).length > 0 },
       { k: 'approved_qty', label: 'Approved qty', type: 'number', whole: true, show: d => d.status !== 'DRAFT' },
       roQty('issued_qty', 'Issued', { show: d => !['DRAFT', 'PENDING_APPROVAL'].includes(d.status) }),
