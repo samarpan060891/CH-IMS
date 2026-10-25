@@ -227,21 +227,21 @@ const TEMPLATES = {
   // BOM & man-hours: two sheets; each product in the file becomes a new active BOM version (bom_import)
   bom: {
     title: 'BOM & man-hours', roles: ['production_incharge', 'factory_manager'],
-    help: 'Sheet "Materials": one row per material of a product, quantity per piece. Sheet "Stages": one row per production stage — work centre, labour and machine hours per piece. ' +
+    help: 'Sheet "Materials": one row per material of a product, quantity per piece. Sheet "Stages": one row per production stage — work centre, labour and machine hours per piece, setup hours once per batch and wait days after the stage (blank = the typical values of the work centre). ' +
       'Each product in the file gets a new BOM version that becomes the active one; the previous version is kept for history. A product listed on only one sheet keeps the other part ' +
       '(and its cut list) from its current BOM, so hours can be updated on their own. The download contains your current BOMs, ready to edit.',
     sheets: [
       { name: 'Materials', cols: ['product_code', 'material_code', 'qty_per_piece', 'notes'], required: ['product_code', 'material_code', 'qty_per_piece'], example: ['FG-0001', 'RM-0003', 0.38, ''] },
-      { name: 'Stages', cols: ['product_code', 'seq', 'work_center_code', 'labour_hours', 'machine_hours', 'instructions'], required: ['product_code', 'work_center_code'],
-        example: ['FG-0001', 10, 'CNC-NCG2812', 1.5, 1.5, 'Cutting / CNC'] },
+      { name: 'Stages', cols: ['product_code', 'seq', 'work_center_code', 'labour_hours', 'machine_hours', 'instructions', 'setup_hours', 'wait_days'], required: ['product_code', 'work_center_code'],
+        example: ['FG-0001', 10, 'CNC-NCG2812', 1.5, 1.5, 'Cutting / CNC', 0.25, 0.5] },
     ],
     refs: ['items', 'work_centers', 'item_classes'],
     async prefill() {
-      const ts = must(await sb.from('bom_templates').select('id, items(code), bom_template_materials(line_no, qty, notes, items(code)), bom_template_routing(seq, std_labour_hours, std_machine_hours, instructions, work_centers(code))').eq('is_active', true));
+      const ts = must(await sb.from('bom_templates').select('id, items(code), bom_template_materials(line_no, qty, notes, items(code)), bom_template_routing(seq, std_labour_hours, std_machine_hours, setup_hours, wait_days, instructions, work_centers(code))').eq('is_active', true));
       const byProd = [...ts].sort((a, b) => str(a.items?.code).localeCompare(str(b.items?.code)));
       return {
         Materials: byProd.flatMap(t => [...t.bom_template_materials].sort((a, b) => a.line_no - b.line_no).map(m => [t.items?.code, m.items?.code, Number(m.qty), m.notes || ''])),
-        Stages: byProd.flatMap(t => [...t.bom_template_routing].sort((a, b) => a.seq - b.seq).map(r => [t.items?.code, r.seq, r.work_centers?.code, Number(r.std_labour_hours), Number(r.std_machine_hours), r.instructions || ''])),
+        Stages: byProd.flatMap(t => [...t.bom_template_routing].sort((a, b) => a.seq - b.seq).map(r => [t.items?.code, r.seq, r.work_centers?.code, Number(r.std_labour_hours), Number(r.std_machine_hours), r.instructions || '', Number(r.setup_hours), Number(r.wait_days)])),
       };
     },
     async validate(rows) {
@@ -265,7 +265,11 @@ const TEMPLATES = {
           if (Number.isNaN(l) || l < 0) e.push('labour_hours must be 0 or more');
           if (Number.isNaN(h) || h < 0) e.push('machine_hours must be 0 or more');
           if (w && w.kind !== 'MACHINE' && h > 0) e.push('machine hours only on a machine work centre');
-          Object.assign(row, { wc: w?.code || str(r.work_center_code), seq: s, labour: l ?? 0, machine: h ?? 0 });
+          // blank setup / wait = the work centre's typical values
+          const su = numOrNull(r.setup_hours), wd = numOrNull(r.wait_days);
+          if (Number.isNaN(su) || su < 0) e.push('setup_hours must be 0 or more');
+          if (Number.isNaN(wd) || wd < 0) e.push('wait_days must be 0 or more');
+          Object.assign(row, { wc: w?.code || str(r.work_center_code), seq: s, labour: l ?? 0, machine: h ?? 0, setup: su, wait: wd });
         }
         return { row, _errors: e };
       });

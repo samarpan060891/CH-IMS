@@ -35,6 +35,8 @@ async function loadSoIntoDispatch(ctx, soId) {
 const wcOps = id => { const w = refRow('work_centers', id); return w?.kind === 'MACHINE' ? Math.max(1, num(w.operators) || 1) : 1; };
 // hours a stage occupies its work centre for one unit: the machine run, or the man-hours shared by the operators at it
 const stageHours = (wcId, mh, lh) => Math.max(num(mh), num(lh) / wcOps(wcId));
+// a stage's typical setup and wait come from its work centre
+const wcDefaults = r => { const w = refRow('work_centers', r.work_center_id); if (w) { r.setup_hours = num(w.default_setup_hours); r.wait_days = num(w.default_wait_days); } };
 const isFG = r => r.is_active && r.item_classes?.code === 'FG';
 const isMat = r => r.is_active && r.item_classes?.tracking === 'LOT' && !r.item_classes?.is_scrap && r.item_classes?.code !== 'FG';
 const itemF = (extra = {}) => ({ k: 'item_id', label: 'Item', type: 'ref', ref: 'items', required: true, width: '240px', filter: isMat, ...extra });
@@ -133,7 +135,8 @@ async function addRoute(ctx, gridKey) {
   const v = await ask({ title: 'Add production stages', message: 'Tick the stages this product goes through. They are added in the standard route order; adjust Seq to change it.',
     fields: wcs.map(w => ({ k: w.id, label: `${w.name}${w.kind === 'MANUAL' ? ' (manual)' : ''}`, type: 'check', default: false, hint: have.has(w.id) ? 'already in route' : 'Include' })), okText: 'Add' });
   if (!v) return;
-  wcs.filter(w => v[w.id] && !have.has(w.id)).forEach(w => ctx.grids[gridKey].push({ seq: w.sort_order, work_center_id: w.id, std_labour_hours: 0, std_machine_hours: 0, planned_labour_hours: 0, planned_machine_hours: 0 }));
+  wcs.filter(w => v[w.id] && !have.has(w.id)).forEach(w => ctx.grids[gridKey].push({ seq: w.sort_order, work_center_id: w.id, std_labour_hours: 0, std_machine_hours: 0, planned_labour_hours: 0, planned_machine_hours: 0,
+    setup_hours: num(w.default_setup_hours), wait_days: num(w.default_wait_days) }));
   ctx.grids[gridKey].sort((a, b) => num(a.seq) - num(b.seq));
   ctx.dirty = true;
 }
@@ -170,7 +173,8 @@ export const bom = {
     { k: 'is_active', label: 'Active', type: 'check' },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: () => 'All quantities are for <b>one unit</b>; a production order multiplies them by its quantity. Products are items of class <b>FG — Finished Goods</b> (add them in Masters → Items).',
+  headerNote: () => 'All quantities are for <b>one unit</b>; a production order multiplies them by its quantity. Products are items of class <b>FG — Finished Goods</b> (add them in Masters → Items). ' +
+    'On the route, <b>setup hours</b> count once per production order (batch) and <b>wait days</b> are drying / moving / queue time after the stage before the batch goes on.',
   grids: [
     { key: 'parts', title: 'Cut list (per unit)', table: 'bom_template_parts', fk: 'template_id', order: 'line_no', fields: partFields,
       importers: [{ label: '⬆ Import Excel / CSV', run: c => importCutList(c, 'parts') }, { label: 'Template', run: () => cutTemplate() }] },
@@ -180,12 +184,14 @@ export const bom = {
       newRow: c => ({ seq: Math.max(0, ...c.grids.routing.map(r => num(r.seq))) + 10 }),
       importers: [{ label: '+ Add stages', run: c => addRoute(c, 'routing') }],
       fields: [{ k: 'seq', label: 'Seq', type: 'number', required: true, width: '60px' },
-        { k: 'work_center_id', label: 'Work centre', type: 'ref', ref: 'work_centers', required: true, width: '220px', filter: stageWc },
+        { k: 'work_center_id', label: 'Work centre', type: 'ref', ref: 'work_centers', required: true, width: '220px', filter: stageWc, onChange: wcDefaults },
         // a machine with operator + helper: man-hours = machine hours × operators (filled in, can be changed)
         { k: 'std_machine_hours', label: 'Machine hours / unit', type: 'number',
           onChange: r => { if (!num(r.std_labour_hours) || r._autoLh) { r.std_labour_hours = Math.round(num(r.std_machine_hours) * wcOps(r.work_center_id) * 1000) / 1000; r._autoLh = true; } } },
         { k: 'std_labour_hours', label: 'Man-hours / unit', type: 'number', onChange: r => { r._autoLh = false; } },
         { k: '_ops', label: 'Operators', type: 'ro', virtual: true, fmt: (v, r) => refRow('work_centers', r.work_center_id)?.kind === 'MACHINE' ? wcOps(r.work_center_id) : '' },
+        { k: 'setup_hours', label: 'Setup h / batch', type: 'number' },
+        { k: 'wait_days', label: 'Wait after (days)', type: 'number' },
         { k: 'instructions', label: 'Instructions', width: '220px' }] },
   ],
   async afterLoad() { await loadRef('bom_templates', true); },
@@ -232,14 +238,18 @@ async function tplFill(ctx) {
   const [parts, mats, route] = await Promise.all([
     sb.from('bom_template_parts').select('*').eq('template_id', d.template_id).order('line_no'),
     sb.from('bom_template_materials').select('item_id,qty,notes,line_no').eq('template_id', d.template_id).order('line_no'),
-    sb.from('bom_template_routing').select('seq,work_center_id,std_labour_hours,std_machine_hours,instructions').eq('template_id', d.template_id).order('seq')]);
+    sb.from('bom_template_routing').select('seq,work_center_id,std_labour_hours,std_machine_hours,setup_hours,wait_days,instructions').eq('template_id', d.template_id).order('seq')]);
   const q = num(d.qty), r4 = v => Math.round(v * 10000) / 10000, r2 = v => Math.round(v * 100) / 100;
   for (const k of ['parts', 'materials', 'ops']) (ctx.grids[k] || []).forEach(r => { if (r.id) (ctx.removed[k] ||= []).push(r.id); });
   ctx.grids.parts = must(parts).map(p => ({ part_name: p.part_name, material_id: p.material_id, length_mm: p.length_mm, width_mm: p.width_mm, pieces: num(p.pieces) * q,
     edge_item_id: p.edge_item_id, edge_l1: p.edge_l1, edge_l2: p.edge_l2, edge_w1: p.edge_w1, edge_w2: p.edge_w2, grain: p.grain, notes: p.notes }));
   ctx.grids.materials = must(mats).map(m => ({ item_id: m.item_id, source: 'TEMPLATE', net_qty: r4(num(m.qty) * q), required_qty: r4(num(m.qty) * q), notes: m.notes }));
-  ctx.grids.ops = must(route).map(o => ({ seq: o.seq, work_center_id: o.work_center_id, planned_labour_hours: r2(num(o.std_labour_hours) * q),
-    planned_machine_hours: r2(num(o.std_machine_hours) * q), instructions: o.instructions }));
+  // hours × quantity + setup once (setup keeps the machine and its operators busy)
+  const isMc = id => refRow('work_centers', id)?.kind === 'MACHINE';
+  ctx.grids.ops = must(route).map(o => ({ seq: o.seq, work_center_id: o.work_center_id,
+    planned_labour_hours: r2(num(o.std_labour_hours) * q + num(o.setup_hours) * wcOps(o.work_center_id)),
+    planned_machine_hours: r2(num(o.std_machine_hours) * q + (isMc(o.work_center_id) ? num(o.setup_hours) : 0)),
+    setup_hours: num(o.setup_hours), wait_days: num(o.wait_days), instructions: o.instructions }));
   ctx._tplAuto = true; ctx.dirty = true;
 }
 // quantity typed digit by digit: recalculate once typing pauses
@@ -338,7 +348,8 @@ export const wo = {
       importers: [{ label: '+ Add stages', run: c => addRoute(c, 'ops') }],
       fields: [{ k: 'seq', label: 'Seq', type: 'number', required: true, width: '60px' },
         { k: 'work_center_id', label: 'Work centre', type: 'ref', ref: 'work_centers', required: true, width: '220px', filter: stageWc },
-        { k: 'planned_labour_hours', label: 'Planned man-hours', type: 'number' }, { k: 'planned_machine_hours', label: 'Planned machine hours', type: 'number' },
+        { k: 'planned_labour_hours', label: 'Planned man-hours (incl. setup)', type: 'number' }, { k: 'planned_machine_hours', label: 'Planned machine hours (incl. setup)', type: 'number' },
+        { k: 'setup_hours', label: 'Setup h', type: 'number' }, { k: 'wait_days', label: 'Wait after (days)', type: 'number' },
         { k: 'instructions', label: 'Instructions', width: '200px' },
         { k: 'status', label: 'Status', type: 'ro', fmt: v => label(v || 'PENDING'), show: d => d.status !== 'DRAFT' },
         { k: 'qty_done', label: 'Qty done', type: 'ro', fmt: v => qty(v), show: d => d.status !== 'DRAFT' }] },
@@ -882,10 +893,14 @@ export const ProductionPlanner = {
       const rows = this.batches.map(b => {
         const q = num(b.qty); let t = 0, mh = 0, lh = 0;
         this.route.forEach((r, i) => {
-          const d = q > 0 ? stageHours(r.work_center_id, r.std_machine_hours, r.std_labour_hours) * q / cap(r) : 0;
-          mh += num(r.std_machine_hours) * q; lh += num(r.std_labour_hours) * q;
+          if (!(q > 0)) return;
+          // run time × qty shared by the machines / people, plus the setup once per batch; then the wait (drying, moving) —
+          // the work centre is free during the wait, the batch is not
+          const mc = r.wc?.kind === 'MACHINE', setup = num(r.setup_hours);
+          const d = stageHours(r.work_center_id, r.std_machine_hours, r.std_labour_hours) * q / cap(r) + setup / this.perDay;
+          mh += num(r.std_machine_hours) * q + (mc ? setup : 0); lh += num(r.std_labour_hours) * q + setup * wcOps(r.work_center_id);
           const start = Math.max(t, free[r.work_center_id] || 0);
-          t = start + d; free[r.work_center_id] = t; stageDays[i] += d;
+          free[r.work_center_id] = start + d; t = start + d + num(r.wait_days); stageDays[i] += d;
         });
         const days = Math.ceil(t - 1e-9);
         return { mh, lh, days, date: q > 0 ? addWorkdays(this.startDate || today(), Math.max(days - 1, 0)) : null };
@@ -939,7 +954,7 @@ export const ProductionPlanner = {
       await loadRefs(['work_centers']);
       const l = this.line;
       const tpl = l.template_id || must(await sb.from('bom_templates').select('id').eq('item_id', l.item_id).eq('is_active', true).order('version', { ascending: false }).limit(1))[0]?.id;
-      this.route = tpl ? must(await sb.from('bom_template_routing').select('seq,work_center_id,std_labour_hours,std_machine_hours').eq('template_id', tpl).order('seq'))
+      this.route = tpl ? must(await sb.from('bom_template_routing').select('seq,work_center_id,std_labour_hours,std_machine_hours,setup_hours,wait_days').eq('template_id', tpl).order('seq'))
         .map(r => ({ ...r, wc: refRow('work_centers', r.work_center_id) })) : [];
       const ops = must(await sb.from('wo_operations').select('work_center_id,planned_labour_hours,planned_machine_hours,qty_done,status,production_orders!inner(qty,status)')
         .in('status', ['PENDING', 'IN_PROGRESS']).in('production_orders.status', ['PENDING_FM', 'APPROVED', 'RELEASED', 'IN_PROGRESS']));
@@ -1077,10 +1092,10 @@ export const ProductionPlanner = {
           <a href="javascript:void 0" @click="showStages = !showStages">{{ showStages ? 'Hide' : 'Show' }} stage load</a>
         </div>
         <div v-if="plan && showStages" class="tbl-wrap" style="margin-top:6px"><table class="t">
-          <thead><tr><th>Seq</th><th>Stage / work centre</th><th class="n">Machines / people</th><th class="n">Operators per machine</th><th class="n">Capacity h/day</th><th class="n">Machine h / unit</th><th class="n">Man-h / unit</th><th class="n">Days (these batches)</th><th class="n">Queued ahead (days)</th></tr></thead>
+          <thead><tr><th>Seq</th><th>Stage / work centre</th><th class="n">Machines / people</th><th class="n">Operators per machine</th><th class="n">Capacity h/day</th><th class="n">Machine h / unit</th><th class="n">Man-h / unit</th><th class="n">Setup h / batch</th><th class="n">Wait after (days)</th><th class="n">Days (these batches)</th><th class="n">Queued ahead (days)</th></tr></thead>
           <tbody><tr v-for="s in plan.stages" :key="s.seq + s.work_center_id">
             <td>{{ s.seq }}</td><td>{{ s.wc?.name }}</td><td class="n">{{ s.wc?.crew_size || 1 }}</td><td class="n">{{ s.wc?.kind === 'MACHINE' ? (s.wc?.operators || 1) : '' }}</td><td class="n">{{ qty(s.cap) }}</td>
-            <td class="n">{{ qty(s.std_machine_hours) }}</td><td class="n">{{ qty(s.std_labour_hours) }}</td><td class="n">{{ d1(s.days) }}</td><td class="n">{{ d1(s.queueDays) }}</td>
+            <td class="n">{{ qty(s.std_machine_hours) }}</td><td class="n">{{ qty(s.std_labour_hours) }}</td><td class="n">{{ qty(s.setup_hours) }}</td><td class="n">{{ qty(s.wait_days) }}</td><td class="n">{{ d1(s.days) }}</td><td class="n">{{ d1(s.queueDays) }}</td>
           </tr></tbody>
         </table></div>
         <div style="margin-top:10px"><button class="btn primary" :disabled="busy || !batchTotal" @click="create">🏭 Create production orders → Factory Manager</button></div>
