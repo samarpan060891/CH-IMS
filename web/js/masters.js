@@ -66,8 +66,8 @@ export const MASTERS = {
           show: d => isStockItem(d) && (d.has_expiry === true || d.has_expiry === 'true') },
         { k: '_frozen', label: 'Batch / expiry setting', type: 'ro', virtual: true, wide: true, show: d => isStockItem(d) && itemUsed(d),
           fmt: () => '🔒 Fixed — this item already has receipts or stock' },
-        // timber: each GRN batch records section (thickness × width), length and number of pieces; stock shows pieces next to CBM
-        { k: 'dim_tracking', label: 'Received in pieces of a size? (timber: section × length + pieces at GRN)', type: 'select', wide: true, options: YES_NO, show: isStockItem },
+        // timber, slats…: each GRN batch records its size / spec (text) and the pieces counted; stock shows pieces next to the quantity
+        { k: 'dim_tracking', label: 'Received in pieces? (GRN asks the size / spec and the number of pieces)', type: 'select', wide: true, options: YES_NO, show: isStockItem },
         { k: 'vat_rate', label: 'VAT %', type: 'number' },
         { k: 'default_location_id', label: 'Default store location', type: 'ref', ref: 'locations', filter: r => r.is_stock },
         { k: 'calibration_interval_days', label: 'Calibration interval (days)', type: 'number', show: d => refRow('item_classes', d.class_id)?.needs_calibration },

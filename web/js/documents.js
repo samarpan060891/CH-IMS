@@ -19,7 +19,7 @@ async function loadLotOpts(ctx) {
   const ids = [...new Set(ctx.grids.lines.map(r => r.item_id).filter(Boolean))];
   opts.lots = {};
   if (!ids.length || !ctx.doc.from_location_id) return;
-  const rows = must(await sb.from('stock_lots').select('id,item_id,lot_no,batch_no,expiry_date,received_date,qty_on_hand,project_id,status,is_offcut,length_mm,width_mm,thickness_mm,pcs_per_unit')
+  const rows = must(await sb.from('stock_lots').select('id,item_id,lot_no,batch_no,expiry_date,received_date,qty_on_hand,project_id,status,is_offcut,length_mm,width_mm,thickness_mm,pcs_per_unit,size_text')
     .in('item_id', ids).eq('location_id', ctx.doc.from_location_id).eq('status', 'AVAILABLE').gt('qty_on_hand', 0)
     .order('expiry_date', { nullsFirst: false }).order('received_date'));
   // offcut pieces are listed first (use them before cutting a new sheet); they are only issued when chosen, and whole
@@ -27,12 +27,11 @@ async function loadLotOpts(ctx) {
     (opts.lots[l.item_id] ||= []).push({ id: l.id, qty: num(l.qty_on_hand), offcut: l.is_offcut, ppu: num(l.pcs_per_unit) || null,
       label: l.is_offcut
         ? `✂ OFFCUT ${qty(l.length_mm)}${l.width_mm ? ' × ' + qty(l.width_mm) : ''} mm · ${l.lot_no} · ${qty(l.qty_on_hand)}`
-        : l.pcs_per_unit ? `${l.thickness_mm ? lotSize(l) : `${+num(l.pcs_per_unit).toFixed(2)} pcs/${itemUom(l.item_id)}`} · ${qty(pcsOf(l.qty_on_hand, l.pcs_per_unit))} pcs (${qty(l.qty_on_hand)}) · ${l.lot_no}${l.project_id ? ' (reserved)' : ''}`
+        : l.pcs_per_unit ? `${l.size_text || `${+num(l.pcs_per_unit).toFixed(2)} pcs/${itemUom(l.item_id)}`} · ${qty(pcsOf(l.qty_on_hand, l.pcs_per_unit))} pcs (${qty(l.qty_on_hand)}) · ${l.lot_no}${l.project_id ? ' (reserved)' : ''}`
         : `${l.batch_no || l.lot_no}${l.expiry_date ? ' · exp ' + dt(l.expiry_date) : ''} · rcvd ${dt(l.received_date)} · ${qty(l.qty_on_hand)}${l.project_id ? ' (reserved)' : ''}` });
   });
 }
-// timber batches: size text, pieces ↔ CBM through the batch's pieces per unit (ppu)
-const lotSize = l => `${+num(l.thickness_mm)} × ${+num(l.width_mm)} × ${+num(l.length_mm)} mm`;
+// timber batches: pieces ↔ quantity through the batch's pieces per unit (ppu)
 const pcsOf = (q, ppu) => ppu ? Math.round(num(q) * num(ppu) * 10) / 10 : null;
 const cbmOf = (pcs, ppu) => ppu ? +(num(pcs) / num(ppu)).toFixed(3) : null;
 const offcutCount = () => Object.values(opts.lots).flat().filter(l => l.offcut).length;
@@ -526,30 +525,9 @@ async function loadPoIntoGrn(ctx, poId) {
 // ---- timber received in pieces: section (thickness × width) × length × pieces = CBM ----
 const grnCur = { ctx: null };
 const isDim = r => !!refRow('items', r.item_id)?.dim_tracking;
-const trimNum = v => String(+num(v));
-const isCbm = r => itemUom(r.item_id) === 'CBM';
-const pcCbm = r => num(r.thickness_mm) * num(r.width_mm) * num(r.length_mm) / 1e9;
-// CBM timber with its size known:
-//  · pieces typed → received CBM = pieces × CBM per piece (DN qty follows when it was not typed separately)
-//  · CBM already there (from the PO / schedule, or typed) and pieces not typed → pieces = CBM ÷ CBM per piece, rounded
-//    to whole pieces, and the received CBM set to exactly those pieces (the supplier's DN qty is left as it is)
-function dimCalc(r, edited) {
-  if (!isDim(r) || !isCbm(r) || !(pcCbm(r) > 0)) return;
-  if (edited === 'pcs') r._pcsAuto = false;
-  else if (edited === 'received_qty' || !(num(r.pcs) > 0)) r._pcsAuto = true;
-  if (r._pcsAuto) {
-    if (!(num(r.received_qty) > 0)) return;
-    r.pcs = Math.max(1, Math.round(num(r.received_qty) / pcCbm(r)));
-    r.received_qty = +(pcCbm(r) * r.pcs).toFixed(3);
-    return;
-  }
-  if (!(num(r.pcs) > 0)) return;
-  const q = +(pcCbm(r) * num(r.pcs)).toFixed(3);
-  if (r.dn_qty == null || num(r.dn_qty) === num(r.received_qty)) r.dn_qty = q;
-  r.received_qty = q;
-}
-const dimF = (k, label) => ({ k, label, type: 'number', width: '90px', ro: r => !isDim(r), onChange: r => dimCalc(r, k),
-  show: () => (grnCur.ctx?.grids.lines || []).some(isDim) });
+// size / spec as text (for Stores and the shop floor to recognise the batch) and the pieces counted; no size maths —
+// the quantity (CBM, bundles…) is entered as received, and the batch keeps pieces ÷ quantity
+const dimF = (k, label, extra = {}) => ({ k, label, width: '100px', ro: r => !isDim(r), show: () => (grnCur.ctx?.grids.lines || []).some(isDim), ...extra });
 // receive one PO line in several sizes: a second GRN line for the same PO line
 async function grnAnotherSize(ctx) {
   const rows = ctx.grids.lines.filter(r => r.po_line_id && isDim(r));
@@ -657,14 +635,10 @@ export const grn = {
         // where this line is stored (zone / rack / bin); blank = the GRN's receiving location. Damaged / excess still go to Quarantine.
         { k: 'location_id', label: 'Put-away location (blank = receiving location)', type: 'ref', ref: 'locations', width: '200px',
           filter: r => r.is_stock && r.is_active && !['QUARANTINE', 'SCRAP_YARD'].includes(r.loc_type) && (!siteOnly() || r.loc_type === 'SITE') },
-        // timber batch size and pieces (items received in pieces only); for CBM items the received qty is worked out from them
-        dimF('thickness_mm', 'Thk mm'), dimF('width_mm', 'Width mm'), dimF('length_mm', 'Length mm'), dimF('pcs', 'Pieces'),
-        { k: '_pc', label: 'CBM / piece · pcs / unit', type: 'ro', virtual: true,
-          fmt: (v, r) => !isDim(r) ? '' : isCbm(r) ? (pcCbm(r) > 0 ? pcCbm(r).toFixed(5) + ' CBM/pc' : '')
-            : num(r.pcs) > 0 && num(r.received_qty) > 0 ? `${+(num(r.pcs) / num(r.received_qty)).toFixed(2)} pcs/${itemUom(r.item_id)}` : '',
-          show: () => (grnCur.ctx?.grids.lines || []).some(isDim) },
+        // batch size / spec as text and the pieces counted (items received in pieces only, e.g. timber, slats)
+        dimF('size_text', 'Size / spec (e.g. 50 × 100 × 2500 mm)', { width: '200px' }), dimF('pcs', 'Pieces', { type: 'number' }),
         { k: 'dn_qty', label: 'DN qty', type: 'number', whole: true, show: d => !['OPENING'].includes(d.receipt_type) },
-        { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true, whole: true, onChange: r => dimCalc(r, 'received_qty') },
+        { k: 'received_qty', label: 'Received (counted)', type: 'number', required: true, whole: true },
         { k: 'damaged_qty', label: 'Damaged', type: 'number', whole: true },
         { k: '_acc', label: 'To stock', type: 'ro', virtual: true, show: d => d.status === 'DRAFT', fmt: (v, r) => qty(grnSplit(r).acc) },
         { k: '_exc', label: 'Excess', type: 'ro', virtual: true, show: d => d.status === 'DRAFT', fmt: (v, r) => { const x = grnSplit(r).exc; return x > 0 ? '⚠ ' + qty(x) : ''; } },
@@ -700,16 +674,9 @@ export const grn = {
   validate(ctx) {
     for (const r of ctx.grids.lines) {
       if (num(r.received_qty) > 0 && isDim(r)) {
-        // CBM timber: size + pieces (the CBM comes from them); other units (e.g. bundles): pieces only, size optional
+        // pieces counted are required (the size / spec text is for recognising the batch)
         if (!(num(r.pcs) > 0)) throw new Error(`${itemName(r.item_id)}: enter the number of pieces in this batch`);
         if (!Number.isInteger(num(r.pcs))) throw new Error(`${itemName(r.item_id)}: pieces must be a whole number (${r.pcs})`);
-        if (isCbm(r) && !(num(r.thickness_mm) > 0 && num(r.width_mm) > 0 && num(r.length_mm) > 0))
-          throw new Error(`${itemName(r.item_id)}: enter thickness, width and length (mm) for this batch`);
-        if (isCbm(r)) {
-          const q = pcCbm(r) * num(r.pcs);
-          if (Math.abs(q - num(r.received_qty)) > Math.max(0.001, q * 0.001))
-            throw new Error(`${itemName(r.item_id)}: ${qty(r.pcs)} pcs of ${r.thickness_mm}×${r.width_mm}×${r.length_mm} mm = ${q.toFixed(3)} CBM, but received is ${qty(r.received_qty)} — correct the size or pieces`);
-        }
       }
       if (num(r.received_qty) > 0) {
         fillExpiry(r, ctx.doc);
@@ -747,7 +714,7 @@ export const grn = {
     { label: '🖨 GRN PDF', reload: false, run: c => {
         const d = c.doc; const cost = canSeeCost();
         const cols = [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 },
-          { h: 'Item', k: r => itemName(r.item_id) + (num(r.pcs) > 0 ? `\n${num(r.thickness_mm) > 0 ? `${trimNum(r.thickness_mm)} × ${trimNum(r.width_mm)} × ${trimNum(r.length_mm)} mm · ` : ''}${qty(r.pcs)} pcs` : '') },
+          { h: 'Item', k: r => itemName(r.item_id) + (num(r.pcs) > 0 ? `\n${r.size_text ? r.size_text + ' · ' : ''}${qty(r.pcs)} pcs` : '') },
           { h: 'UoM', k: r => itemUom(r.item_id) },
           { h: 'DN qty', k: r => qty(r.dn_qty), align: 'right' }, { h: 'Received', k: r => qty(r.received_qty), align: 'right' },
           { h: 'Damaged', k: r => num(r.damaged_qty) ? qty(r.damaged_qty) : '', align: 'right' }, { h: 'Accepted', k: r => qty(r.accepted_qty), align: 'right' },

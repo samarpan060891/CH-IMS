@@ -38,7 +38,7 @@ export const REPORTS = {
     { k: 'item_code', label: 'Code' }, { k: 'item_name', label: 'Item' }, { k: 'class_code', label: 'Class' }, { k: 'location_code', label: 'Location' }, { k: 'lot_no', label: 'Lot' }, { k: 'batch_no', label: 'Batch' },
     { k: r => r.project_id ? (refRow('projects', r.project_id)?.code || 'Project') : 'Free', label: 'Reserved for' },
     // timber batches: size (thickness × width × length) and pieces in stock, next to the CBM
-    { k: 'size_text', label: 'Size (T × W × L)' }, { k: 'pcs_on_hand', label: 'Pieces', fmt: 'qty', sum: true },
+    { k: 'size_text', label: 'Size / spec' }, { k: 'pcs_on_hand', label: 'Pieces', fmt: 'qty', sum: true },
     { k: 'received_date', label: 'Received', fmt: 'date' }, { k: 'expiry_date', label: 'Expiry', fmt: 'date' }, { k: 'qty_on_hand', label: 'Qty', fmt: 'qty' }, { k: 'uom', label: 'UoM' },
     { k: 'value_rate', label: 'Rate', fmt: 'money', cost: true }, { k: 'value', label: 'Value', fmt: 'money', cost: true, sum: true }, { k: 'age_days', label: 'Age (days)', n: true }, { k: 'lot_status', label: 'Status', fmt: 'badge' }] },
   stockout: { title: 'Stock-out & below safety', src: 'v_item_stock', filter: q => q.in('stock_status', ['STOCK_OUT', 'BELOW_SAFETY', 'REORDER']).eq('is_active', true), columns: [
