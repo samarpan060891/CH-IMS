@@ -917,6 +917,7 @@ export const ProductionPlanner = {
     line() { return this.lines.find(l => l.id === this.lineId) || null; },
     canPlan() { return hasRole('production_incharge', 'factory_manager'); },
     batchTotal() { return this.batches.reduce((s, b) => s + num(b.qty), 0); },
+    remainder() { return this.line ? Math.max(0, Math.round(this.line.left - this.batchTotal)) : 0; },
     lineOrders() { return this.orders.filter(o => o.boq_line_id === this.lineId); },
   },
   watch: { projectId() { this.reload(); }, lineId() { this.reload(); } },
@@ -998,6 +999,7 @@ export const ProductionPlanner = {
         bs.slice(i + 1).forEach((b, k) => { b.qty = base + (k < rem ? 1 : 0); });
       }
     },
+    addRemainder() { this.batches.push({ qty: this.remainder, due_date: '', remarks: '' }); this.nb = this.batches.length; },
     async create() {
       const l = this.line, bs = this.batches.filter(b => num(b.qty) > 0);
       if (!bs.length) return toast('Enter a quantity for at least one batch', 'error');
@@ -1102,6 +1104,13 @@ export const ProductionPlanner = {
               <td v-if="plan"><template v-if="plan.rows[i]?.date"><b>{{ dt(plan.rows[i].date) }}</b><div class="small muted">working day {{ plan.rows[i].days }} · <a href="javascript:void 0" @click="b.due_date = plan.rows[i].date">use as due date</a></div></template></td>
               <td><input type="date" v-model="b.due_date"></td>
               <td><input style="width:100%" v-model="b.remarks"></td>
+            </tr>
+            <!-- what the batches leave on the BOQ line: stays to plan later, or becomes one more batch -->
+            <tr v-if="remainder > 0" style="background:#fffbeb">
+              <td class="muted">Not in a batch</td>
+              <td class="n"><b>{{ qty(remainder) }}</b></td>
+              <td :colspan="plan ? 5 : 2" class="small">stays on the BOQ line to plan later ·
+                <button class="btn sm" @click="addRemainder">+ Add as batch {{ batches.length + 1 }}</button></td>
             </tr>
           </tbody>
           <tfoot><tr><th>Total</th><th class="n" :style="{ color: batchTotal > line.left + 0.0005 ? 'var(--bad)' : '' }">{{ qty(batchTotal) }} / {{ qty(line.left) }}</th>
