@@ -7,7 +7,7 @@ import { makePdf, showPdf } from './pdf.js';
 import { logoPng } from './logo.js';
 import { qrMatrix, qrText } from './scan.js';
 import { loadXlsx } from './importer.js';
-import { weekOff, perDay, wcOps, stageHours, capOf, loadOpenWork, jobsFrom, schedule, dateAt } from './schedule.js';
+import { weekOff, perDay, wcOps, stageHours, capOf, loadOpenWork, jobsFrom, schedule, dateAt, orderOutlook, OPEN_WO, FLAG, MAT } from './schedule.js';
 
 const popts = reactive({ wos: [] });
 const dspProject = reactive({ id: null, units: [], soLines: [] });   // project / sales order of the open dispatch note (BOQ line, unit or order line choices)
@@ -361,12 +361,28 @@ export const wo = {
     ctx.extra.mat = must(await sb.from('stock_ledger').select('txn_date,txn_type,doc_no,qty,value,item_id').eq('production_order_id', id).in('txn_type', ['ISSUE', 'RETURN']).order('txn_at'));
     ctx.extra.receipts = must(await sb.from('wo_receipts').select('*, rw:production_orders!wo_receipts_rework_wo_id_fkey(id,wo_no), scrap_notes(id,scrap_no,status)').eq('wo_id', id).order('created_at'));
     ctx.extra.reworks = must(await sb.from('production_orders').select('id,wo_no,status,qty').eq('parent_wo_id', id).order('created_at'));
+    ctx.extra.outlook = OPEN_WO.includes(ctx.doc.status) ? await orderOutlook(id).catch(e => { console.warn('outlook', e); return null; }) : null;
     ctx.extra.mrStatus = ctx.doc.mr_id ? must(await sb.from('material_requests').select('status').eq('id', ctx.doc.mr_id).single()).status : null;
     ctx.extra.excess = must(await sb.from('material_requests').select('id,mr_no,status').eq('production_order_id', id).eq('kind', 'EXCESS').order('created_at'));
     if (ctx.doc.parent_wo_id) ctx.doc._parentNo = must(await sb.from('production_orders').select('wo_no').eq('id', ctx.doc.parent_wo_id).single()).wo_no;
   },
   async loadInfo(ctx) {
     const out = [];
+    // factory schedule: position, projected finish against the due date, and whether the materials are there in time
+    const o = ctx.extra.outlook;
+    if (o?.r) {
+      const d = ctx.doc, a = o.a;
+      out.push({ title: `📅 Factory schedule — #${o.pos} of ${o.total} · ${FLAG[o.r.flag]?.t || ''} · material ${MAT[a?.status]?.t || ''}`, rows: [{
+        pos: `${o.pos} of ${o.total}`, due: d.due_date, fin: o.r.date, slack: o.r.slack, start: o.r.stages[0] ? dateAt(o.start, o.r.stages[0].start) : null,
+        mat: MAT[a?.status]?.t || '', matDate: a && ['ON_PO', 'PO_LATE', 'PO_PENDING'].includes(a.status) ? a.matDate : null }],
+        columns: [{ k: 'pos', label: 'Position in sequence' }, { k: 'start', label: 'Planned start', fmt: 'date' }, { k: 'fin', label: 'Projected finish', fmt: 'date' },
+          { k: 'due', label: 'Due', fmt: 'date' }, { k: 'slack', label: 'Spare working days', n: true }, { k: 'mat', label: 'Material' }, { k: 'matDate', label: 'All material by', fmt: 'date' }] });
+      if (a?.lines.length && a.status !== 'READY') out.push({ title: `Material availability (needed by ${dt(a.need) || '—'})`, rows: a.lines, columns: [
+        { k: r => itemName(r.item), label: 'Material' }, { k: r => itemUom(r.item), label: 'UoM' }, { k: 'req', label: 'Required', fmt: 'qty' }, { k: 'issued', label: 'Issued', fmt: 'qty' },
+        { k: 'stock', label: 'From stock', fmt: 'qty' },
+        { k: r => [...r.pos.map(p => `${p.po_no} ${qty(p.qty)} due ${p.date ? dt(p.date) : '?'}`), ...r.tent.map(p => `${p.po_no} ${qty(p.qty)} awaiting approval`)].join(' · '), label: 'From POs' },
+        { k: r => r.short ? Math.round(r.short * 1000) / 1000 : null, label: 'Short', fmt: 'qty' }, { k: r => r.short && r.pr ? r.pr : null, label: 'On requisition (no PO)', fmt: 'qty' }] });
+    }
     const y = yieldRows(ctx);
     if (y.length) out.push({ title: 'Board yield / nesting', rows: y, columns: [{ k: 'material', label: 'Material' }, { k: 'uom', label: 'UoM' }, { k: 'area', label: 'Parts area m²', fmt: 'qty' },
       { k: 'net', label: 'Net qty', fmt: 'qty' }, { k: 'req', label: 'Planned qty (with waste)', fmt: 'qty' }, { k: 'yield', label: 'Yield %', n: true }] });

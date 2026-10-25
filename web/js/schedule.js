@@ -53,6 +53,107 @@ export async function loadOpenWork() {
   setHolidays(holidays.map(h => h.holiday_date));
   return { orders, ops, holidays };
 }
+// ---------- material availability ----------
+// stock usable for production: available lots in the stores (not quarantine, scrap, shop floor or FG store)
+const STOCK_LOC = ['WAREHOUSE', 'ZONE'];
+const FIRM_PO = ['APPROVED', 'RELEASED', 'PARTIALLY_RECEIVED'];
+const PENDING_PO = ['PENDING_FM', 'PENDING_FINANCE', 'PENDING_TOP_MGMT'];
+export async function loadMaterials(orders) {
+  const ids = orders.map(o => o.id);
+  const empty = { req: [], issued: {}, lots: [], po: [], pr: {} };
+  if (!ids.length) return empty;
+  const req = must(await sb.from('wo_materials').select('wo_id,item_id,required_qty').in('wo_id', ids).gt('required_qty', 0));
+  const items = [...new Set(req.map(r => r.item_id))];
+  if (!items.length) return { ...empty, req };
+  const [led, lots, sched, lines, prl] = await Promise.all([
+    sb.from('stock_ledger').select('production_order_id,item_id,qty').in('production_order_id', ids).in('txn_type', ['ISSUE', 'RETURN']),
+    sb.from('v_lot_values').select('item_id,qty_on_hand,project_id').in('item_id', items).eq('lot_status', 'AVAILABLE').in('loc_type', STOCK_LOC).gt('qty_on_hand', 0),
+    sb.from('v_po_schedule').select('po_line_id,delivery_date,qty,received_qty').in('item_id', items).in('po_status', [...FIRM_PO, ...PENDING_PO]),
+    sb.from('po_lines').select('id,item_id,qty,received_qty,required_date,project_id,purchase_orders!inner(po_no,status,delivery_date,project_id)')
+      .in('item_id', items).in('purchase_orders.status', [...FIRM_PO, ...PENDING_PO]),
+    sb.from('pr_lines').select('item_id,qty,ordered_qty,purchase_requisitions!inner(status)').in('item_id', items).in('purchase_requisitions.status', ['SUBMITTED', 'PARTIAL_PO'])]);
+  const issued = {};
+  must(led).forEach(l => { const k = l.production_order_id + '|' + l.item_id; issued[k] = (issued[k] || 0) - num(l.qty); });
+  // open PO quantity by delivery date: the PO delivery schedule where there is one, else the line's required / PO date
+  const sch = {};
+  must(sched).forEach(s => { (sch[s.po_line_id] ||= []).push(s); });
+  const po = [];
+  must(lines).forEach(l => {
+    const h = l.purchase_orders, base = { item_id: l.item_id, project_id: l.project_id || h.project_id || null, po_no: h.po_no, firm: FIRM_PO.includes(h.status) };
+    if (sch[l.id]?.length) sch[l.id].forEach(s => { const q = num(s.qty) - num(s.received_qty); if (q > 1e-9) po.push({ ...base, date: s.delivery_date, qty: q }); });
+    else { const q = num(l.qty) - num(l.received_qty); if (q > 1e-9) po.push({ ...base, date: l.required_date || h.delivery_date || null, qty: q }); }
+  });
+  po.sort((a, b) => (a.date || '9999-12-31').localeCompare(b.date || '9999-12-31'));
+  const pr = {};
+  must(prl).forEach(p => { pr[p.item_id] = (pr[p.item_id] || 0) + Math.max(0, num(p.qty) - num(p.ordered_qty)); });
+  return { req, issued, lots: must(lots), po, pr };
+}
+// share stock and open POs between the orders in schedule sequence (earlier orders first): the project's own stock,
+// then free stock, then approved POs by delivery date, then POs still waiting for approval (tentative)
+export const MAT = {
+  READY: { t: '✅ In stock', c: 'OK' }, ON_PO: { t: '🕒 On PO in time', c: 'BLUE' }, PO_LATE: { t: '⚠ PO after start', c: 'WARNING' },
+  PO_PENDING: { t: '⏳ PO awaiting approval', c: 'PENDING' }, SHORT: { t: '❌ Short', c: 'OVERDUE' }, NO_BOM: { t: 'No materials', c: 'DRAFT' },
+};
+export function allocate(sorted, mat, needOf) {
+  const proj = {}, free = {};
+  mat.lots.forEach(l => { if (l.project_id) { const k = l.project_id + '|' + l.item_id; proj[k] = (proj[k] || 0) + num(l.qty_on_hand); } else free[l.item_id] = (free[l.item_id] || 0) + num(l.qty_on_hand); });
+  const po = mat.po.map(p => ({ ...p, left: p.qty }));
+  const reqBy = {};
+  mat.req.forEach(r => { const m = (reqBy[r.wo_id] ||= {}); m[r.item_id] = (m[r.item_id] || 0) + num(r.required_qty); });
+  const out = new Map();
+  for (const j of sorted) {
+    const w = j.wo, need = needOf(j), lines = [];
+    for (const [item, rq] of Object.entries(reqBy[j.id] || {})) {
+      const issued = Math.max(0, mat.issued[j.id + '|' + item] || 0);
+      let n = Math.max(0, rq - issued);
+      const take = (pool, k) => { const t = Math.min(n, pool[k] || 0); if (t > 0) { pool[k] -= t; n -= t; } return t; };
+      const stock = take(proj, w.project_id + '|' + item) + take(free, item);
+      const fromPo = firm => {
+        const used = [];
+        for (const p of po) {
+          if (n <= 1e-9) break;
+          if (p.firm !== firm || p.item_id !== item || p.left <= 1e-9 || (p.project_id && p.project_id !== w.project_id)) continue;
+          const t = Math.min(n, p.left); p.left -= t; n -= t; used.push({ po_no: p.po_no, date: p.date, qty: t });
+        }
+        return used;
+      };
+      const pos = fromPo(true), tent = fromPo(false);
+      lines.push({ item, req: rq, issued, stock, pos, tent, short: n > 1e-6 ? n : 0, pr: mat.pr[item] || 0 });
+    }
+    const dates = lines.flatMap(l => [...l.pos, ...l.tent]).map(p => p.date);
+    const matDate = dates.length ? (dates.some(d => !d) ? null : dates.reduce((a, b) => (a > b ? a : b))) : today();
+    const status = !lines.length ? 'NO_BOM' : lines.some(l => l.short) ? 'SHORT' : lines.some(l => l.tent.length) ? 'PO_PENDING'
+      : lines.some(l => l.pos.some(p => !p.date || (need && p.date > need))) ? 'PO_LATE' : lines.some(l => l.pos.length) ? 'ON_PO' : 'READY';
+    out.set(j.id, { status, lines, need, matDate, shortItems: lines.filter(l => l.short).length });
+  }
+  return out;
+}
+// whole schedule with materials: sequence → share the materials (needed by each order's first stage) → optionally
+// hold each order's start until its material arrives (orders short of material keep their unconstrained start)
+export function scheduleWithMaterials(jobs, mat, startIso = today(), waitMat = false) {
+  const s0 = schedule(jobs, startIso);
+  const needOf = s => j => { const r = s.res.get(j.id); return r?.stages.length ? dateAt(startIso, r.stages[0].start) : null; };
+  let alloc = allocate(s0.sorted, mat, needOf(s0));
+  if (!waitMat) return { ...s0, alloc };
+  const first = workday(startIso);
+  const held = jobs.map(j => {
+    const a = alloc.get(j.id), started = j.ops.some(o => o.status === 'IN_PROGRESS');
+    return a && !started && a.status !== 'SHORT' && a.matDate && a.matDate > first ? { ...j, ready: Math.max(0, workdaysBetween(first, workday(a.matDate))) } : j;
+  });
+  const s = schedule(held, startIso);
+  alloc = allocate(s.sorted, mat, needOf(s));
+  return { ...s, alloc };
+}
+
+// one order's place in the factory schedule, projected finish and material position (production order screen)
+export async function orderOutlook(woId) {
+  const w = await loadOpenWork();
+  if (!w.orders.some(o => o.id === woId)) return null;
+  const mat = await loadMaterials(w.orders);
+  const s = scheduleWithMaterials(jobsFrom(w.orders, w.ops), mat);
+  return { r: s.res.get(woId), a: s.alloc.get(woId), pos: s.sorted.findIndex(j => j.id === woId) + 1, total: s.sorted.length, start: s.start };
+}
+
 // orders → schedule jobs with the hours still to do on each stage
 export function jobsFrom(orders, ops) {
   const by = {};
@@ -92,9 +193,10 @@ export function schedule(jobs, startIso = today()) {
       r.stages.push({ ...s, start: st, end: st + d }); r.t = Math.max(r.t, st + d + s.wait);
     }
   }
-  // the rest in route order, order by order in sequence
+  // the rest in route order, order by order in sequence (not before the order's material arrives, if held)
   for (const j of sorted) {
     const r = res.get(j.id);
+    r.t = Math.max(r.t, num(j.ready));
     for (const s of [...j.ops].sort((a, b) => a.seq - b.seq)) {
       if (s.status !== 'PENDING') continue;
       const d = s.h / capOf(s.wc), st = book(s.wc, r.t, d);
@@ -117,16 +219,18 @@ export const FLAG = { LATE: { t: '🔴 Late', c: 'OVERDUE' }, TIGHT: { t: '🟠 
 const WEEKS = 8;
 export const FactorySchedule = {
   components: { Badge },
-  data: () => ({ loading: true, data: null, sch: null, proj: '', flag: '', openId: null, startDate: today() }),
+  data: () => ({ loading: true, data: null, mat: null, sch: null, proj: '', flag: '', matF: '', openId: null, startDate: today(), waitMat: false }),
   computed: {
     rows() {
       if (!this.sch) return [];
       return this.sch.sorted.map((j, i) => ({ n: i + 1, j, r: this.sch.res.get(j.id) }))
-        .filter(x => (!this.proj || x.j.wo.project_id === this.proj) && (!this.flag || x.r.flag === this.flag));
+        .filter(x => (!this.proj || x.j.wo.project_id === this.proj) && (!this.flag || x.r.flag === this.flag) && (!this.matF || this.matOf(x.j).status === this.matF));
     },
     counts() {
       const c = { LATE: 0, TIGHT: 0, OK: 0, NO_DUE: 0 };
       this.sch?.sorted.forEach(j => { const f = this.sch.res.get(j.id).flag; if (c[f] !== undefined) c[f]++; });
+      c.SHORT = this.sch ? this.sch.sorted.filter(j => ['SHORT', 'PO_PENDING'].includes(this.matOf(j).status)).length : 0;
+      c.PO_LATE = this.sch ? this.sch.sorted.filter(j => this.matOf(j).status === 'PO_LATE').length : 0;
       return c;
     },
     projects() { const ids = new Set((this.data?.orders || []).map(o => o.project_id)); return (state.refs.projects || []).filter(p => ids.has(p.id)); },
@@ -162,10 +266,14 @@ export const FactorySchedule = {
     qty, dt, label, num,
     async reload() {
       this.loading = true;
-      await run(async () => { this.data = await loadOpenWork(); this.plan(); });
+      await run(async () => { this.data = await loadOpenWork(); this.mat = await loadMaterials(this.data.orders); this.plan(); });
       this.loading = false;
     },
-    plan() { if (this.data) this.sch = schedule(jobsFrom(this.data.orders, this.data.ops), this.startDate || today()); },
+    plan() { if (this.data) this.sch = scheduleWithMaterials(jobsFrom(this.data.orders, this.data.ops), this.mat, this.startDate || today(), this.waitMat); },
+    matOf(j) { return this.sch?.alloc?.get(j.id) || { status: 'NO_BOM', lines: [] }; },
+    MAT: s => MAT[s] || { t: s, c: '' },
+    poText(l) { return [...l.pos.map(p => `${p.po_no} ${qty(p.qty)} due ${p.date ? dt(p.date) : '?'}`), ...l.tent.map(p => `${p.po_no} ${qty(p.qty)} (awaiting approval) due ${p.date ? dt(p.date) : '?'}`)].join(' · '); },
+    uom(id) { return refRow('items', id)?.uoms?.code || ''; },
     at(t) { return dt(dateAt(this.sch.start, t)); },
     endAt(t) { return dt(addWorkdays(this.sch.start, Math.max(Math.ceil(t - 1e-9) - 1, 0))); },
     wcName(id) { return refRow('work_centers', id)?.name || ''; },
@@ -179,6 +287,7 @@ export const FactorySchedule = {
   template: `<div>
     <div class="row" style="gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
       <label class="small">From <input type="date" v-model="startDate" @change="plan"></label>
+      <label class="small row" style="gap:4px" title="Hold each order's start until its material is in stock or due on a PO"><input type="checkbox" v-model="waitMat" @change="plan"> Wait for material</label>
       <select v-model="proj" style="padding:6px"><option value="">All projects</option><option v-for="p in projects" :key="p.id" :value="p.id">{{ p.code }} — {{ p.name }}</option></select>
       <span class="spacer" style="flex:1"></span>
       <button class="btn sm" @click="reload" :disabled="loading">↻ Recalculate</button>
@@ -190,15 +299,16 @@ export const FactorySchedule = {
         <div class="kpi bad" style="cursor:pointer" @click="flag = flag === 'LATE' ? '' : 'LATE'"><div class="l">🔴 Projected late</div><div class="v">{{ counts.LATE }}</div><div class="s">finish after the due date</div></div>
         <div class="kpi warn" style="cursor:pointer" @click="flag = flag === 'TIGHT' ? '' : 'TIGHT'"><div class="l">🟠 Tight</div><div class="v">{{ counts.TIGHT }}</div><div class="s">less than 2 working days to spare</div></div>
         <div class="kpi ok" style="cursor:pointer" @click="flag = flag === 'OK' ? '' : 'OK'"><div class="l">🟢 On time</div><div class="v">{{ counts.OK }}</div><div class="s">{{ counts.NO_DUE }} without a due date</div></div>
+        <div class="kpi bad" style="cursor:pointer" @click="matF = matF === 'SHORT' ? '' : 'SHORT'"><div class="l">❌ Material short</div><div class="v">{{ counts.SHORT }}</div><div class="s">{{ counts.PO_LATE }} more with a PO due after the start</div></div>
         <div class="kpi" v-if="neck"><div class="l">Bottleneck</div><div style="font-weight:700;margin-top:4px">{{ neck.w?.name }}</div><div class="s">{{ qty(Math.round(neck.total * 10) / 10) }} working days of work queued</div></div>
       </div>
       <div class="card">
         <div class="hd"><h3>Sequence — URGENT first, then earliest due date</h3><span class="spacer" style="flex:1"></span>
-          <span class="small muted" v-if="flag">showing {{ FLAG(flag).t }} · <a href="javascript:void 0" @click="flag = ''">show all</a></span></div>
+          <span class="small muted" v-if="flag || matF">showing {{ flag ? FLAG(flag).t : '' }} {{ matF ? MAT(matF).t : '' }} · <a href="javascript:void 0" @click="flag = ''; matF = ''">show all</a></span></div>
         <div class="tbl-wrap"><table class="t">
-          <thead><tr><th class="n">#</th><th>Order</th><th>Project</th><th>Product</th><th class="n">Qty</th><th>Status</th><th>Due</th><th>Projected finish</th><th class="n">Spare days</th><th>Flag</th><th>Next stage</th></tr></thead>
+          <thead><tr><th class="n">#</th><th>Order</th><th>Project</th><th>Product</th><th class="n">Qty</th><th>Status</th><th>Due</th><th>Projected finish</th><th class="n">Spare days</th><th>Flag</th><th>Material</th><th>Next stage</th></tr></thead>
           <tbody>
-            <tr v-if="!rows.length"><td colspan="11" class="empty">No open production orders</td></tr>
+            <tr v-if="!rows.length"><td colspan="12" class="empty">No open production orders</td></tr>
             <template v-for="x in rows" :key="x.j.id">
               <tr style="cursor:pointer" @click="openId = openId === x.j.id ? null : x.j.id">
                 <td class="n">{{ x.n }}</td>
@@ -212,18 +322,25 @@ export const FactorySchedule = {
                 <td><b>{{ dt(x.r.date) || '—' }}</b><div class="small muted" v-if="x.r.date">working day {{ x.r.days }}</div></td>
                 <td class="n" :style="x.r.slack !== null && x.r.slack < 0 ? 'color:#b91c1c;font-weight:600' : ''">{{ x.r.slack === null ? '' : x.r.slack }}</td>
                 <td><span class="b" :class="FLAG(x.r.flag).c">{{ FLAG(x.r.flag).t }}</span></td>
+                <td><span class="b" :class="MAT(matOf(x.j).status).c">{{ MAT(matOf(x.j).status).t }}</span>
+                  <div class="small muted" v-if="matOf(x.j).status === 'SHORT'">{{ matOf(x.j).shortItems }} item(s)</div>
+                  <div class="small muted" v-else-if="['ON_PO', 'PO_LATE', 'PO_PENDING'].includes(matOf(x.j).status)">all by {{ matOf(x.j).matDate ? dt(matOf(x.j).matDate) : '?' }}</div></td>
                 <td class="small">{{ cur(x.r) }}<div class="muted" v-if="x.r.stages[0]">from {{ at(x.r.stages[0].start) }}</div></td>
               </tr>
-              <tr v-if="openId === x.j.id"><td></td><td colspan="10">
+              <tr v-if="openId === x.j.id"><td></td><td colspan="11">
                 <table class="t" style="margin:4px 0"><thead><tr><th>Stage</th><th>Work centre</th><th>Status</th><th class="n">Hours left</th><th>Starts</th><th>Ends</th><th class="n">Wait after (days)</th></tr></thead>
                   <tbody><tr v-for="s in x.r.stages" :key="s.id"><td>{{ s.seq }}</td><td>{{ wcName(s.wc) }}</td><td><Badge :v="s.status" /></td><td class="n">{{ qty(Math.round(s.h * 10) / 10) }}</td>
                     <td>{{ at(s.start) }}</td><td>{{ endAt(s.end) }}</td><td class="n">{{ qty(s.wait) }}</td></tr></tbody></table>
+                <table class="t" style="margin:4px 0" v-if="matOf(x.j).lines.length"><thead><tr><th>Material (needed by {{ dt(matOf(x.j).need) || '—' }})</th><th class="n">Required</th><th class="n">Issued</th><th class="n">From stock</th><th>From POs</th><th class="n">Short</th><th class="n">On requisition (no PO)</th></tr></thead>
+                  <tbody><tr v-for="l in matOf(x.j).lines" :key="l.item" :style="l.short ? 'background:#fef2f2' : ''"><td>{{ itemName(l.item) }} <span class="muted small">{{ uom(l.item) }}</span></td>
+                    <td class="n">{{ qty(l.req) }}</td><td class="n">{{ qty(l.issued) }}</td><td class="n">{{ qty(l.stock) }}</td><td class="small">{{ poText(l) }}</td>
+                    <td class="n" :style="l.short ? 'color:#b91c1c;font-weight:600' : ''">{{ l.short ? qty(Math.round(l.short * 1000) / 1000) : '' }}</td><td class="n">{{ l.short && l.pr ? qty(l.pr) : '' }}</td></tr></tbody></table>
               </td></tr>
             </template>
           </tbody>
         </table></div>
         <p class="small muted" style="margin:8px 0 0">Click a row for its stages. Finish dates are recalculated from what is still open each time this page opens — logged quantities and closed stages bring them forward,
-          new urgent or earlier-due orders push others back. Draft orders are not scheduled until they are sent to the Factory Manager.</p>
+          new urgent or earlier-due orders push others back. Draft orders are not scheduled until they are sent to the Factory Manager.<br>Material: each order's BOM materials not yet issued are shared out in this sequence — the project's own stock, then free stock in the stores, then approved POs by delivery date (POs awaiting approval shown separately); needed by the start of the order's first stage. Tick <b>Wait for material</b> to hold each order's start until its material is due.</p>
       </div>
       <div class="card" v-if="load.length">
         <div class="hd"><h3>Work centre load by week (% of capacity)</h3></div>
