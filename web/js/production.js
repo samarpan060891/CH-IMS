@@ -975,6 +975,9 @@ async function loadFgForProject(ctx, woId = null) {
   if (!lots.length) throw new Error(woId ? 'Nothing from this order is left in the FG store' : 'No stock reserved for this project at this location (MTS / free stock can be added line by line)');
   const grnLines = lots.filter(l => l.source_type === 'GRN').map(l => l.source_id);
   const boqOf = grnLines.length ? Object.fromEntries(must(await sb.from('grn_lines').select('id,boq_line_id').in('id', grnLines)).map(g => [g.id, g.boq_line_id])) : {};
+  // finished goods carry their production order's BOQ line, so the delivery counts as dispatched (billable) for that line
+  const woIds = [...new Set(lots.filter(l => l.source_type === 'PRODUCTION').map(l => l.source_id))];
+  const woBoqOf = woIds.length ? Object.fromEntries(must(await sb.from('production_orders').select('id,boq_line_id').in('id', woIds)).map(w => [w.id, w.boq_line_id])) : {};
   const key = l => l.source_type === 'PRODUCTION' ? 'W' + l.source_id : 'I' + l.item_id;
   // a BOQ row counts as holding a product's free / bought-out stock only once such stock was merged onto it
   const have = new Set(ctx.grids.lines.flatMap(l => [l.production_order_id ? 'W' + l.production_order_id : (l._boqQty === undefined || l._itemIn || (l.id && num(l.qty) > 0)) ? 'I' + l.item_id : null,
@@ -983,7 +986,7 @@ async function loadFgForProject(ctx, woId = null) {
   for (const l of lots) {
     if (have.has(key(l))) continue;
     const r = add[key(l)] ||= { item_id: l.item_id, production_order_id: l.source_type === 'PRODUCTION' ? l.source_id : null, qty: 0,
-                                boq_line_id: l.source_type === 'GRN' ? boqOf[l.source_id] || null : null, remarks: null };
+                                boq_line_id: (l.source_type === 'GRN' ? boqOf[l.source_id] : l.source_type === 'PRODUCTION' ? woBoqOf[l.source_id] : null) || null, remarks: null };
     r.qty += num(l.qty_on_hand);
   }
   ctx.grids.lines.push(...Object.values(add));
@@ -992,19 +995,20 @@ async function loadFgForProject(ctx, woId = null) {
   ctx.dirty = true;
   if (merged) toast(`${merged} stock line(s) added to their BOQ lines`, 'ok');
 }
-// stock lines (by production order / item) go onto their BOQ line when the BOQ is loaded: the order's BOQ line,
-// else the only BOQ line with that product. Lines that match nothing stay as they are.
+// once the BOQ is loaded there is one row per BOQ line: stock rows go onto their BOQ line (their own link, else the
+// production order's BOQ line, else the only BOQ line with that product). Rows that match nothing stay as they are.
 async function mergeIntoBoq(ctx) {
   const L = ctx.grids.lines, boqRows = L.filter(l => l._boqQty !== undefined);
   if (!boqRows.length) return 0;
-  const loose = L.filter(l => !l.boq_line_id);
+  const loose = L.filter(l => l._boqQty === undefined);
   if (!loose.length) return 0;
-  const wos = [...new Set(loose.map(l => l.production_order_id).filter(Boolean))];
+  const wos = [...new Set(loose.filter(l => !l.boq_line_id).map(l => l.production_order_id).filter(Boolean))];
   const woBoq = wos.length ? Object.fromEntries(must(await sb.from('production_orders').select('id,boq_line_id').in('id', wos)).map(w => [w.id, w.boq_line_id])) : {};
   let n = 0;
   for (const l of loose) {
-    let t = l.production_order_id && boqRows.find(b => b.boq_line_id === woBoq[l.production_order_id]);
-    if (!t) { const same = boqRows.filter(b => b.item_id === l.item_id); if (same.length === 1) t = same[0]; }
+    const bid = l.boq_line_id || woBoq[l.production_order_id];
+    let t = bid && boqRows.find(b => b.boq_line_id === bid);
+    if (!t && !bid) { const same = boqRows.filter(b => b.item_id === l.item_id); if (same.length === 1) t = same[0]; }
     if (!t) continue;
     t.qty = num(t.qty) + num(l.qty);
     // one production order → keep it on the line; stock from several orders → no single order
@@ -1031,9 +1035,17 @@ async function loadBoqIntoDispatch(ctx) {
   if (!ctx.doc.from_location_id) throw new Error('Choose the From location first');
   const boq = must(await sb.from('v_boq_progress').select('boq_line_id,line_no,item_id,qty,delivered_qty').eq('project_id', p).not('item_id', 'is', null).order('line_no'));
   if (!boq.length) throw new Error('This project has no BOQ lines with a product');
-  const have = new Set(ctx.grids.lines.map(l => l.boq_line_id).filter(Boolean));
+  // a row already on a BOQ line (e.g. stock loaded first) becomes that line's row; further rows for it are merged below
+  const have = new Set();
+  const byId = Object.fromEntries(boq.map(b => [b.boq_line_id, b]));
+  for (const l of ctx.grids.lines) {
+    const b = byId[l.boq_line_id];
+    if (b && !have.has(b.boq_line_id) && l._boqQty === undefined) { l._boqQty = num(b.qty); l._sent = num(b.delivered_qty); }
+    if (b) have.add(b.boq_line_id);
+  }
   const add = boq.filter(b => !have.has(b.boq_line_id)).map(b => ({ boq_line_id: b.boq_line_id, item_id: b.item_id, qty: 0, _boqQty: num(b.qty), _sent: num(b.delivered_qty) }));
   ctx.grids.lines.push(...add);
+  ctx.grids.lines.sort((a, b) => (byId[a.boq_line_id]?.line_no ?? 1e9) - (byId[b.boq_line_id]?.line_no ?? 1e9));
   const merged = await mergeIntoBoq(ctx);
   await fgAvail(ctx);
   ctx.dirty = true;
