@@ -291,12 +291,13 @@ const typeSign = t => ['ASSET', 'EXPENSE'].includes(t) ? 1 : -1;
 
 export const Books = {
   components: { DataTable, FieldInput, Badge },
-  props: { tab: String, arg: String },
+  // only: one tab on its own, without the accounting tabs (Dispatch & invoicing → Billable now)
+  props: { tab: String, arg: String, only: Boolean },
   data: () => ({ f: { from: yearStart(), to: today(), account_id: null, project_id: null, customer_id: null }, rows: [], loading: false, sel: {}, periods: [], syncing: false }),
   computed: {
     // the warehouse sees only project billing (what can be claimed); the books stay with Finance
-    TABS: () => hasRole('finance', 'factory_manager') ? TABS : TABS.filter(([k]) => k === 'billing'),
-    t() { return hasRole('finance', 'factory_manager') ? (this.tab || 'tb') : 'billing'; },
+    TABS() { return this.only ? [] : hasRole('finance', 'factory_manager') ? TABS : TABS.filter(([k]) => k === 'billing'); },
+    t() { return this.only ? this.tab : hasRole('finance', 'factory_manager') ? (this.tab || 'tb') : 'billing'; },
     isFin,
     acct() { return refRow('gl_accounts', this.f.account_id); },
     reconcilable() { const a = this.acct; return !!a && (a.is_bank || ['CASH', 'PDC_RECEIVED', 'PDC_ISSUED'].includes(a.system_key)); },
@@ -404,7 +405,7 @@ export const Books = {
     },
   },
   template: `<div>
-    <div class="tabs">
+    <div class="tabs" v-if="TABS.length > 1">
       <a v-for="[k, n] in TABS" href="javascript:void 0" :class="{on: t===k}" @click="nav(k)">{{ n }}</a>
     </div>
     <div class="card" v-if="t !== 'periods' && t !== 'aging' && t !== 'billing'">

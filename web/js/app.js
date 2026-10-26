@@ -82,7 +82,7 @@ const MENU = [
     { to: 'd/dsp', t: 'Deliveries & dispatch notes', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'site_supervisor'], badge: 'dsp' },
     { sep: 'Invoicing' },
     { to: 'r/sotoinv', t: 'Sales orders to invoice', roles: ['stores', 'finance', 'factory_manager', 'sales'], badge: 'soToInv' },
-    { to: 'books/billing', t: 'Billable now (projects)', roles: ['stores', 'finance', 'factory_manager'], badge: 'projBillable' },
+    { to: 'billable', t: 'Billable now (projects)', roles: ['stores', 'finance', 'factory_manager'], badge: 'projBillable' },
     { to: 'd/si', t: 'Sales invoices & progress claims', roles: ['stores', 'finance', 'factory_manager'], badge: 'siStores' },
     { to: 'r/boqprog', t: 'BOQ progress & billing', roles: ['stores', 'finance', 'factory_manager', 'production_incharge'] },
     { to: 'r/unitprog', t: 'Unit progress & billing', roles: ['stores', 'finance', 'factory_manager', 'production_incharge'] },
@@ -295,6 +295,8 @@ const App = {
       if (a === 'plan') return { comp: 'ProductionPlanner', props: { projectId: b || null, lineId: c || null }, title: 'Production orders' };
       if (a === 'mrp') return { comp: 'Mrp', props: { projectId: b || null }, title: 'Material planning (MRP)' };
       if (a === 'attendance') return { comp: 'AttendanceSheet', props: {}, title: 'Attendance & overtime' };
+      // project billing on its own for the warehouse (no accounting tabs)
+      if (a === 'billable') return { comp: 'Books', props: { tab: 'billing', arg: null, only: true }, title: 'Billable now (projects)' };
       if (a === 'books') return { comp: 'Books', props: { tab: b || 'tb', arg: c || null }, title: 'Books of account' };
       // site supervisors land on the phone-friendly site app
       if (a === 'site' || (a === 'dashboard' && !b && homeDashboard() === 'site')) return { comp: 'SiteApp', props: {}, title: 'Site' };
