@@ -506,11 +506,11 @@ export const Books = {
       <DataTable :columns="[{k:'project_code',label:'Project'},{k:'project_name',label:'Name'},{k:'customer_name',label:'Customer'},{k:'contract_value',label:'Contract',fmt:'money',sum:true},
         {k:'earned_value',label:'Earned (progress)',fmt:'money',sum:true},{k:'certified_to_date',label:'Certified',fmt:'money',sum:true},{k:'billed_pct',label:'Billed %',n:true},
         {k: r => num(r.earned_value) - num(r.certified_to_date), label:'Unbilled work',fmt:'money',sum:true},
-        {k:'billable_now',label:'Billable now (not yet claimed)',fmt:'money',sum:true},{k: r => r.has_draft ? 'Claim drafted' : '', label:'Claim', fmt:'badge'},
+        {k:'billable_now',label:'Billable now (not yet in a progress claim)',fmt:'money',sum:true},{k: r => r.has_draft ? 'Progress claim drafted' : '', label:'Progress claim', fmt:'badge'},
         {k:'advance_invoiced',label:'Advance',fmt:'money',sum:true},{k:'advance_recovered',label:'Recovered',fmt:'money',sum:true},{k:'retention_held',label:'Retention held',fmt:'money',sum:true},
         {k:'invoiced_total',label:'Invoiced',fmt:'money',sum:true},{k:'received',label:'Received',fmt:'money',sum:true},{k:'outstanding',label:'Outstanding',fmt:'money',sum:true}]"
         :rows="rows" :loading="loading" clickable @row="r => go('d/si/new/project/' + r.project_id)" filename="project-billing" />
-      <p class="small muted">Click a project to start its next claim. Unbilled work = site progress earned value not yet certified; billable now = earned value not yet in a submitted, certified or posted claim.</p>
+      <p class="small muted">Click a project to start its next progress claim. Unbilled work = site progress earned value not yet certified; billable now = earned value not yet in a submitted, certified or posted progress claim.</p>
     </div>
 
     <div class="card" v-if="t==='periods'">
