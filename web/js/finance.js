@@ -36,6 +36,26 @@ async function loadCustInvoices(customerId) {
 // SALES INVOICE / PROGRESS CLAIM
 // ======================================================================
 const lineAmt = r => Math.round((num(r.cum_qty) - num(r.prev_qty)) * num(r.rate) * 100) / 100;
+// progress claim: every BOQ line (or unit) of the project with contract qty, rate, previously certified and dispatched to date.
+// replace = load them as the lines (new claim / project changed); otherwise only show "dispatched to date" on the saved lines
+async function claimLines(ctx, replace) {
+  const d = ctx.doc;
+  if (!PROGRESS.includes(d.inv_type) || !d.project_id || (d.status && d.status !== 'DRAFT') || !canBill(d.inv_type)) return;
+  const rows = await rpc('si_claim_lines', { p_project: d.project_id, p_final: d.inv_type === 'FINAL', p_inv: d.id || null }) || [];
+  const key = r => r.boq_line_id || r.unit_id;
+  if (!replace) {
+    const m = Object.fromEntries(rows.map(r => [key(r), r]));
+    ctx.grids.lines.forEach(l => { const r = m[key(l)]; if (r) l._done = num(r.done_qty); });
+    return;
+  }
+  ctx.grids.lines.forEach(l => { if (l.id) (ctx.removed.lines ||= []).push(l.id); });
+  ctx.grids.lines = rows.map(r => ({ boq_line_id: r.boq_line_id, unit_id: r.unit_id, description: r.description, uom: r.uom, contract_qty: num(r.contract_qty),
+    rate: num(r.rate), prev_qty: num(r.prev_qty), cum_qty: num(r.cum_qty), _done: num(r.done_qty) }));
+  ctx.dirty = true;
+  if (!rows.length) toast('This project has no BOQ lines with a selling rate', 'warn');
+}
+// a new claim (or one whose lines are all blank) loads the project's lines on its own
+const blankLines = ctx => ctx.grids.lines.every(l => !l.description && !l.boq_line_id && !l.unit_id);
 export const si = {
   key: 'si', title: 'Sales Invoices & Progress Claims', single: 'Sales Invoice', table: 'sales_invoices', noField: 'inv_no', dateField: 'invoice_date',
   statuses: ['DRAFT', 'SUBMITTED', 'CERTIFIED', 'POSTED', 'CANCELLED'], createRoles: ['finance', 'factory_manager', 'stores'], refs: ['customers', 'projects', 'gl_accounts', 'profiles', 'uoms'],
@@ -52,14 +72,20 @@ export const si = {
       Object.assign(ctx.doc, { inv_type: 'CREDIT_NOTE', customer_id: o.customer_id, project_id: o.project_id, credit_of: o.id, vat_rate: o.vat_rate, customer_ref: o.inv_no });
       await loadCustInvoices(o.customer_id);
     }
+    if (ctx.doc.project_id) await claimLines(ctx, true);
   },
-  async afterLoad(ctx) { await loadCustInvoices(ctx.doc.customer_id); },
+  async afterLoad(ctx) {
+    await loadCustInvoices(ctx.doc.customer_id);
+    if (ctx.doc.id) await claimLines(ctx, blankLines(ctx));
+  },
   header: [
     { k: 'inv_type', label: 'Type', type: 'select', required: true, wide: true, ro: d => !!d.id,
       options: () => hasRole('finance', 'factory_manager') ? INV_TYPES : INV_TYPES.filter(o => STORES_TYPES.includes(o.v)),
-      onChange: d => { if (d.inv_type === 'RETENTION_RELEASE') d.vat_rate = 0; else if (!num(d.vat_rate)) d.vat_rate = 5; } },
+      onChange: async (d, v, ctx) => { if (d.inv_type === 'RETENTION_RELEASE') d.vat_rate = 0; else if (!num(d.vat_rate)) d.vat_rate = 5;
+        if (PROGRESS.includes(d.inv_type) && d.project_id) await claimLines(ctx, true); } },
     { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', wide: true, required: false, filter: (r, d) => d.inv_type === 'ADVANCE' ? ['PROJECT', 'SALES'].includes(r.project_type) : PROGRESS.concat('RETENTION_RELEASE').includes(d.inv_type) ? r.project_type === 'PROJECT' : d.inv_type === 'SALES' ? r.project_type === 'SALES' : true,
-      onChange: (d, v) => { const p = refRow('projects', v); if (p?.customer_id) d.customer_id = p.customer_id; } },
+      onChange: async (d, v, ctx) => { const p = refRow('projects', v); if (p?.customer_id) d.customer_id = p.customer_id;
+        if (PROGRESS.includes(d.inv_type) && v) await claimLines(ctx, true); } },
     { k: 'customer_id', label: 'Customer', type: 'ref', ref: 'customers', required: true, wide: true, onChange: (d, v) => loadCustInvoices(v) },
     { k: 'invoice_date', label: 'Invoice date', type: 'date', required: true },
     { k: 'period_to', label: 'Work done up to', type: 'date', show: d => PROGRESS.includes(d.inv_type) },
@@ -72,14 +98,15 @@ export const si = {
     { k: 'remarks', label: 'Remarks (printed)', type: 'textarea', full: true },
   ],
   headerNote: ctx => PROGRESS.includes(ctx.doc.inv_type)
-    ? 'Save, then <b>Fill from dispatches</b> (or use <b>Invoice this dispatch</b> on a posted delivery note): each BOQ line shows the quantity certified on earlier progress claims and the cumulative quantity dispatched to date (unit-wise billing: unit progress). ' +
+    ? 'Choosing the project lists every BOQ line (unit-wise billing: every unit) with the quantity certified on earlier progress claims and the quantity dispatched to date, which is the default cumulative. ' +
+      '<b>Refill from dispatches</b> reloads them after more deliveries (<b>Invoice this dispatch</b> on a posted delivery note does the same). ' +
       'Adjust the cumulative quantities, <b>submit</b> the progress claim to the client, then record the client\'s <b>payment certificate</b> (the certified quantities may be lower) and post the tax invoice. ' +
       'Advance recovery and retention are deducted at the project\'s % — VAT is charged on the certified value less advance recovery.'
     : ctx.doc.inv_type === 'ADVANCE' ? 'Save, then <b>Fill</b> to bill the advance % of the project / sales order value (less advance already billed). The advance is recovered from each progress claim or order invoice.'
     : ctx.doc.inv_type === 'RETENTION_RELEASE' ? 'Save, then <b>Fill</b> with the retention still held on this project (VAT was charged on the original progress claims). Reduce the amount for a partial release.'
     : ctx.doc.inv_type === 'SALES' ? 'Made from the sales order (Sales → order → Invoice delivered / done): goods delivered, services done and job-work hours not yet invoiced. The order\'s advance is recovered pro rata, and in full on the invoice that completes the order.'
     : 'Enter the lines; choose a revenue account per line or leave blank for the default sales account.',
-  grids: [{ key: 'lines', title: 'Lines', table: 'sales_invoice_lines', fk: 'invoice_id', order: 'line_no',
+  grids: [{ key: 'lines', title: 'Lines', table: 'sales_invoice_lines', fk: 'invoice_id', order: 'line_no', saveKeys: ['boq_line_id', 'unit_id'],
     newRow: ctx => ({ contract_qty: PROGRESS.includes(ctx.doc.inv_type) ? null : 1, prev_qty: 0, cum_qty: 1, rate: 0 }),
     fields: [
       { k: 'description', label: 'Description', width: '260px', required: true },
@@ -87,6 +114,7 @@ export const si = {
       { k: 'contract_qty', label: 'Contract qty', type: 'number', show: d => PROGRESS.includes(d.inv_type) },
       { k: 'rate', label: 'Rate', type: 'number', required: true },
       { k: 'prev_qty', label: 'Previous certified', type: 'ro', fmt: v => qty(v), show: d => PROGRESS.includes(d.inv_type) },
+      { k: '_done', label: 'Dispatched to date', type: 'ro', virtual: true, fmt: v => v === undefined ? '' : qty(v), show: d => PROGRESS.includes(d.inv_type) && d.status !== 'POSTED' },
       { k: 'cum_qty', label: 'Cumulative to date', type: 'number', required: true, show: d => PROGRESS.includes(d.inv_type) },
       { k: 'cum_qty', label: 'Qty', type: 'number', required: true, show: d => !PROGRESS.includes(d.inv_type) },
       { k: 'amount', label: 'This progress claim', type: 'ro', fmt: (v, r) => money(lineAmt(r)) },
@@ -129,7 +157,7 @@ export const si = {
   actions: ctx => {
     const s = ctx.doc.status, t = ctx.doc.inv_type, prog = PROGRESS.includes(t);
     return [
-      { label: '⇩ Fill from dispatches', cls: 'primary', show: s === 'DRAFT' && prog && canBill(t),
+      { label: '⇩ Refill from dispatches', cls: 'primary', show: s === 'DRAFT' && prog && canBill(t) && !!ctx.doc.id,
         confirm: 'Replace the lines with the quantities dispatched to date (unit progress for unit-wise billing)?', done: 'Lines filled', run: c => rpc('si_fill', { p_inv: c.doc.id }) },
       { label: '⇩ Fill', cls: 'primary', show: s === 'DRAFT' && ['ADVANCE', 'RETENTION_RELEASE'].includes(t) && hasRole('finance', 'factory_manager'), done: 'Filled', run: c => rpc('si_fill', { p_inv: c.doc.id }) },
       { label: '📤 Submit progress claim to client', show: s === 'DRAFT' && prog && canBill(t), confirm: 'Mark this progress claim as submitted to the client / consultant?', done: 'Progress claim submitted — Finance records the payment certificate',
