@@ -63,6 +63,7 @@ const MENU = [
     { to: 'mrp', t: 'Material planning (MRP)', roles: ['purchase', 'stores', 'production_incharge', 'factory_manager'] },
     { to: 'd/ins', t: 'Installation logs', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'finance', 'site_supervisor'] },
     { sep: 'Progress & billing' },
+    { to: 'billable', t: 'Billable now (projects)', roles: ['stores', 'finance', 'factory_manager'], badge: 'projBillable' },
     ...['boqprog', 'unitprog', 'snags', 'projprod'].map(rep),
   ] },
   { g: 'Purchase', icon: 'shopping-cart', items: [
