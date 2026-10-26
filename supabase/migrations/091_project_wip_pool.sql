@@ -228,7 +228,7 @@ begin
   select * into p from projects where id = h.project_id;
   if p.status <> 'OPEN' then raise exception 'Project / MTS order is not open'; end if;
   create temp table if not exists _need (item_id uuid, code text, req numeric, spare numeric) on commit drop;
-  delete from _need;
+  truncate _need;   -- (DELETE without WHERE is refused by the database's safe-update rule)
   insert into _need
     select m.item_id, i.code, round(sum(m.required_qty), 3),
            greatest(coalesce((select sum(qty_left) from wip_lots w where w.project_id = h.project_id and w.item_id = m.item_id), 0)
