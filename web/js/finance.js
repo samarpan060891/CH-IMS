@@ -8,14 +8,17 @@ import { ask, confirmBox, Badge, DataTable, FieldInput, uomPick } from './compon
 import { makePdf, partyOf } from './pdf.js';
 
 const isFin = () => hasRole('finance');
-// Stores / warehouse issue sales invoices and progress / final claims (dispatch & invoicing); Finance controls the rest
+// Stores / warehouse issue sales invoices and progress / final progress claims (dispatch & invoicing); Finance controls the rest
 const STORES_TYPES = ['SALES', 'PROGRESS', 'FINAL'];
 const canBill = t => hasRole('finance', 'factory_manager') || (hasRole('stores') && STORES_TYPES.includes(t));
 const statusIs = (ctx, ...s) => s.includes(ctx.doc.status);
 const PROGRESS = ['PROGRESS', 'FINAL'];
 const INV_TYPES = [{ v: 'PROGRESS', l: 'Progress claim (interim payment application)' }, { v: 'ADVANCE', l: 'Advance payment invoice' },
-  { v: 'FINAL', l: 'Final account / final claim' }, { v: 'RETENTION_RELEASE', l: 'Retention release' }, { v: 'GENERAL', l: 'General / product sale' }, { v: 'CREDIT_NOTE', l: 'Credit note' },
+  { v: 'FINAL', l: 'Final account / final progress claim' }, { v: 'RETENTION_RELEASE', l: 'Retention release' }, { v: 'GENERAL', l: 'General / product sale' }, { v: 'CREDIT_NOTE', l: 'Credit note' },
   { v: 'SALES', l: 'Sales order invoice (made from the order — advance recovered)' }];
+// short names for the invoice list
+const INV_SHORT = { PROGRESS: 'Progress claim', FINAL: 'Final progress claim', ADVANCE: 'Advance invoice', RETENTION_RELEASE: 'Retention release',
+  GENERAL: 'General invoice', CREDIT_NOTE: 'Credit note', SALES: 'Sales order invoice' };
 const yearStart = () => today().slice(0, 4) + '-01-01';
 const custOf = id => refRow('customers', id);
 
@@ -37,7 +40,7 @@ export const si = {
   key: 'si', title: 'Sales Invoices & Progress Claims', single: 'Sales Invoice', table: 'sales_invoices', noField: 'inv_no', dateField: 'invoice_date',
   statuses: ['DRAFT', 'SUBMITTED', 'CERTIFIED', 'POSTED', 'CANCELLED'], createRoles: ['finance', 'factory_manager', 'stores'], refs: ['customers', 'projects', 'gl_accounts', 'profiles', 'uoms'],
   canEdit: ctx => ctx.doc.status === 'DRAFT' && canBill(ctx.doc.inv_type || 'PROGRESS'),
-  list: { select: '*, customers(name), projects(code)', columns: [{ k: 'inv_type', label: 'Type', fmt: 'label' }, { k: r => r.customers?.name, label: 'Customer' },
+  list: { select: '*, customers(name), projects(code)', columns: [{ k: r => INV_SHORT[r.inv_type] || label(r.inv_type), label: 'Type' }, { k: r => r.customers?.name, label: 'Customer' },
     { k: r => r.projects?.code, label: 'Project' }, { k: r => r.claim_no ? '#' + r.claim_no : '', label: 'Progress claim' }, { k: 'cert_no', label: 'Certificate' },
     { k: r => r.certified_gross ?? r.gross_claimed, label: 'Gross', fmt: 'money', sum: true }, { k: 'vat_amount', label: 'VAT', fmt: 'money', sum: true },
     { k: r => r.inv_type === 'CREDIT_NOTE' ? -r.total_amount : r.total_amount, label: 'Total due', fmt: 'money', sum: true }, { k: 'due_date', label: 'Due', fmt: 'date' }] },
