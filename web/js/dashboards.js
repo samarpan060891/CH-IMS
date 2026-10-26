@@ -334,8 +334,8 @@ export const Dashboard = {
         add(must(await q('stock_releases', 'id,release_no,status,created_at').eq('status', 'PENDING_FINANCE')), 'Project stock release (final approval)', 'rel', 'release_no');
         add(must(await q('payroll_runs', 'id,run_no,status,created_at').eq('status', 'SUBMITTED')), 'Payroll to approve', 'payroll', 'run_no');
         add(must(await q('employee_advances', 'id,adv_no,status,created_at').eq('status', 'DRAFT')), 'Salary advance to approve', 'adv', 'adv_no');
-        add(must(await q('sales_invoices', 'id,inv_no,status,created_at').eq('status', 'SUBMITTED')), 'Claim awaiting payment certificate', 'si', 'inv_no');
-        add(must(await q('sales_invoices', 'id,inv_no,status,created_at').eq('status', 'CERTIFIED')), 'Certified claim to invoice', 'si', 'inv_no');
+        add(must(await q('sales_invoices', 'id,inv_no,status,created_at').eq('status', 'SUBMITTED')), 'Progress claim awaiting payment certificate', 'si', 'inv_no');
+        add(must(await q('sales_invoices', 'id,inv_no,status,created_at').eq('status', 'CERTIFIED')), 'Certified progress claim to invoice', 'si', 'inv_no');
         add(must(await q('expenses', 'id,exp_no,status,created_at').eq('status', 'APPROVED')), 'Expense to post', 'exp', 'exp_no');
         add(must(await q('expenses', 'id,exp_no,status,created_at').eq('status', 'POSTED').eq('exp_type', 'CLAIM')), 'Claim to reimburse', 'exp', 'exp_no');
         add(must(await q('customer_receipts', 'id,receipt_no,status,created_at').eq('status', 'POSTED').in('mode', ['CHEQUE', 'PDC']).lte('cheque_date', today())), 'Cheque due — deposit / clear', 'rcv', 'receipt_no');

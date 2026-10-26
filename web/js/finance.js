@@ -34,11 +34,11 @@ async function loadCustInvoices(customerId) {
 // ======================================================================
 const lineAmt = r => Math.round((num(r.cum_qty) - num(r.prev_qty)) * num(r.rate) * 100) / 100;
 export const si = {
-  key: 'si', title: 'Sales Invoices & Claims', single: 'Sales Invoice', table: 'sales_invoices', noField: 'inv_no', dateField: 'invoice_date',
+  key: 'si', title: 'Sales Invoices & Progress Claims', single: 'Sales Invoice', table: 'sales_invoices', noField: 'inv_no', dateField: 'invoice_date',
   statuses: ['DRAFT', 'SUBMITTED', 'CERTIFIED', 'POSTED', 'CANCELLED'], createRoles: ['finance', 'factory_manager', 'stores'], refs: ['customers', 'projects', 'gl_accounts', 'profiles', 'uoms'],
   canEdit: ctx => ctx.doc.status === 'DRAFT' && canBill(ctx.doc.inv_type || 'PROGRESS'),
   list: { select: '*, customers(name), projects(code)', columns: [{ k: 'inv_type', label: 'Type', fmt: 'label' }, { k: r => r.customers?.name, label: 'Customer' },
-    { k: r => r.projects?.code, label: 'Project' }, { k: r => r.claim_no ? '#' + r.claim_no : '', label: 'Claim' }, { k: 'cert_no', label: 'Certificate' },
+    { k: r => r.projects?.code, label: 'Project' }, { k: r => r.claim_no ? '#' + r.claim_no : '', label: 'Progress claim' }, { k: 'cert_no', label: 'Certificate' },
     { k: r => r.certified_gross ?? r.gross_claimed, label: 'Gross', fmt: 'money', sum: true }, { k: 'vat_amount', label: 'VAT', fmt: 'money', sum: true },
     { k: r => r.inv_type === 'CREDIT_NOTE' ? -r.total_amount : r.total_amount, label: 'Total due', fmt: 'money', sum: true }, { k: 'due_date', label: 'Due', fmt: 'date' }] },
   defaults: () => ({ inv_type: 'PROGRESS', invoice_date: today(), vat_rate: num(state.company?.default_vat_rate) || 5 }),
@@ -64,16 +64,16 @@ export const si = {
     { k: 'customer_ref', label: 'Client PO / contract / LPO ref' },
     { k: 'credit_of', label: 'Credit against invoice', type: 'ref', refOptions: () => fopts.custInvs, wide: true, show: d => d.inv_type === 'CREDIT_NOTE' },
     { k: 'vat_rate', label: 'VAT %', type: 'number', required: true },
-    { k: 'claim_no', label: 'Claim no.', type: 'ro', show: d => !!d.claim_no },
+    { k: 'claim_no', label: 'Progress claim no.', type: 'ro', show: d => !!d.claim_no },
     { k: 'cert_no', label: 'Payment certificate', type: 'ro', fmt: (v, d) => v ? `${v} · ${dt(d.cert_date)}` : '', show: d => !!d.cert_no },
     { k: 'remarks', label: 'Remarks (printed)', type: 'textarea', full: true },
   ],
   headerNote: ctx => PROGRESS.includes(ctx.doc.inv_type)
-    ? 'Save, then <b>Fill from site progress</b>: each BOQ line (or unit, for unit-wise billing) shows the quantity certified on earlier claims and the cumulative quantity done to date. ' +
-      'Adjust the cumulative quantities, <b>submit</b> the claim to the client, then record the client\'s <b>payment certificate</b> (the certified quantities may be lower) and post the tax invoice. ' +
+    ? 'Save, then <b>Fill from site progress</b>: each BOQ line (or unit, for unit-wise billing) shows the quantity certified on earlier progress claims and the cumulative quantity done to date. ' +
+      'Adjust the cumulative quantities, <b>submit</b> the progress claim to the client, then record the client\'s <b>payment certificate</b> (the certified quantities may be lower) and post the tax invoice. ' +
       'Advance recovery and retention are deducted at the project\'s % — VAT is charged on the certified value less advance recovery.'
     : ctx.doc.inv_type === 'ADVANCE' ? 'Save, then <b>Fill</b> to bill the advance % of the project / sales order value (less advance already billed). The advance is recovered from each progress claim or order invoice.'
-    : ctx.doc.inv_type === 'RETENTION_RELEASE' ? 'Save, then <b>Fill</b> with the retention still held on this project (VAT was charged on the original claims). Reduce the amount for a partial release.'
+    : ctx.doc.inv_type === 'RETENTION_RELEASE' ? 'Save, then <b>Fill</b> with the retention still held on this project (VAT was charged on the original progress claims). Reduce the amount for a partial release.'
     : ctx.doc.inv_type === 'SALES' ? 'Made from the sales order (Sales → order → Invoice delivered / done): goods delivered, services done and job-work hours not yet invoiced. The order\'s advance is recovered pro rata, and in full on the invoice that completes the order.'
     : 'Enter the lines; choose a revenue account per line or leave blank for the default sales account.',
   grids: [{ key: 'lines', title: 'Lines', table: 'sales_invoice_lines', fk: 'invoice_id', order: 'line_no',
@@ -86,7 +86,7 @@ export const si = {
       { k: 'prev_qty', label: 'Previous certified', type: 'ro', fmt: v => qty(v), show: d => PROGRESS.includes(d.inv_type) },
       { k: 'cum_qty', label: 'Cumulative to date', type: 'number', required: true, show: d => PROGRESS.includes(d.inv_type) },
       { k: 'cum_qty', label: 'Qty', type: 'number', required: true, show: d => !PROGRESS.includes(d.inv_type) },
-      { k: 'amount', label: 'This claim', type: 'ro', fmt: (v, r) => money(lineAmt(r)) },
+      { k: 'amount', label: 'This progress claim', type: 'ro', fmt: (v, r) => money(lineAmt(r)) },
       { k: 'cert_cum_qty', label: 'Certified cum.', type: 'ro', fmt: (v, r) => v === null || v === undefined ? '' : qty(v), show: d => ['CERTIFIED', 'POSTED'].includes(d.status) && PROGRESS.includes(d.inv_type) },
       { k: 'cert_amount', label: 'Certified', type: 'ro', fmt: v => money(v), show: d => ['CERTIFIED', 'POSTED'].includes(d.status) && PROGRESS.includes(d.inv_type) },
       { k: 'account_id', label: 'Revenue account', type: 'ref', ref: 'gl_accounts', width: '200px', filter: r => !r.is_group && r.acc_type === 'INCOME',
@@ -99,7 +99,7 @@ export const si = {
   },
   totals: ctx => {
     const d = ctx.doc, gross = ctx.grids.lines.reduce((s, r) => s + lineAmt(r), 0);
-    const out = [{ l: 'This claim (gross)', v: gross }];
+    const out = [{ l: 'This progress claim (gross)', v: gross }];
     if (d.certified_gross !== null && d.certified_gross !== undefined) out.push({ l: 'Certified', v: num(d.certified_gross) });
     if (num(d.advance_recovery)) out.push({ l: `Advance recovery (${num(d.advance_recovery_pct)}%)`, v: -num(d.advance_recovery) });
     out.push({ l: `VAT ${num(d.vat_rate)}%`, v: num(d.vat_amount) });
@@ -129,13 +129,13 @@ export const si = {
       { label: '⇩ Fill from site progress', cls: 'primary', show: s === 'DRAFT' && prog && canBill(t),
         confirm: 'Replace the lines with the current BOQ / unit progress?', done: 'Lines filled', run: c => rpc('si_fill', { p_inv: c.doc.id }) },
       { label: '⇩ Fill', cls: 'primary', show: s === 'DRAFT' && ['ADVANCE', 'RETENTION_RELEASE'].includes(t) && hasRole('finance', 'factory_manager'), done: 'Filled', run: c => rpc('si_fill', { p_inv: c.doc.id }) },
-      { label: '📤 Submit claim to client', show: s === 'DRAFT' && prog && canBill(t), confirm: 'Mark this claim as submitted to the client / consultant?', done: 'Claim submitted — Finance records the payment certificate',
+      { label: '📤 Submit progress claim to client', show: s === 'DRAFT' && prog && canBill(t), confirm: 'Mark this progress claim as submitted to the client / consultant?', done: 'Progress claim submitted — Finance records the payment certificate',
         run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'SUBMIT' }) },
       { label: '📜 Record payment certificate', cls: 'ok', show: s === 'SUBMITTED' && isFin(), done: 'Certificate recorded', run: c => certify(c) },
       { label: '✔ Post tax invoice', cls: 'ok', show: (isFin() || (hasRole('stores') && STORES_TYPES.includes(t))) && ((s === 'CERTIFIED') || (!prog && ['DRAFT', 'SUBMITTED'].includes(s))),
         confirm: 'Post this invoice? It goes to receivables, revenue and the VAT return and can then only be corrected by a credit note.', done: 'Invoice posted',
         run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'POST' }) },
-      { label: '↩ Back to draft', show: ['SUBMITTED', 'CERTIFIED'].includes(s) && isFin(), confirm: 'Return this claim to draft (the certificate is cleared)?', run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'RETURN' }) },
+      { label: '↩ Back to draft', show: ['SUBMITTED', 'CERTIFIED'].includes(s) && isFin(), confirm: 'Return this progress claim to draft (the certificate is cleared)?', run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'RETURN' }) },
       { label: '💰 Receive payment', show: s === 'POSTED' && t !== 'CREDIT_NOTE' && isFin(), reload: false, run: c => go(`d/rcv/new/customer/${c.doc.customer_id}`) },
       { label: '➖ Credit note', show: s === 'POSTED' && t !== 'CREDIT_NOTE' && isFin(), reload: false, run: c => go(`d/si/new/credit/${c.doc.id}`) },
       { label: '🖨 ' + (s === 'POSTED' ? (t === 'CREDIT_NOTE' ? 'Tax credit note' : 'Tax invoice') : prog ? 'Payment application' : 'Proforma'), reload: false, run: c => siPdf(c) },
@@ -162,7 +162,7 @@ function siPdf(c) {
   const title = posted ? (d.inv_type === 'CREDIT_NOTE' ? 'Tax Credit Note' : 'Tax Invoice') : prog ? 'Interim Payment Application' : 'Proforma Invoice';
   const meta = [['Our TRN', state.company?.trn || ''], ['Project', p ? `${p.code} — ${p.name}` : ''],
     ['Type', label(d.inv_type)], ['Client ref', d.customer_ref || ''], ['Due date', dt(d.due_date)]];
-  if (prog) meta.push(['Claim no.', d.claim_no || '-'], ['Work up to', dt(d.period_to) || '-'], ['Payment certificate', d.cert_no ? `${d.cert_no} (${dt(d.cert_date)})` : 'pending']);
+  if (prog) meta.push(['Progress claim no.', d.claim_no || '-'], ['Work up to', dt(d.period_to) || '-'], ['Payment certificate', d.cert_no ? `${d.cert_no} (${dt(d.cert_date)})` : 'pending']);
   const cols = prog
     ? [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Description', k: 'description', strong: true }, { h: 'UoM', k: 'uom' }, { h: 'Contract', k: r => qty(r.contract_qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' },
        { h: 'Previous', k: r => qty(r.prev_qty), align: 'right' }, { h: 'Cumulative', k: r => qty(cert ? (r.cert_cum_qty ?? r.cum_qty) : r.cum_qty), align: 'right' },
@@ -486,7 +486,7 @@ export const Books = {
     <div class="card" v-if="t==='vat'">
       <DataTable :columns="[{k:'box',label:'Box'},{k:'description',label:'Description'},{k:'amount',label:'Amount AED',fmt:'money'},{k:'vat',label:'VAT AED',fmt:'money'},{k:'adjustment',label:'Adjustment',fmt:'money'}]"
         :rows="rows" :loading="loading" :searchable="false" />
-      <p class="small muted">Box 1 is reported in the company's emirate (Settings). Retention releases carry no VAT (taxed on the original claims). Box 3 / 10: services and goods from overseas suppliers
+      <p class="small muted">Box 1 is reported in the company's emirate (Settings). Retention releases carry no VAT (taxed on the original progress claims). Box 3 / 10: services and goods from overseas suppliers
         invoiced without VAT (reverse charge). Imports cleared through customs (box 6) are entered from the customs declaration. Check against the ledger: VAT payable (2200) and VAT recoverable (1450).</p>
     </div>
 

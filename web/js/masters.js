@@ -228,8 +228,8 @@ export const MASTERS = {
       { k: 'status', label: 'Status', type: 'select', required: true, options: ['OPEN', 'ON_HOLD', 'CLOSED'] }] },
       { title: 'Contract billing terms', cost: true, fields: [
         { k: 'advance_pct', label: 'Advance payment % of contract', type: 'number', show: d => d.project_type === 'PROJECT' },
-        { k: 'advance_recovery_pct', label: 'Advance recovery % per claim (blank = same as advance %)', type: 'number', wide: true, show: d => d.project_type === 'PROJECT' },
-        { k: 'retention_pct', label: 'Retention % per claim', type: 'number', show: d => d.project_type === 'PROJECT' },
+        { k: 'advance_recovery_pct', label: 'Advance recovery % per progress claim (blank = same as advance %)', type: 'number', wide: true, show: d => d.project_type === 'PROJECT' },
+        { k: 'retention_pct', label: 'Retention % per progress claim', type: 'number', show: d => d.project_type === 'PROJECT' },
         { k: 'payment_term_id', label: 'Payment terms (invoice due date)', type: 'ref', ref: 'payment_terms' }] }],
     validate: d => { d.advance_pct = num(d.advance_pct); d.retention_pct = num(d.retention_pct); },
     afterSave: () => loadRef('projects', true),

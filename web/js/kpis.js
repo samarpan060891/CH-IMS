@@ -108,7 +108,7 @@ export const METRICS = {
     run: c => total(proj(per(sb.from('expense_lines').select('amount,project_id,expenses!inner(exp_date,status)').in('expenses.status', ['POSTED', 'REIMBURSED']), 'expenses.exp_date', c), c), 'amount') },
   petty_cash:    { l: 'Petty cash in hand (all floats)', g: 'Finance', dash: ['finance', 'management'], fmt: 'money', cost: true,
     run: () => total(sb.from('v_petty_floats').select('balance'), 'balance') },
-  claims_pending:{ l: 'Claims awaiting payment certificate', g: 'Finance', dash: ['finance', 'management'], fmt: 'count', project: true, lowerBetter: true,
+  claims_pending:{ l: 'Progress claims awaiting payment certificate', g: 'Finance', dash: ['finance', 'management'], fmt: 'count', project: true, lowerBetter: true,
     run: c => cnt(proj(head('sales_invoices').eq('status', 'SUBMITTED'), c)) },
   // HR
   headcount:     { l: 'Active employees', g: 'HR', dash: ['hr', 'management'], fmt: 'count',

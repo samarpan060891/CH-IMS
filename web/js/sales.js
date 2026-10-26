@@ -20,8 +20,8 @@ const itemFits = (r, row) => r.is_active && (row.line_type === 'MADE' ? r.item_c
 // project quotations / orders: become a customer project with its BOQ and progress billing
 const isProj = d => d.order_type === 'PROJECT' || d.so_type === 'PROJECT';
 const projectTerms = (show = isProj) => [
-  { k: 'retention_pct', label: 'Retention per claim', type: 'select', options: PCTS.filter(p => p.v <= 20), show },
-  { k: 'advance_recovery_pct', label: 'Advance recovery per claim (blank = advance %)', type: 'select', options: PCTS, show },
+  { k: 'retention_pct', label: 'Retention per progress claim', type: 'select', options: PCTS.filter(p => p.v <= 20), show },
+  { k: 'advance_recovery_pct', label: 'Advance recovery per progress claim (blank = advance %)', type: 'select', options: PCTS, show },
   { k: 'billing_basis', label: 'Billing basis', type: 'select', required: true, show, options: [{ v: 'BOQ_ITEM', l: 'Per BOQ item (installed qty × rate)' }, { v: 'UNIT', l: 'Per unit (unit price × progress)' }] },
 ];
 // the line grid shared by quotations and orders

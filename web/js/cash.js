@@ -4,7 +4,7 @@
 import { sb, state, must, run, rpc, hasRole, go, today, money, dt, num, downloadCSV, toast } from './lib.js';
 import { ask, confirmBox } from './components.js';
 
-const IN_CATS = ['Customer invoices', 'Cheques & PDCs in hand', 'Advances due (orders & projects)', 'Sales orders not yet invoiced', 'Project claims (work done, not billed)', 'Other receipts'];
+const IN_CATS = ['Customer invoices', 'Cheques & PDCs in hand', 'Advances due (orders & projects)', 'Sales orders not yet invoiced', 'Project progress claims (work done, not billed)', 'Other receipts'];
 const OUT_CATS = ['Supplier invoices', 'PDCs issued', 'Purchase orders — advances', 'Purchase orders — on delivery', 'Payroll', 'Recurring bills', 'VAT', 'Other payments'];
 const ITEM_CATS = [{ v: 'LOAN', l: 'Loan / finance' }, { v: 'CAPEX', l: 'Capital purchase' }, { v: 'OWNER', l: 'Owner / partner' }, { v: 'TAX', l: 'Tax / government' }, { v: 'OTHER', l: 'Other' }];
 // where a forecast line opens
