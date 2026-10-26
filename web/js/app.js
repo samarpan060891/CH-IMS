@@ -81,6 +81,7 @@ const MENU = [
     { to: 'r/fg', t: 'Finished goods stock', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'sales'] },
     { to: 'd/dsp', t: 'Deliveries & dispatch notes', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'site_supervisor'], badge: 'dsp' },
     { sep: 'Invoicing' },
+    { to: 'r/sotoinv', t: 'Sales orders to invoice', roles: ['stores', 'finance', 'factory_manager', 'sales'], badge: 'soToInv' },
     { to: 'books/billing', t: 'Billable now (projects)', roles: ['stores', 'finance', 'factory_manager'] },
     { to: 'd/si', t: 'Sales invoices & progress claims', roles: ['stores', 'finance', 'factory_manager'], badge: 'siStores' },
     { to: 'r/boqprog', t: 'BOQ progress & billing', roles: ['stores', 'finance', 'factory_manager', 'production_incharge'] },

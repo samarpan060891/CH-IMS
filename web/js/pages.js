@@ -98,6 +98,12 @@ export const REPORTS = {
     { k: 'sale_value', label: 'Selling value', fmt: 'money', sum: true }, { k: 'margin', label: 'Margin', fmt: 'money', sum: true },
     { k: r => num(r.sale_value) ? Math.round(num(r.margin) / num(r.sale_value) * 1000) / 10 : null, label: 'Margin %', n: true },
     { k: 'plan_labour_hours', label: 'Plan man-h', n: true }, { k: 'act_labour_hours', label: 'Actual man-h', n: true }] },
+  // customer sales orders delivered (services done / job-work hours logged) but not invoiced — click to open the order
+  sotoinv: { title: 'Sales orders to invoice (delivered, not invoiced)', src: 'v_so_to_invoice', order: 'so_date', roles: ['stores', 'finance', 'factory_manager', 'sales'],
+    link: r => 'd/so/' + r.so_id, columns: [
+    { k: 'so_no', label: 'Order' }, { k: 'customer_name', label: 'Customer' }, { k: 'so_date', label: 'Order date', fmt: 'date' }, { k: 'last_delivery', label: 'Last delivery', fmt: 'date' },
+    { k: 'lines_to_invoice', label: 'Lines to invoice', n: true }, { k: 'value_to_invoice', label: 'Value to invoice AED', fmt: 'money', sum: true },
+    { k: r => r.has_draft ? 'Invoice drafted' : 'Not invoiced', label: 'Invoice', fmt: 'badge' }, { k: 'status', label: 'Order', fmt: 'badge' }] },
   // each project's common WIP: material issued to its production orders, not yet consumed by FG receipts or returned —
   // not part of store stock
   wip: { title: 'WIP — material on the shop floor (by project)', src: 'v_wip_stock', order: 'project_code', columns: [
@@ -244,6 +250,8 @@ export const Reports = {
   async mounted() { await loadRefs(['items', 'locations', 'vendors']); this.load(); },
   methods: {
     pick(k) { go('r/' + k); },
+    // reports with a row link open the document behind the row
+    openRow(r) { if (this.rep?.link) go(this.rep.link(r)); },
     async load() {
       this.rows = []; this.cls = '';
       if (this.rkey === 'ledger' || !this.rep) return;
@@ -299,7 +307,7 @@ export const Reports = {
           <select v-if="classes.length > 1" v-model="cls" style="max-width:200px"><option value="">All classes</option><option v-for="c in classes" :value="c">{{ c }}</option></select>
           <button class="btn sm" @click="load">↻ Refresh</button>
         </div>
-        <DataTable :columns="rep.columns" :rows="shown" :loading="loading" :filename="rkey" />
+        <DataTable :columns="rep.columns" :rows="shown" :loading="loading" :filename="rkey" :clickable="!!rep.link" @row="openRow" />
       </div>
     </template>
   </div>`,
