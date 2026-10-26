@@ -310,7 +310,7 @@ export const so = {
       { label: '⏱ Log job-work hours', show: live && has('JOB_WORK') && hasRole('production_incharge', 'factory_manager', 'shop_floor'), done: 'Hours logged', run: logJobWork },
       { label: '✔ Services done', show: live && has('SERVICE') && hasRole('sales', 'factory_manager', 'finance', 'production_incharge', 'site_supervisor'), done: 'Saved', run: servicesDone },
       { label: '💰 Advance invoice', show: live && cust && num(d.advance_pct) > 0 && hasRole('finance', 'factory_manager'), reload: false, run: advanceInvoice },
-      { label: '🧾 Invoice delivered / done', show: ['CONFIRMED', 'CLOSED'].includes(s) && cust && hasRole('finance', 'factory_manager'), reload: false,
+      { label: '🧾 Invoice delivered / done', show: ['CONFIRMED', 'CLOSED'].includes(s) && cust && hasRole('finance', 'factory_manager', 'stores'), reload: false,
         run: async c => { const id = await rpc('so_invoice', { p_so: c.doc.id }); toast('Invoice drafted — check and post it', 'ok'); go('d/si/' + id); } },
       { label: '🖨 ' + (cust ? 'Order confirmation' : 'Internal order'), reload: false, run: c => salesPdf(c, 'so') },
       { label: 'Close order', show: live && isSales(), confirm: 'Close this order? No more material, deliveries or invoices against it.', done: 'Closed', run: c => rpc('so_action', { p_so: c.doc.id, p_action: 'CLOSE' }) },

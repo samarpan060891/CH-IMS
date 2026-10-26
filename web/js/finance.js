@@ -8,6 +8,9 @@ import { ask, confirmBox, Badge, DataTable, FieldInput, uomPick } from './compon
 import { makePdf, partyOf } from './pdf.js';
 
 const isFin = () => hasRole('finance');
+// Stores / warehouse issue sales invoices and progress / final claims (dispatch & invoicing); Finance controls the rest
+const STORES_TYPES = ['SALES', 'PROGRESS', 'FINAL'];
+const canBill = t => hasRole('finance', 'factory_manager') || (hasRole('stores') && STORES_TYPES.includes(t));
 const statusIs = (ctx, ...s) => s.includes(ctx.doc.status);
 const PROGRESS = ['PROGRESS', 'FINAL'];
 const INV_TYPES = [{ v: 'PROGRESS', l: 'Progress claim (interim payment application)' }, { v: 'ADVANCE', l: 'Advance payment invoice' },
@@ -32,7 +35,8 @@ async function loadCustInvoices(customerId) {
 const lineAmt = r => Math.round((num(r.cum_qty) - num(r.prev_qty)) * num(r.rate) * 100) / 100;
 export const si = {
   key: 'si', title: 'Sales Invoices & Claims', single: 'Sales Invoice', table: 'sales_invoices', noField: 'inv_no', dateField: 'invoice_date',
-  statuses: ['DRAFT', 'SUBMITTED', 'CERTIFIED', 'POSTED', 'CANCELLED'], createRoles: ['finance', 'factory_manager'], refs: ['customers', 'projects', 'gl_accounts', 'profiles', 'uoms'],
+  statuses: ['DRAFT', 'SUBMITTED', 'CERTIFIED', 'POSTED', 'CANCELLED'], createRoles: ['finance', 'factory_manager', 'stores'], refs: ['customers', 'projects', 'gl_accounts', 'profiles', 'uoms'],
+  canEdit: ctx => ctx.doc.status === 'DRAFT' && canBill(ctx.doc.inv_type || 'PROGRESS'),
   list: { select: '*, customers(name), projects(code)', columns: [{ k: 'inv_type', label: 'Type', fmt: 'label' }, { k: r => r.customers?.name, label: 'Customer' },
     { k: r => r.projects?.code, label: 'Project' }, { k: r => r.claim_no ? '#' + r.claim_no : '', label: 'Claim' }, { k: 'cert_no', label: 'Certificate' },
     { k: r => r.certified_gross ?? r.gross_claimed, label: 'Gross', fmt: 'money', sum: true }, { k: 'vat_amount', label: 'VAT', fmt: 'money', sum: true },
@@ -48,7 +52,8 @@ export const si = {
   },
   async afterLoad(ctx) { await loadCustInvoices(ctx.doc.customer_id); },
   header: [
-    { k: 'inv_type', label: 'Type', type: 'select', required: true, options: INV_TYPES, wide: true, ro: d => !!d.id,
+    { k: 'inv_type', label: 'Type', type: 'select', required: true, wide: true, ro: d => !!d.id,
+      options: () => hasRole('finance', 'factory_manager') ? INV_TYPES : INV_TYPES.filter(o => STORES_TYPES.includes(o.v)),
       onChange: d => { if (d.inv_type === 'RETENTION_RELEASE') d.vat_rate = 0; else if (!num(d.vat_rate)) d.vat_rate = 5; } },
     { k: 'project_id', label: 'Project', type: 'ref', ref: 'projects', wide: true, required: false, filter: (r, d) => d.inv_type === 'ADVANCE' ? ['PROJECT', 'SALES'].includes(r.project_type) : PROGRESS.concat('RETENTION_RELEASE').includes(d.inv_type) ? r.project_type === 'PROJECT' : d.inv_type === 'SALES' ? r.project_type === 'SALES' : true,
       onChange: (d, v) => { const p = refRow('projects', v); if (p?.customer_id) d.customer_id = p.customer_id; } },
@@ -121,20 +126,21 @@ export const si = {
   actions: ctx => {
     const s = ctx.doc.status, t = ctx.doc.inv_type, prog = PROGRESS.includes(t);
     return [
-      { label: '⇩ Fill from site progress', cls: 'primary', show: s === 'DRAFT' && prog && hasRole('finance', 'factory_manager'),
+      { label: '⇩ Fill from site progress', cls: 'primary', show: s === 'DRAFT' && prog && canBill(t),
         confirm: 'Replace the lines with the current BOQ / unit progress?', done: 'Lines filled', run: c => rpc('si_fill', { p_inv: c.doc.id }) },
       { label: '⇩ Fill', cls: 'primary', show: s === 'DRAFT' && ['ADVANCE', 'RETENTION_RELEASE'].includes(t) && hasRole('finance', 'factory_manager'), done: 'Filled', run: c => rpc('si_fill', { p_inv: c.doc.id }) },
-      { label: '📤 Submit claim to client', show: s === 'DRAFT' && prog && hasRole('finance', 'factory_manager'), confirm: 'Mark this claim as submitted to the client / consultant?', done: 'Claim submitted',
+      { label: '📤 Submit claim to client', show: s === 'DRAFT' && prog && canBill(t), confirm: 'Mark this claim as submitted to the client / consultant?', done: 'Claim submitted — Finance records the payment certificate',
         run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'SUBMIT' }) },
       { label: '📜 Record payment certificate', cls: 'ok', show: s === 'SUBMITTED' && isFin(), done: 'Certificate recorded', run: c => certify(c) },
-      { label: '✔ Post tax invoice', cls: 'ok', show: isFin() && ((s === 'CERTIFIED') || (!prog && ['DRAFT', 'SUBMITTED'].includes(s))),
+      { label: '✔ Post tax invoice', cls: 'ok', show: (isFin() || (hasRole('stores') && STORES_TYPES.includes(t))) && ((s === 'CERTIFIED') || (!prog && ['DRAFT', 'SUBMITTED'].includes(s))),
         confirm: 'Post this invoice? It goes to receivables, revenue and the VAT return and can then only be corrected by a credit note.', done: 'Invoice posted',
         run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'POST' }) },
       { label: '↩ Back to draft', show: ['SUBMITTED', 'CERTIFIED'].includes(s) && isFin(), confirm: 'Return this claim to draft (the certificate is cleared)?', run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'RETURN' }) },
       { label: '💰 Receive payment', show: s === 'POSTED' && t !== 'CREDIT_NOTE' && isFin(), reload: false, run: c => go(`d/rcv/new/customer/${c.doc.customer_id}`) },
       { label: '➖ Credit note', show: s === 'POSTED' && t !== 'CREDIT_NOTE' && isFin(), reload: false, run: c => go(`d/si/new/credit/${c.doc.id}`) },
       { label: '🖨 ' + (s === 'POSTED' ? (t === 'CREDIT_NOTE' ? 'Tax credit note' : 'Tax invoice') : prog ? 'Payment application' : 'Proforma'), reload: false, run: c => siPdf(c) },
-      { label: 'Cancel', show: ['DRAFT', 'SUBMITTED', 'CERTIFIED'].includes(s) && isFin(), confirm: 'Cancel this invoice?', run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'CANCEL' }) },
+      { label: 'Cancel', show: (['DRAFT', 'SUBMITTED', 'CERTIFIED'].includes(s) && isFin()) || (['DRAFT', 'SUBMITTED'].includes(s) && hasRole('stores') && STORES_TYPES.includes(t)),
+        confirm: 'Cancel this invoice?', run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'CANCEL' }) },
     ];
   },
 };
@@ -285,8 +291,9 @@ export const Books = {
   props: { tab: String, arg: String },
   data: () => ({ f: { from: yearStart(), to: today(), account_id: null, project_id: null, customer_id: null }, rows: [], loading: false, sel: {}, periods: [], syncing: false }),
   computed: {
-    TABS: () => TABS,
-    t() { return this.tab || 'tb'; },
+    // the warehouse sees only project billing (what can be claimed); the books stay with Finance
+    TABS: () => hasRole('finance', 'factory_manager') ? TABS : TABS.filter(([k]) => k === 'billing'),
+    t() { return hasRole('finance', 'factory_manager') ? (this.tab || 'tb') : 'billing'; },
     isFin,
     acct() { return refRow('gl_accounts', this.f.account_id); },
     reconcilable() { const a = this.acct; return !!a && (a.is_bank || ['CASH', 'PDC_RECEIVED', 'PDC_ISSUED'].includes(a.system_key)); },

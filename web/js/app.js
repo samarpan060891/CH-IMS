@@ -62,7 +62,6 @@ const MENU = [
     { to: 'd/vo', t: 'Variation orders', roles: ['factory_manager', 'production_incharge', 'finance'], badge: 'vo' },
     { to: 'mrp', t: 'Material planning (MRP)', roles: ['purchase', 'stores', 'production_incharge', 'factory_manager'] },
     { to: 'd/ins', t: 'Installation logs', roles: ['shop_floor', 'production_incharge', 'factory_manager', 'finance', 'site_supervisor'] },
-    { to: 'd/dsp', t: 'Deliveries to site', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'site_supervisor'], badge: 'dsp' },
     { sep: 'Progress & billing' },
     ...['boqprog', 'unitprog', 'snags', 'projprod'].map(rep),
   ] },
@@ -76,6 +75,16 @@ const MENU = [
     { to: 'm/vendors', t: 'Vendors', roles: ['purchase', 'finance', 'factory_manager'] },
     { to: 'import/vendors', t: '⬆ Vendors upload', roles: ['purchase', 'finance'] },
     { to: 'm/item_vendors', t: 'Vendor price list', roles: ['purchase', 'finance', 'factory_manager'] },
+  ] },
+  // the warehouse dispatches finished goods and issues the invoices / progress claims; Finance certifies and collects
+  { g: 'Dispatch & invoicing', icon: 'truck-delivery', items: [
+    { to: 'r/fg', t: 'Finished goods stock', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'sales'] },
+    { to: 'd/dsp', t: 'Deliveries & dispatch notes', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'site_supervisor'], badge: 'dsp' },
+    { sep: 'Invoicing' },
+    { to: 'books/billing', t: 'Billable now (projects)', roles: ['stores', 'finance', 'factory_manager'] },
+    { to: 'd/si', t: 'Sales invoices & progress claims', roles: ['stores', 'finance', 'factory_manager'] },
+    { to: 'r/boqprog', t: 'BOQ progress & billing', roles: ['stores', 'finance', 'factory_manager', 'production_incharge'] },
+    { to: 'r/unitprog', t: 'Unit progress & billing', roles: ['stores', 'finance', 'factory_manager', 'production_incharge'] },
   ] },
   { g: 'Inventory', icon: 'building-warehouse', items: [
     { to: 'd/grn', t: 'Goods receipts (GRN)', roles: ['stores', 'purchase', 'finance', 'factory_manager', 'site_supervisor'] },
@@ -154,7 +163,7 @@ const MENU = [
     { to: 'r/budget', t: 'Budget vs actual', roles: ['finance', 'factory_manager'] },
     { to: 'r/overhead', t: 'Factory overheads vs absorbed', roles: ['finance', 'factory_manager'] },
     { sep: 'Receivables' },
-    { to: 'd/si', t: 'Sales invoices & claims', roles: ['finance', 'factory_manager'], badge: 'siCert' },
+    { to: 'd/si', t: 'Invoices — certificates & posting', roles: ['finance', 'factory_manager'], badge: 'siCert' },
     { to: 'd/rcv', t: 'Customer receipts', roles: ['finance', 'factory_manager'], badge: 'pdc' },
     { to: 'books/billing', t: 'Project billing', roles: ['finance', 'factory_manager'] },
     { to: 'books/aging', t: 'Receivables aging', roles: ['finance', 'factory_manager'] },
