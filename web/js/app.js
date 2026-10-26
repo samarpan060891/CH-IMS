@@ -87,6 +87,8 @@ const MENU = [
     { to: 'd/si', t: 'Sales invoices & progress claims', roles: ['stores', 'finance', 'factory_manager'], badge: 'siStores' },
     { to: 'r/boqprog', t: 'BOQ progress & billing', roles: ['stores', 'finance', 'factory_manager', 'production_incharge'] },
     { to: 'r/unitprog', t: 'Unit progress & billing', roles: ['stores', 'finance', 'factory_manager', 'production_incharge'] },
+    // open snags hold back handover / final progress claims and may need replacement items dispatched
+    rep('snags'),
   ] },
   { g: 'Inventory', icon: 'building-warehouse', items: [
     { to: 'd/grn', t: 'Goods receipts (GRN)', roles: ['stores', 'purchase', 'finance', 'factory_manager', 'site_supervisor'] },
