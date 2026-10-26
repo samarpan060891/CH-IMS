@@ -72,7 +72,7 @@ export const si = {
     { k: 'remarks', label: 'Remarks (printed)', type: 'textarea', full: true },
   ],
   headerNote: ctx => PROGRESS.includes(ctx.doc.inv_type)
-    ? 'Save, then <b>Fill from site progress</b>: each BOQ line (or unit, for unit-wise billing) shows the quantity certified on earlier progress claims and the cumulative quantity done to date. ' +
+    ? 'Save, then <b>Fill from dispatches</b> (or use <b>Invoice this dispatch</b> on a posted delivery note): each BOQ line shows the quantity certified on earlier progress claims and the cumulative quantity dispatched to date (unit-wise billing: unit progress). ' +
       'Adjust the cumulative quantities, <b>submit</b> the progress claim to the client, then record the client\'s <b>payment certificate</b> (the certified quantities may be lower) and post the tax invoice. ' +
       'Advance recovery and retention are deducted at the project\'s % — VAT is charged on the certified value less advance recovery.'
     : ctx.doc.inv_type === 'ADVANCE' ? 'Save, then <b>Fill</b> to bill the advance % of the project / sales order value (less advance already billed). The advance is recovered from each progress claim or order invoice.'
@@ -120,7 +120,7 @@ export const si = {
     if (ctx.doc.project_id) {
       const p = must(await sb.from('v_project_billing').select('*').eq('project_id', ctx.doc.project_id));
       if (p.length) out.push({ title: 'Project billing to date (posted)', rows: p, columns: [{ k: 'contract_value', label: 'Contract', fmt: 'money' },
-        { k: 'earned_value', label: 'Earned (site progress)', fmt: 'money' }, { k: 'certified_to_date', label: 'Certified', fmt: 'money' }, { k: 'billed_pct', label: 'Billed %', n: true },
+        { k: 'earned_value', label: 'Dispatched (billable)', fmt: 'money' }, { k: 'certified_to_date', label: 'Certified', fmt: 'money' }, { k: 'billed_pct', label: 'Billed %', n: true },
         { k: 'advance_invoiced', label: 'Advance billed', fmt: 'money' }, { k: 'advance_recovered', label: 'Recovered', fmt: 'money' }, { k: 'retention_held', label: 'Retention held', fmt: 'money' },
         { k: 'outstanding', label: 'Outstanding', fmt: 'money' }] });
     }
@@ -129,8 +129,8 @@ export const si = {
   actions: ctx => {
     const s = ctx.doc.status, t = ctx.doc.inv_type, prog = PROGRESS.includes(t);
     return [
-      { label: '⇩ Fill from site progress', cls: 'primary', show: s === 'DRAFT' && prog && canBill(t),
-        confirm: 'Replace the lines with the current BOQ / unit progress?', done: 'Lines filled', run: c => rpc('si_fill', { p_inv: c.doc.id }) },
+      { label: '⇩ Fill from dispatches', cls: 'primary', show: s === 'DRAFT' && prog && canBill(t),
+        confirm: 'Replace the lines with the quantities dispatched to date (unit progress for unit-wise billing)?', done: 'Lines filled', run: c => rpc('si_fill', { p_inv: c.doc.id }) },
       { label: '⇩ Fill', cls: 'primary', show: s === 'DRAFT' && ['ADVANCE', 'RETENTION_RELEASE'].includes(t) && hasRole('finance', 'factory_manager'), done: 'Filled', run: c => rpc('si_fill', { p_inv: c.doc.id }) },
       { label: '📤 Submit progress claim to client', show: s === 'DRAFT' && prog && canBill(t), confirm: 'Mark this progress claim as submitted to the client / consultant?', done: 'Progress claim submitted — Finance records the payment certificate',
         run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'SUBMIT' }) },
@@ -508,13 +508,13 @@ export const Books = {
 
     <div class="card" v-if="t==='billing'">
       <DataTable :columns="[{k:'project_code',label:'Project'},{k:'project_name',label:'Name'},{k:'customer_name',label:'Customer'},{k:'contract_value',label:'Contract',fmt:'money',sum:true},
-        {k:'earned_value',label:'Earned (progress)',fmt:'money',sum:true},{k:'certified_to_date',label:'Certified',fmt:'money',sum:true},{k:'billed_pct',label:'Billed %',n:true},
+        {k:'earned_value',label:'Dispatched (billable)',fmt:'money',sum:true},{k:'certified_to_date',label:'Certified',fmt:'money',sum:true},{k:'billed_pct',label:'Billed %',n:true},
         {k: r => num(r.earned_value) - num(r.certified_to_date), label:'Unbilled work',fmt:'money',sum:true},
         {k:'billable_now',label:'Billable now (not yet in a progress claim)',fmt:'money',sum:true},{k: r => r.has_draft ? 'Progress claim drafted' : '', label:'Progress claim', fmt:'badge'},
         {k:'advance_invoiced',label:'Advance',fmt:'money',sum:true},{k:'advance_recovered',label:'Recovered',fmt:'money',sum:true},{k:'retention_held',label:'Retention held',fmt:'money',sum:true},
         {k:'invoiced_total',label:'Invoiced',fmt:'money',sum:true},{k:'received',label:'Received',fmt:'money',sum:true},{k:'outstanding',label:'Outstanding',fmt:'money',sum:true}]"
         :rows="rows" :loading="loading" clickable @row="r => go('d/si/new/project/' + r.project_id)" filename="project-billing" />
-      <p class="small muted">Click a project to start its next progress claim. Unbilled work = site progress earned value not yet certified; billable now = earned value not yet in a submitted, certified or posted progress claim.</p>
+      <p class="small muted">Click a project to start its next progress claim. Unbilled work = dispatched value (BOQ qty × rate; unit progress for unit-wise projects) not yet certified; billable now = dispatched value not yet in a submitted, certified or posted progress claim.</p>
     </div>
 
     <div class="card" v-if="t==='periods'">

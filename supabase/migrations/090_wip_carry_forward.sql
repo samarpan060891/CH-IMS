@@ -67,7 +67,7 @@ create or replace view v_wip_by_order with (security_invoker = true) as
     from wip_moves m group by m.wo_id, m.item_id;
 
 -- order cost: material issued (net of returns) plus material carried in from other orders, minus material carried out
-create or replace view v_wo_cost as
+create or replace view v_wo_cost with (security_invoker = true) as
  WITH mat AS (
          SELECT x.wo_id, sum(x.material) AS material FROM (
            SELECT stock_ledger.production_order_id AS wo_id, - sum(stock_ledger.value) FILTER (WHERE stock_ledger.txn_type = ANY (ARRAY['ISSUE'::text, 'RETURN'::text])) AS material

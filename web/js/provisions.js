@@ -27,7 +27,7 @@ const ITEMS = [
   { key: 'WARRANTY', title: 'Warranty / defects liability provision', kind: 'trueup', params: 'pct_months',
     what: 'Keeps a provision of a % of contract revenue invoiced within the defects-liability period, less snag rework already spent in that period; older revenue drops out automatically (Dr Warranty provision / Cr Provision – warranty).' },
   { key: 'ACCRUED_REVENUE', title: 'Contract work done, not yet billed', kind: 'trueup', params: 'pct',
-    what: 'Recognises site progress (earned value) not yet certified on a progress claim as revenue, adjusted each month; it falls away as progress claims are certified and posted (Dr Contract work not yet billed / Cr Contract revenue).' },
+    what: 'Recognises dispatched work (billable value) not yet certified on a progress claim as revenue, adjusted each month; it falls away as progress claims are certified and posted (Dr Contract work not yet billed / Cr Contract revenue).' },
 ];
 
 export const Provisions = {

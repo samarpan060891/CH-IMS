@@ -988,6 +988,45 @@ async function loadFgForProject(ctx, woId = null) {
   await fgAvail(ctx);
   ctx.dirty = true;
 }
+// project BOQ figures on dispatch lines: BOQ qty and already dispatched per BOQ line
+async function dspBoqInfo(ctx) {
+  const ids = [...new Set(ctx.grids.lines.map(l => l.boq_line_id).filter(Boolean))];
+  if (!ids.length) return;
+  const b = Object.fromEntries(must(await sb.from('v_boq_progress').select('boq_line_id,qty,delivered_qty').in('boq_line_id', ids)).map(x => [x.boq_line_id, x]));
+  ctx.grids.lines.forEach(l => { const x = b[l.boq_line_id]; if (x) { l._boqQty = num(x.qty); l._sent = num(x.delivered_qty); } });
+}
+// every BOQ line of the project with a product: BOQ qty, already dispatched, stock available at the From location
+// (project-reserved + free); the dispatcher enters what goes on this delivery (0 = not this time)
+async function loadBoqIntoDispatch(ctx) {
+  const p = ctx.doc.project_id;
+  if (!p) throw new Error('Choose the project first');
+  if (!ctx.doc.from_location_id) throw new Error('Choose the From location first');
+  const boq = must(await sb.from('v_boq_progress').select('boq_line_id,line_no,item_id,qty,delivered_qty').eq('project_id', p).not('item_id', 'is', null).order('line_no'));
+  if (!boq.length) throw new Error('This project has no BOQ lines with a product');
+  const have = new Set(ctx.grids.lines.map(l => l.boq_line_id).filter(Boolean));
+  const add = boq.filter(b => !have.has(b.boq_line_id)).map(b => ({ boq_line_id: b.boq_line_id, item_id: b.item_id, qty: 0, _boqQty: num(b.qty), _sent: num(b.delivered_qty) }));
+  ctx.grids.lines.push(...add);
+  await fgAvail(ctx);
+  ctx.dirty = true;
+  toast(`${add.length} BOQ line(s) loaded — enter the quantity for this delivery; lines left at 0 are not saved`, 'ok', 6000);
+}
+// a posted delivery is invoiced: project → progress claim filled from all dispatches to date; sales order → order invoice
+async function invoiceDispatch(c) {
+  const d = c.doc, p = refRow('projects', d.project_id);
+  if (p?.project_type === 'SALES' && p.sales_order_id) {
+    const id = await rpc('so_invoice', { p_so: p.sales_order_id });
+    toast('Invoice drafted from the delivered quantities — check and post it', 'ok'); return go('d/si/' + id);
+  }
+  if (p?.project_type !== 'PROJECT') throw new Error('Only project and sales order deliveries are invoiced');
+  // one draft progress claim at a time per project: add to it, or start a new one
+  let inv = must(await sb.from('sales_invoices').select('id').eq('project_id', p.id).in('inv_type', ['PROGRESS', 'FINAL']).eq('status', 'DRAFT').limit(1))[0]?.id;
+  if (!inv) inv = must(await sb.from('sales_invoices').insert({ inv_type: 'PROGRESS', project_id: p.id, customer_id: p.customer_id, invoice_date: today(), period_to: d.dispatch_date,
+    vat_rate: num(state.company?.default_vat_rate) || 5, status: 'DRAFT' }).select('id').single()).id;
+  else must(await sb.from('sales_invoices').update({ period_to: d.dispatch_date }).eq('id', inv));
+  await rpc('si_fill', { p_inv: inv });
+  toast('Progress claim filled from the quantities dispatched to date — check, submit to the client', 'ok', 7000);
+  go('d/si/' + inv);
+}
 export const dsp = {
   key: 'dsp', title: 'Deliveries to Site', single: 'Delivery Note', table: 'dispatch_notes', noField: 'dispatch_no', dateField: 'dispatch_date',
   statuses: ['DRAFT', 'POSTED', 'DELIVERED', 'CANCELLED'], createRoles: ['stores', 'factory_manager', 'site_supervisor'],
@@ -1007,7 +1046,7 @@ export const dsp = {
     if (parts[0] === 'so' && parts[1]) return loadSoIntoDispatch(ctx, parts[1]);
     await setDspProject(ctx.doc.project_id);
   },
-  async afterLoad(ctx) { await loadWos(); await setDspProject(ctx.doc.project_id); if (ctx.doc.status === 'DRAFT') await fgAvail(ctx); },
+  async afterLoad(ctx) { await loadWos(); await setDspProject(ctx.doc.project_id); await dspBoqInfo(ctx); if (ctx.doc.status === 'DRAFT') await fgAvail(ctx); },
   header: [
     { k: 'project_id', label: 'Project / sales order', type: 'ref', ref: 'projects', required: true, wide: true, request: false,
       filter: r => r.status === 'OPEN' && ['PROJECT', 'SALES', 'INTERNAL'].includes(r.project_type), onChange: (d, v) => setDspProject(v) },
@@ -1029,26 +1068,48 @@ export const dsp = {
   headerNote: () => 'Posting takes the goods out of the chosen store (oldest first) and <b>charges their full cost to the project</b>. Stock reserved for this project is used first, then free / MTS stock. ' +
     'Use it for finished goods from the FG store, bought-out items from the factory store, and to <b>hand over items delivered direct to the site store</b>.',
   grids: [{ key: 'lines', title: 'Goods dispatched / handed over', table: 'dispatch_lines', fk: 'dispatch_id', order: 'line_no',
-    importers: [{ label: '⬇ Load project stock at this location', run: c => loadFgForProject(c) },
+    importers: [{ label: '⬇ Load project BOQ (all lines)', show: c => refRow('projects', c.doc.project_id)?.project_type === 'PROJECT', run: c => loadBoqIntoDispatch(c) },
+      { label: '⬇ Load project stock at this location', run: c => loadFgForProject(c) },
       { label: '⬇ Load sales order lines', show: c => !!dspProject.soLines.length, run: c => loadSoIntoDispatch(c, refRow('projects', c.doc.project_id)?.sales_order_id) }],
     fields: [
       { k: 'so_line_id', label: 'Sales order line', type: 'ref', width: '220px', refOptions: () => dspProject.soLines, show: () => !!dspProject.soLines.length,
         onChange: (r, v, ctx) => { const l = dspProject.soLines.find(x => x.id === v)?.row; if (l) { r.item_id = l.item_id; r.production_order_id = l.production_order_id; } return fgAvail(ctx); } },
       { k: 'item_id', label: 'Item / product', type: 'ref', ref: 'items', required: true, width: '240px',
         filter: r => r.is_active && r.item_classes?.tracking === 'LOT' && !['SRV'].includes(r.item_classes?.code) && !r.item_classes?.is_scrap, onChange: (r, v, ctx) => fgAvail(ctx) }, uomF(),
+      // BOQ lines: contract quantity, already dispatched, balance still to deliver
+      { k: '_boqQty', label: 'BOQ qty', type: 'ro', virtual: true, fmt: v => v === undefined ? '' : qty(v) },
+      { k: '_sent', label: 'Dispatched so far', type: 'ro', virtual: true, fmt: v => v === undefined ? '' : qty(v) },
+      { k: '_bal', label: 'Balance to deliver', type: 'ro', virtual: true, fmt: (v, r) => r._boqQty === undefined ? '' : qty(Math.max(0, r._boqQty - r._sent)) },
       { k: '_avail', label: 'Available', type: 'ro', virtual: true, fmt: v => qty(v ?? ''), show: d => d.status === 'DRAFT' },
       { k: 'production_order_id', label: 'Production order', type: 'ref', width: '150px', refOptions: () => popts.wos },
       { k: 'boq_line_id', label: 'BOQ line', type: 'ref', ref: 'boq_lines', width: '180px', filter: (r, row) => r.project_id === dspProject.id },
       { k: 'unit_id', label: 'Unit', type: 'ref', width: '110px', refOptions: () => dspProject.units },
-      { k: 'qty', label: 'Qty', type: 'number', required: true }, { k: 'packages', label: 'Packages', type: 'number' },
+      { k: 'qty', label: 'Qty to dispatch', type: 'number', required: true }, { k: 'packages', label: 'Packages', type: 'number' },
       { k: 'value', label: 'Value', type: 'ro', fmt: v => money(v), cost: true, show: d => d.status !== 'DRAFT' },
       { k: 'remarks', label: 'Remarks' }] }],
-  validate(ctx) { for (const r of ctx.grids.lines) if (r._avail !== undefined && num(r.qty) > num(r._avail)) throw new Error(`${itemName(r.item_id)}: only ${qty(r._avail)} in the FG store for this project`); },
+  validate(ctx) {
+    const keep = ctx.grids.lines.filter(r => num(r.qty) > 0);
+    if (!keep.length) throw new Error('Enter the quantity to dispatch on at least one line');
+    // stock per item (several BOQ lines can share a product) and the BOQ balance per line
+    const want = {};
+    for (const r of keep) {
+      want[r.item_id] = (want[r.item_id] || 0) + num(r.qty);
+      if (r._boqQty !== undefined && num(r.qty) > r._boqQty - r._sent + 0.0005)
+        throw new Error(`${itemName(r.item_id)}: ${qty(r.qty)} is more than the BOQ balance (${qty(Math.max(0, r._boqQty - r._sent))} of ${qty(r._boqQty)}) — raise a variation order first`);
+    }
+    for (const r of keep) if (r._avail !== undefined && want[r.item_id] > num(r._avail) + 0.0005)
+      throw new Error(`${itemName(r.item_id)}: ${qty(want[r.item_id])} to dispatch but only ${qty(r._avail)} available at this location for this project`);
+    // checks passed: drop the lines left at 0 (BOQ lines not on this delivery)
+    ctx.grids.lines.forEach(r => { if (!(num(r.qty) > 0) && r.id) (ctx.removed.lines ||= []).push(r.id); });
+    ctx.grids.lines = keep;
+  },
   actions: ctx => {
     const s = ctx.doc.status;
     return [
       { label: '✔ Post', cls: 'ok', show: s === 'DRAFT' && hasRole('stores', 'factory_manager', 'site_supervisor'), done: 'Posted — cost charged to the project',
         confirm: 'Post this dispatch? Finished goods leave the FG store and their cost is charged to the project.', run: c => rpc('post_dispatch', { p_id: c.doc.id }) },
+      { label: '🧾 Invoice this dispatch', cls: 'primary', show: ['POSTED', 'DELIVERED'].includes(s) && hasRole('stores', 'finance', 'factory_manager')
+          && ['PROJECT', 'SALES'].includes(refRow('projects', ctx.doc.project_id)?.project_type), reload: false, run: c => invoiceDispatch(c) },
       { label: '✔ Confirm received at site', cls: 'ok', show: s === 'POSTED' && hasRole('stores', 'factory_manager', 'production_incharge', 'site_supervisor'),
         run: async c => { const v = await ask({ title: 'Delivered at site', fields: [{ k: 'n', label: 'Received by (name / site engineer)', required: true }], okText: 'Confirm' });
           if (v) return rpc('dispatch_delivered', { p_id: c.doc.id, p_received_by: v.n }); } },

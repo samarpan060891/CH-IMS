@@ -170,7 +170,7 @@ export const REPORTS = {
     { k: 'sell_rate', label: 'Rate', fmt: 'money', cost: true }, { k: 'contract_value', label: 'Contract value', fmt: 'money', cost: true, sum: true },
     { k: 'wo_qty', label: 'On production', fmt: 'qty' }, { k: 'produced_qty', label: 'Produced', fmt: 'qty' }, { k: 'ordered_qty', label: 'Ordered', fmt: 'qty' }, { k: 'received_qty', label: 'Received / certified', fmt: 'qty' },
     { k: 'delivered_qty', label: 'Delivered', fmt: 'qty' }, { k: 'installed_qty', label: 'Installed', fmt: 'qty' }, { k: 'installed_pct', label: '% installed', n: true },
-    { k: 'delivered_value', label: 'Delivered value', fmt: 'money', cost: true, sum: true }, { k: 'earned_value', label: 'Installed value (billable)', fmt: 'money', cost: true, sum: true },
+    { k: 'earned_value', label: 'Dispatched value (billable)', fmt: 'money', cost: true, sum: true }, { k: 'installed_value', label: 'Installed value', fmt: 'money', cost: true, sum: true },
     { k: 'est_cost', label: 'Est. cost', fmt: 'money', cost: true, sum: true }, { k: 'actual_cost', label: 'Actual cost', fmt: 'money', cost: true, sum: true }] },
   leavebal: { title: 'Leave balances (annual leave, UAE accrual)', src: 'v_leave_balance', order: 'name', roles: ['hr_officer', 'finance', 'factory_manager'], columns: [
     { k: 'emp_code', label: 'Code' }, { k: 'name', label: 'Employee' }, { k: 'department', label: 'Department' }, { k: 'joining_date', label: 'Joined', fmt: 'date' },

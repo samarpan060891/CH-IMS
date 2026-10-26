@@ -165,7 +165,7 @@ create view v_wip_by_order with (security_invoker = true) as
 
 -- order cost: material = what its receipts consumed from the project pool (and excess material it used); orders whose
 -- material was issued before the pool (no WIP moves) keep the issued value
-create or replace view v_wo_cost as
+create or replace view v_wo_cost with (security_invoker = true) as
  WITH mat AS (
          SELECT h0.id AS wo_id,
             CASE WHEN EXISTS (SELECT 1 FROM wip_moves x WHERE x.wo_id = h0.id)

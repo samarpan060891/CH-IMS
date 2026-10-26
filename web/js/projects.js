@@ -248,7 +248,7 @@ export const proj = {
       { k: r => r.category === 'MANUFACTURED' ? `${qty(r.wo_qty)} / ${qty(r.produced_qty)}` : r.category === 'BOUGHT_OUT' ? `${qty(r.ordered_qty)} / ${qty(r.received_qty)}` : `${qty(r.ordered_qty)} / ${qty(r.received_qty)}`,
         label: 'Ordered / produced or received' },
       { k: 'delivered_qty', label: 'Delivered', fmt: 'qty' }, { k: 'installed_qty', label: 'Installed', fmt: 'qty' }, { k: 'installed_pct', label: '% installed', n: true },
-      { k: 'contract_value', label: 'Contract', fmt: 'money', cost: true, sum: true }, { k: 'earned_value', label: 'Earned (installed)', fmt: 'money', cost: true, sum: true },
+      { k: 'contract_value', label: 'Contract', fmt: 'money', cost: true, sum: true }, { k: 'earned_value', label: 'Dispatched (billable)', fmt: 'money', cost: true, sum: true },
       { k: 'est_cost', label: 'Est. cost', fmt: 'money', cost: true, sum: true }, { k: 'actual_cost', label: 'Actual cost', fmt: 'money', cost: true, sum: true }] });
     if (x.units?.length) out.push({ title: 'Unit progress', rows: x.units, columns: [
       { k: 'unit_code', label: 'Unit' }, { k: 'unit_type', label: 'Type' }, { k: 'building', label: 'Building' }, { k: 'status', label: 'Status', fmt: 'badge' },
