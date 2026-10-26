@@ -81,6 +81,8 @@ const MENU = [
   { g: 'Dispatch & invoicing', icon: 'truck-delivery', items: [
     { to: 'r/fg', t: 'Finished goods stock', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'sales'] },
     { to: 'd/dsp', t: 'Deliveries & dispatch notes', roles: ['stores', 'factory_manager', 'production_incharge', 'finance', 'site_supervisor'], badge: 'dsp' },
+    // installed quantities drive the progress claims (read-only for the warehouse)
+    { to: 'd/ins', t: 'Installation logs', roles: ['stores', 'shop_floor', 'production_incharge', 'factory_manager', 'finance', 'site_supervisor'] },
     { sep: 'Invoicing' },
     { to: 'r/sotoinv', t: 'Sales orders to invoice', roles: ['stores', 'finance', 'factory_manager', 'sales'], badge: 'soToInv' },
     { to: 'billable', t: 'Billable now (projects)', roles: ['stores', 'finance', 'factory_manager'], badge: 'projBillable' },
