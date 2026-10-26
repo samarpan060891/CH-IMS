@@ -678,6 +678,14 @@ export const StageBoard = {
   data: () => ({ rows: [], load: [], wc: '', busy: false, loading: true, dlg: null, onlyCurrent: false }),
   computed: {
     shown() { return this.rows.filter(r => (!this.wc || r.work_center_id === this.wc) && (!this.onlyCurrent || r.is_current)); },
+    // stages in view before the work-centre filter (all, or current only)
+    inView() { return this.rows.filter(r => !this.onlyCurrent || r.is_current); },
+    // chips only for work centres with stages to show (plus a machine that is down, and the one picked)
+    chips() {
+      const n = {};
+      this.inView.forEach(r => { n[r.work_center_id] = (n[r.work_center_id] || 0) + 1; });
+      return this.load.filter(w => n[w.work_center_id] || w.is_down || w.work_center_id === this.wc).map(w => ({ ...w, n: n[w.work_center_id] || 0 }));
+    },
     title() { return this.woId && this.rows[0] ? `${this.rows[0].wo_no} — open stages` : ''; },
     grades() { return (state.refs.labour_grades || []).filter(g => g.is_active); },
   },
@@ -817,10 +825,10 @@ export const StageBoard = {
       <button class="btn sm" @click="reload" :disabled="loading">↻ Refresh</button>
     </div>
     <div class="stage-chips">
-      <a href="javascript:void 0" class="chip" :class="{on: !wc}" @click="wc=''">All stages <span class="muted">({{ rows.length }})</span></a>
-      <a v-for="w in load" :key="w.work_center_id" href="javascript:void 0" class="chip" :class="{on: wc===w.work_center_id}" @click="wc = w.work_center_id"
+      <a href="javascript:void 0" class="chip" :class="{on: !wc}" @click="wc=''">All stages <span class="muted">({{ inView.length }})</span></a>
+      <a v-for="w in chips" :key="w.work_center_id" href="javascript:void 0" class="chip" :class="{on: wc===w.work_center_id}" @click="wc = wc === w.work_center_id ? '' : w.work_center_id"
          :title="w.remaining_hours + ' h remaining · ' + (w.load_days || 0) + ' days load' + (w.is_down ? ' · MACHINE DOWN' : '')" :style="w.is_down ? 'border-color:#b91c1c' : ''">
-        <span v-if="w.is_down" style="color:#b91c1c">⛔ </span>{{ w.name }} <span class="muted">({{ rows.filter(r=>r.work_center_id===w.work_center_id).length }}{{ w.load_days ? ' · ' + w.load_days + 'd' : '' }})</span></a>
+        <span v-if="w.is_down" style="color:#b91c1c">⛔ </span>{{ w.name }} <span class="muted">({{ w.n }}{{ w.load_days ? ' · ' + w.load_days + 'd' : '' }})</span></a>
     </div>
 
     <!-- phones / tablets: one card per stage with big buttons -->
