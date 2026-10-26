@@ -1020,6 +1020,8 @@ async function mergeIntoBoq(ctx) {
   }
   return n;
 }
+const dspKind = c => { const p = refRow('projects', c.doc.project_id);
+  return p?.project_type === 'PROJECT' ? 'BOQ' : dspProject.soLines.length ? 'SO' : 'STOCK'; };
 // project BOQ figures on dispatch lines: BOQ qty and already dispatched per BOQ line
 async function dspBoqInfo(ctx) {
   const ids = [...new Set(ctx.grids.lines.map(l => l.boq_line_id).filter(Boolean))];
@@ -1109,9 +1111,10 @@ export const dsp = {
   headerNote: () => 'Posting takes the goods out of the chosen store (oldest first) and <b>charges their full cost to the project</b>. Stock reserved for this project is used first, then free / MTS stock. ' +
     'Use it for finished goods from the FG store, bought-out items from the factory store, and to <b>hand over items delivered direct to the site store</b>.',
   grids: [{ key: 'lines', title: 'Goods dispatched / handed over', table: 'dispatch_lines', fk: 'dispatch_id', order: 'line_no',
-    importers: [{ label: '⬇ Load project BOQ (all lines)', show: c => refRow('projects', c.doc.project_id)?.project_type === 'PROJECT', run: c => loadBoqIntoDispatch(c) },
-      { label: '⬇ Load project stock at this location', run: c => loadFgForProject(c) },
-      { label: '⬇ Load sales order lines', show: c => !!dspProject.soLines.length, run: c => loadSoIntoDispatch(c, refRow('projects', c.doc.project_id)?.sales_order_id) }],
+    // one loader per kind of delivery: contract project → its BOQ; sales order → its lines; anything else → stock at the location
+    importers: [{ label: '⬇ Load project BOQ (all lines)', show: c => dspKind(c) === 'BOQ', run: c => loadBoqIntoDispatch(c) },
+      { label: '⬇ Load sales order lines', show: c => dspKind(c) === 'SO', run: c => loadSoIntoDispatch(c, refRow('projects', c.doc.project_id)?.sales_order_id) },
+      { label: '⬇ Load project stock at this location', show: c => dspKind(c) === 'STOCK', run: c => loadFgForProject(c) }],
     fields: [
       { k: 'so_line_id', label: 'Sales order line', type: 'ref', width: '220px', refOptions: () => dspProject.soLines, show: () => !!dspProject.soLines.length,
         onChange: (r, v, ctx) => { const l = dspProject.soLines.find(x => x.id === v)?.row; if (l) { r.item_id = l.item_id; r.production_order_id = l.production_order_id; } return fgAvail(ctx); } },
