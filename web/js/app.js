@@ -89,6 +89,8 @@ const MENU = [
     { to: 'd/si', t: 'Sales invoices & progress claims', roles: ['stores', 'finance', 'factory_manager'], badge: 'siStores' },
     { to: 'r/boqprog', t: 'BOQ progress & billing', roles: ['stores', 'finance', 'factory_manager', 'production_incharge'] },
     { to: 'r/unitprog', t: 'Unit progress & billing', roles: ['stores', 'finance', 'factory_manager', 'production_incharge'] },
+    // approved variations change the BOQ quantities / rates the progress claims bill (read-only for the warehouse)
+    { to: 'd/vo', t: 'Variation orders', roles: ['stores', 'factory_manager', 'production_incharge', 'finance'] },
     // open snags hold back handover / final progress claims and may need replacement items dispatched
     rep('snags'),
   ] },
