@@ -759,8 +759,15 @@ export const StageBoard = {
       const byMachine = v.machine && v._mLeft > 0 && num(v.mh) > 0;
       if (!byMachine && !(v._left > 0)) return;
       const f = Math.min(1, byMachine ? num(v.mh) / v._mLeft : this.manHours() / v._left), part = open => Math.min(open, Math.floor(open * f + 1e-9));
-      if (v.run) v.run.members.forEach(m => { v.run.qty[m.op] = v.f ? m.qty : part(num(m.qty)); });
-      else v.q = part(Math.max(0, num(v.r.qty) - num(v.r.qty_done)));
+      if (v.run) {
+        // a run: whole units for the run as a whole, shared over its orders by what each has open (largest remainder)
+        const ms = v.run.members, total = Math.floor(ms.reduce((s, m) => s + num(m.qty), 0) * f + 1e-9);
+        const share = ms.map(m => ({ m, x: v.f ? num(m.qty) : num(m.qty) * f }));
+        share.forEach(s => { s.q = Math.min(num(s.m.qty), Math.floor(s.x + 1e-9)); });
+        let rest = v.f ? 0 : total - share.reduce((s, x) => s + x.q, 0);
+        [...share].sort((a, b) => (b.x - b.q) - (a.x - a.q)).forEach(s => { if (rest > 0 && s.q < num(s.m.qty)) { s.q++; rest--; } });
+        share.forEach(s => { v.run.qty[s.m.op] = s.q; });
+      } else v.q = part(Math.max(0, num(v.r.qty) - num(v.r.qty_done)));
     },
     async startRun(r) { this.busy = true; await run(() => rpc('run_group_start', { p_group: r._run.id }), 'Combined run started'); this.busy = false; await this.reload(); },
     addCrew() { const c0 = this.dlg.crew[0] || {}; this.dlg.crew.push({ grade_id: null, workers: 1, hours: c0.hours ?? null, ot: c0.ot || 0 }); },
