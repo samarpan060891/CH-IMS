@@ -263,7 +263,7 @@ export const Dashboard = {
           get('pm', sb.from('v_pm_due').select('*').eq('status', 'ACTIVE'));
           get('pmDone', sb.from('pm_jobs').select('id,due_date,completed_at').eq('status', 'DONE').gte('completed_at', today().slice(0, 8) + '01'));
         }
-        if (this.any('wcLoad', 'prodKpis')) get('wc', sb.from('v_work_center_load').select('*').order('sort_order'));
+        if (this.any('wcLoad', 'prodKpis')) get('wc', sb.from('v_work_center_load').select('*').neq('kind', 'UTILITY').order('sort_order'));
         if (this.any('purKpis', 'poLate'))
           get('pos', sb.from('purchase_orders').select('id,po_no,po_date,delivery_date,status,total_aed,vendors(name),projects(code)').not('status', 'in', '(CLOSED,CANCELLED,RECEIVED,REJECTED)').order('delivery_date', { nullsFirst: false }));
         if (this.has('expiring')) get('expiring', sb.from('v_lot_values').select('item_code,item_name,location_code,lot_no,batch_no,expiry_date,qty_on_hand,uom').not('expiry_date', 'is', null)

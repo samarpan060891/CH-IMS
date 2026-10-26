@@ -684,7 +684,7 @@ export const StageBoard = {
     chips() {
       const n = {};
       this.inView.forEach(r => { n[r.work_center_id] = (n[r.work_center_id] || 0) + 1; });
-      return this.load.filter(w => n[w.work_center_id] || w.is_down || w.work_center_id === this.wc).map(w => ({ ...w, n: n[w.work_center_id] || 0 }));
+      return this.load.filter(w => w.kind !== 'UTILITY' && (n[w.work_center_id] || w.is_down || w.work_center_id === this.wc)).map(w => ({ ...w, n: n[w.work_center_id] || 0 }));
     },
     title() { return this.woId && this.rows[0] ? `${this.rows[0].wo_no} — open stages` : ''; },
     grades() { return (state.refs.labour_grades || []).filter(g => g.is_active); },
