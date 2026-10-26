@@ -341,7 +341,12 @@ export const Books = {
         else if (this.t === 'vat') this.rows = must(await sb.rpc('vat_return', { p_from: f.from, p_to: f.to }));
         else if (this.t === 'aging') this.rows = must(await sb.from('v_ar_aging').select('*').order('balance', { ascending: false }));
         else if (this.t === 'stmt') this.rows = f.customer_id ? must(await sb.rpc('customer_statement', { p_customer: f.customer_id, p_from: f.from, p_to: f.to })) : [];
-        else if (this.t === 'billing') this.rows = must(await sb.from('v_project_billing').select('*').order('project_code'));
+        else if (this.t === 'billing') {
+          // billable now = progress earned but not yet in a submitted / certified / posted claim
+          const [rows, bl] = await Promise.all([sb.from('v_project_billing').select('*').order('project_code'), sb.from('v_project_billable').select('project_id,billable,has_draft')]);
+          const by = Object.fromEntries(must(bl).map(b => [b.project_id, b]));
+          this.rows = must(rows).map(r => ({ ...r, billable_now: by[r.project_id]?.billable ?? null, has_draft: !!by[r.project_id]?.has_draft }));
+        }
         else if (this.t === 'periods') await this.loadPeriods();
       });
       this.loading = false;
@@ -501,10 +506,11 @@ export const Books = {
       <DataTable :columns="[{k:'project_code',label:'Project'},{k:'project_name',label:'Name'},{k:'customer_name',label:'Customer'},{k:'contract_value',label:'Contract',fmt:'money',sum:true},
         {k:'earned_value',label:'Earned (progress)',fmt:'money',sum:true},{k:'certified_to_date',label:'Certified',fmt:'money',sum:true},{k:'billed_pct',label:'Billed %',n:true},
         {k: r => num(r.earned_value) - num(r.certified_to_date), label:'Unbilled work',fmt:'money',sum:true},
+        {k:'billable_now',label:'Billable now (not yet claimed)',fmt:'money',sum:true},{k: r => r.has_draft ? 'Claim drafted' : '', label:'Claim', fmt:'badge'},
         {k:'advance_invoiced',label:'Advance',fmt:'money',sum:true},{k:'advance_recovered',label:'Recovered',fmt:'money',sum:true},{k:'retention_held',label:'Retention held',fmt:'money',sum:true},
         {k:'invoiced_total',label:'Invoiced',fmt:'money',sum:true},{k:'received',label:'Received',fmt:'money',sum:true},{k:'outstanding',label:'Outstanding',fmt:'money',sum:true}]"
         :rows="rows" :loading="loading" clickable @row="r => go('d/si/new/project/' + r.project_id)" filename="project-billing" />
-      <p class="small muted">Click a project to start its next claim. Unbilled work = site progress earned value not yet certified.</p>
+      <p class="small muted">Click a project to start its next claim. Unbilled work = site progress earned value not yet certified; billable now = earned value not yet in a submitted, certified or posted claim.</p>
     </div>
 
     <div class="card" v-if="t==='periods'">

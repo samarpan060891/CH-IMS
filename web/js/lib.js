@@ -274,6 +274,8 @@ export async function refreshPending() {
   if (hasRole('stores')) p.siStores = await count('sales_invoices', q => q.in('inv_type', ['SALES', 'PROGRESS', 'FINAL']).in('status', ['DRAFT', 'CERTIFIED']));
   // customer sales orders delivered but not invoiced (orders with a drafted invoice are counted above)
   if (hasRole('stores', 'finance')) p.soToInv = await count('v_so_to_invoice', q => q.eq('has_draft', false));
+  // projects with site progress not yet claimed (a project with a claim in draft is counted above)
+  if (hasRole('stores', 'finance')) p.projBillable = await count('v_project_billable', q => q.gt('billable', 1).eq('has_draft', false));
   // expenses: FM approves above the limit; Finance posts and reimburses claims
   if (hasRole('factory_manager')) p.exp = await count('expenses', q => q.eq('status', 'PENDING_FM'));
   if (hasRole('finance')) p.exp = (p.exp || 0) + await count('expenses', q => q.or('status.eq.APPROVED,and(status.eq.POSTED,exp_type.eq.CLAIM)'));
