@@ -200,8 +200,10 @@ function siPdf(c) {
   const meta = [['Our TRN', state.company?.trn || ''], ['Project', p ? `${p.code} — ${p.name}` : ''],
     ['Type', label(d.inv_type)], ['Client ref', d.customer_ref || ''], ['Due date', dt(d.due_date)]];
   if (prog) meta.push(['Progress claim no.', d.claim_no || '-'], ['Work up to', dt(d.period_to) || '-'], ['Payment certificate', d.cert_no ? `${d.cert_no} (${dt(d.cert_date)})` : 'pending']);
+  // progress claims print only the lines with a value this period (claimed, or certified once certified)
+  const rows = prog ? c.grids.lines.filter(r => Math.abs(cert ? num(r.cert_amount) : lineAmt(r)) > 0.004) : c.grids.lines;
   const cols = prog
-    ? [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Description', k: 'description', strong: true }, { h: 'UoM', k: 'uom' }, { h: 'Contract', k: r => qty(r.contract_qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' },
+    ? [{ h: 'Sr. No.', k: r => rows.indexOf(r) + 1, w: 15 }, { h: 'Description', k: 'description', strong: true }, { h: 'UoM', k: 'uom' }, { h: 'Contract', k: r => qty(r.contract_qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' },
        { h: 'Previous', k: r => qty(r.prev_qty), align: 'right' }, { h: 'Cumulative', k: r => qty(cert ? (r.cert_cum_qty ?? r.cum_qty) : r.cum_qty), align: 'right' },
        { h: 'This period AED', k: r => money(cert ? r.cert_amount : lineAmt(r)), align: 'right' }]
     : [{ h: 'Sr. No.', k: r => c.grids.lines.indexOf(r) + 1, w: 15 }, { h: 'Description', k: 'description', strong: true }, { h: 'UoM', k: 'uom' }, { h: 'Qty', k: r => qty(r.cum_qty), align: 'right' }, { h: 'Rate', k: r => money(r.rate), align: 'right' },
@@ -213,7 +215,7 @@ function siPdf(c) {
   if (num(d.retention_amount)) totals.push([`Less retention ${num(d.retention_pct)}%`, '-' + money(d.retention_amount)]);
   totals.push(['AMOUNT DUE (AED)', money(d.total_amount)]);
   return makePdf({ title, noLabel: posted ? (d.inv_type === 'CREDIT_NOTE' ? 'Credit Note No.' : 'Invoice No.') : 'Reference', no: d.inv_no, date: d.invoice_date,
-    subtitle: posted ? '' : label(d.status), party: partyOf(cu), meta, columns: cols, rows: c.grids.lines, totals, landscape: prog, words: d.total_amount,
+    subtitle: posted ? '' : label(d.status), party: partyOf(cu), meta, columns: cols, rows, totals, landscape: prog, words: d.total_amount,
     notes: [d.remarks, posted ? 'Please remit to the bank account on file quoting the invoice number.' : ''].filter(Boolean).join('\n'),
     sign: { prepared: d.created_by, checked: d.certified_by || d.submitted_by, approved: posted,
             labels: prog && !posted ? ['Prepared By', 'Submitted By', 'Approved & Authorized Signatory'] : undefined },
