@@ -27,7 +27,7 @@ export const fopts = reactive({ invs: [], custInvs: [] });
 async function loadCustInvoices(customerId) {
   if (!customerId) { fopts.invs = []; return; }
   const r = must(await sb.from('v_sales_invoice_balance').select('*').eq('customer_id', customerId).order('due_date'));
-  fopts.invs = r.filter(x => x.inv_type !== 'CREDIT_NOTE').map(x => ({ id: x.invoice_id, label: `${x.inv_no} ${x.project_code ? '· ' + x.project_code : ''} — bal ${money(x.balance)} due ${dt(x.due_date)}`, row: x }));
+  fopts.invs = r.filter(x => x.inv_type !== 'CREDIT_NOTE').map(x => ({ id: x.invoice_id, label: `${x.inv_no} · ${INV_SHORT[x.inv_type] || label(x.inv_type)}${x.project_code ? ' · ' + x.project_code : ''}`, row: x }));
   fopts.custInvs = must(await sb.from('sales_invoices').select('id,inv_no,total_amount,inv_type').eq('customer_id', customerId).eq('status', 'POSTED').neq('inv_type', 'CREDIT_NOTE').order('invoice_date', { ascending: false }))
     .map(x => ({ id: x.id, label: `${x.inv_no} — ${money(x.total_amount)}`, row: x }));
 }
@@ -167,7 +167,7 @@ export const si = {
         confirm: 'Post this invoice? It goes to receivables, revenue and the VAT return and can then only be corrected by a credit note.', done: 'Invoice posted',
         run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'POST' }) },
       { label: '↩ Back to draft', show: ['SUBMITTED', 'CERTIFIED'].includes(s) && isFin(), confirm: 'Return this progress claim to draft (the certificate is cleared)?', run: c => rpc('si_action', { p_inv: c.doc.id, p_action: 'RETURN' }) },
-      { label: '💰 Receive payment', show: s === 'POSTED' && t !== 'CREDIT_NOTE' && isFin(), reload: false, run: c => go(`d/rcv/new/customer/${c.doc.customer_id}`) },
+      { label: '💰 Receive payment', show: s === 'POSTED' && t !== 'CREDIT_NOTE' && isFin(), reload: false, run: c => go(`d/rcv/new/customer/${c.doc.customer_id}/${c.doc.id}`) },
       { label: '➖ Credit note', show: s === 'POSTED' && t !== 'CREDIT_NOTE' && isFin(), reload: false, run: c => go(`d/si/new/credit/${c.doc.id}`) },
       { label: '🖨 ' + (s === 'POSTED' ? (t === 'CREDIT_NOTE' ? 'Tax credit note' : 'Tax invoice') : prog ? 'Payment application' : 'Proforma'), reload: false, run: c => siPdf(c) },
       { label: 'Cancel', show: (['DRAFT', 'SUBMITTED', 'CERTIFIED'].includes(s) && isFin()) || (['DRAFT', 'SUBMITTED'].includes(s) && hasRole('stores') && STORES_TYPES.includes(t)),
@@ -225,38 +225,89 @@ function siPdf(c) {
 // ======================================================================
 // CUSTOMER RECEIPT
 // ======================================================================
+const invInfo = x => x ? { _due: x.due_date, _total: num(x.total_amount), _recd: num(x.allocated), _bal: num(x.balance) } : { _due: null, _total: undefined, _recd: undefined, _bal: undefined };
+// a draft receipt lists every open invoice of the customer (of the project, when chosen) with its balance; receive in full or in part
+function openInvoices(ctx) {
+  if (ctx.doc.id && ctx.doc.status !== 'DRAFT') return;
+  const pj = ctx.doc.project_id;
+  ctx.grids.alloc = ctx.grids.alloc.filter(a => {
+    if (num(a.amount) > 0 || !fopts.invs.some(o => o.id === a.invoice_id)) return true;
+    if (a.id) (ctx.removed.alloc ||= []).push(a.id);
+    return false;
+  });
+  for (const a of ctx.grids.alloc) { const o = fopts.invs.find(x => x.id === a.invoice_id); if (o) Object.assign(a, invInfo(o.row), { _full: Math.abs(num(a.amount) - num(o.row.balance)) < 0.005 }); }
+  for (const o of fopts.invs) {
+    if (num(o.row.balance) <= 0.005 || (pj && o.row.project_id !== pj) || ctx.grids.alloc.some(a => a.invoice_id === o.id)) continue;
+    ctx.grids.alloc.push({ invoice_id: o.id, amount: 0, _full: false, ...invInfo(o.row) });
+  }
+  const due = id => fopts.invs.find(o => o.id === id)?.row.due_date || '';
+  ctx.grids.alloc.sort((a, b) => String(due(a.invoice_id)).localeCompare(String(due(b.invoice_id))));
+}
+// Amount AED follows what is ticked / typed against the invoices
+function rcvSync(ctx) { ctx.doc.amount = Math.round(ctx.grids.alloc.reduce((s, r) => s + num(r.amount), 0) * 100) / 100; ctx.dirty = true; }
+
 export const rcv = {
   key: 'rcv', title: 'Customer Receipts', single: 'Receipt', table: 'customer_receipts', noField: 'receipt_no', dateField: 'receipt_date',
   statuses: ['DRAFT', 'POSTED', 'CLEARED', 'BOUNCED', 'CANCELLED'], createRoles: ['finance'], refs: ['customers', 'projects'],
   list: { select: '*, customers(name), projects(code)', columns: [{ k: r => r.customers?.name, label: 'Customer' }, { k: r => r.projects?.code, label: 'Project' },
     { k: 'mode', label: 'Mode', fmt: 'label' }, { k: 'reference_no', label: 'Ref / cheque' }, { k: 'cheque_date', label: 'Cheque date', fmt: 'date' }, { k: 'amount', label: 'Amount AED', fmt: 'money', sum: true }] },
   defaults: () => ({ receipt_date: today(), mode: 'BANK_TRANSFER' }),
-  async onNew(ctx, parts) { if (parts[0] === 'customer' && parts[1]) { ctx.doc.customer_id = parts[1]; await loadCustInvoices(parts[1]); } },
-  async afterLoad(ctx) { await loadCustInvoices(ctx.doc.customer_id); },
+  // from an invoice's "Receive payment": that invoice is ticked in full
+  async onNew(ctx, parts) {
+    if (parts[0] !== 'customer' || !parts[1]) return;
+    ctx.doc.customer_id = parts[1];
+    await loadCustInvoices(parts[1]);
+    openInvoices(ctx);
+    const r = parts[2] && ctx.grids.alloc.find(a => a.invoice_id === parts[2]);
+    if (r) { r._full = true; r.amount = r._bal; rcvSync(ctx); }
+  },
+  async afterLoad(ctx) { await loadCustInvoices(ctx.doc.customer_id); openInvoices(ctx); },
   header: [
-    { k: 'customer_id', label: 'Customer', type: 'ref', ref: 'customers', required: true, wide: true, onChange: async (d, v, ctx) => { ctx.grids.alloc = []; await loadCustInvoices(v); } },
+    { k: 'customer_id', label: 'Customer', type: 'ref', ref: 'customers', required: true, wide: true,
+      onChange: async (d, v, ctx) => { ctx.grids.alloc.forEach(a => { if (a.id) (ctx.removed.alloc ||= []).push(a.id); }); ctx.grids.alloc = []; await loadCustInvoices(v); openInvoices(ctx); rcvSync(ctx); } },
     { k: 'receipt_date', label: 'Date received', type: 'date', required: true },
-    { k: 'project_id', label: 'Project (optional)', type: 'ref', ref: 'projects', filter: (r, d) => !d.customer_id || r.customer_id === d.customer_id },
+    { k: 'project_id', label: 'Project (optional)', type: 'ref', ref: 'projects', filter: (r, d) => !d.customer_id || r.customer_id === d.customer_id,
+      onChange: (d, v, ctx) => { openInvoices(ctx); rcvSync(ctx); } },
     { k: 'mode', label: 'Mode', type: 'select', required: true, options: ['BANK_TRANSFER', 'CHEQUE', 'PDC', 'CASH'] },
     { k: 'bank_name', label: 'Drawn on bank', type: 'lookup', list: 'BANK' }, { k: 'reference_no', label: 'Cheque / transfer ref' },
     { k: 'cheque_date', label: 'Cheque date', type: 'date', show: d => ['CHEQUE', 'PDC'].includes(d.mode) },
     { k: 'amount', label: 'Amount AED', type: 'number', required: true },
     { k: 'remarks', label: 'Remarks', type: 'textarea', full: true },
   ],
-  headerNote: () => 'Cheques and PDCs sit in <b>cheques in hand</b> until you mark them <b>cleared</b> (moved to the bank). A returned cheque reverses the receipt and re-opens the invoices. Unallocated money stays on the customer\'s account.',
+  headerNote: () => 'Every open invoice of the customer is listed: tick <b>Full</b> to receive the whole balance, or type a part amount in <b>Receive now</b>. Amount AED follows the ticks — raise it for money kept on account. '
+    + 'Cheques and PDCs sit in <b>cheques in hand</b> until you mark them <b>cleared</b> (moved to the bank). A returned cheque reverses the receipt and re-opens the invoices.',
   grids: [{ key: 'alloc', title: 'Allocation to invoices', table: 'receipt_allocations', fk: 'receipt_id', lineNo: false,
-    importers: [{ label: '⚡ Auto-allocate (oldest due first)', run: ctx => {
-      let left = num(ctx.doc.amount) - ctx.grids.alloc.reduce((s, r) => s + num(r.amount), 0);
-      for (const o of fopts.invs) {
-        if (left <= 0) break;
-        if (ctx.grids.alloc.some(a => a.invoice_id === o.id) || (ctx.doc.project_id && o.row.project_id !== ctx.doc.project_id)) continue;
-        const amt = Math.min(left, num(o.row.balance));
-        if (amt > 0) { ctx.grids.alloc.push({ invoice_id: o.id, amount: Math.round(amt * 100) / 100 }); left -= amt; }
+    importers: [{ label: '⚡ Auto-allocate Amount AED (oldest due first)', show: ctx => ctx.doc.status === 'DRAFT' || !ctx.doc.id, run: ctx => {
+      if (!(num(ctx.doc.amount) > 0)) throw new Error('Enter Amount AED first');
+      let left = num(ctx.doc.amount);
+      for (const r of ctx.grids.alloc) {
+        const amt = Math.max(Math.min(left, r._bal ?? num(r.amount)), 0);
+        r.amount = Math.round(amt * 100) / 100; r._full = r._bal !== undefined && Math.abs(r.amount - r._bal) < 0.005; left -= amt;
       }
       ctx.dirty = true;
     } }],
-    fields: [{ k: 'invoice_id', label: 'Invoice', type: 'ref', refOptions: () => fopts.invs, required: true, width: '380px' }, { k: 'amount', label: 'Amount AED', type: 'number', required: true }] }],
-  validate(ctx) { if (ctx.grids.alloc.reduce((s, r) => s + num(r.amount), 0) > num(ctx.doc.amount) + 0.005) throw new Error('Allocated amount exceeds the receipt'); },
+    fields: [
+      { k: 'invoice_id', label: 'Invoice', type: 'ref', refOptions: () => fopts.invs, required: true, width: '300px', ro: r => r._bal !== undefined,
+        onChange: (r, v, ctx) => { const o = fopts.invs.find(x => x.id === v); Object.assign(r, invInfo(o?.row)); } },
+      { k: '_due', label: 'Due', type: 'ro', virtual: true, fmt: v => dt(v), show: d => d.status === 'DRAFT' || !d.id },
+      { k: '_total', label: 'Invoice total', type: 'ro', virtual: true, fmt: v => v === undefined ? '' : money(v), show: d => d.status === 'DRAFT' || !d.id },
+      { k: '_recd', label: 'Received before', type: 'ro', virtual: true, fmt: v => v === undefined ? '' : money(v), show: d => d.status === 'DRAFT' || !d.id },
+      { k: '_bal', label: 'Balance due', type: 'ro', virtual: true, fmt: v => v === undefined ? '' : money(v), show: d => d.status === 'DRAFT' || !d.id },
+      { k: '_full', label: 'Full', type: 'check', virtual: true, width: '60px', show: d => d.status === 'DRAFT' || !d.id,
+        onChange: (r, v, ctx) => { r.amount = v ? num(r._bal) : 0; rcvSync(ctx); } },
+      { k: 'amount', label: 'Receive now (AED)', type: 'number', required: true,
+        onChange: (r, v, ctx) => { r._full = r._bal !== undefined && Math.abs(num(v) - r._bal) < 0.005; rcvSync(ctx); } }] }],
+  validate(ctx) {
+    const a = ctx.grids.alloc;
+    for (const r of a) {
+      const o = fopts.invs.find(x => x.id === r.invoice_id);
+      if (num(r.amount) < 0) throw new Error(`${o?.row.inv_no || 'Invoice'}: amount cannot be negative`);
+      if (r._bal !== undefined && num(r.amount) > r._bal + 0.005) throw new Error(`${o?.row.inv_no || 'Invoice'}: ${money(r.amount)} is more than the balance due ${money(r._bal)}`);
+    }
+    if (a.reduce((s, r) => s + num(r.amount), 0) > num(ctx.doc.amount) + 0.005) throw new Error('Allocated amount exceeds the receipt');
+    // invoices not received against are not saved
+    ctx.grids.alloc = a.filter(r => { if (num(r.amount) > 0) return true; if (r.id) (ctx.removed.alloc ||= []).push(r.id); return false; });
+  },
   totals: ctx => { const a = ctx.grids.alloc.reduce((s, r) => s + num(r.amount), 0); return [{ l: 'Received', v: num(ctx.doc.amount) }, { l: 'Allocated', v: a }, { l: 'On account', v: num(ctx.doc.amount) - a }]; },
   actions: ctx => {
     const s = ctx.doc.status, chq = ['CHEQUE', 'PDC'].includes(ctx.doc.mode);
