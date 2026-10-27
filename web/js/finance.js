@@ -178,12 +178,18 @@ export const si = {
 
 async function certify(c) {
   const lines = c.grids.lines;
+  // only lines claimed this period are asked; the rest (nothing claimed) are certified as they stand
+  const claimed = lines.filter(l => Math.abs(num(l.cum_qty) - num(l.prev_qty)) > 0.0005);
   const fields = [{ k: 'cert_no', label: 'Certificate no. (client / consultant)', required: true }, { k: 'cert_date', label: 'Certificate date', type: 'date', default: today() }];
-  if (lines.length <= 40) lines.forEach((l, i) => fields.push({ k: 'l' + i, label: `${l.description} — certified cumulative (claimed ${qty(l.cum_qty)}, previous ${qty(l.prev_qty)})`, type: 'number', default: num(l.cum_qty) }));
-  const v = await ask({ title: 'Payment certificate', message: 'Enter the cumulative quantities the client certified. Leave as claimed if certified in full.', fields, okText: 'Record certificate' });
+  if (claimed.length <= 40) claimed.forEach(l => fields.push({ k: 'l' + lines.indexOf(l), label: `${l.description} — certified cumulative (claimed ${qty(l.cum_qty)}, previous ${qty(l.prev_qty)})`, type: 'number', default: num(l.cum_qty) }));
+  const v = await ask({ title: 'Payment certificate', message: `Enter the cumulative quantities the client certified. Leave as claimed if certified in full.` +
+    (claimed.length < lines.length ? ` Showing the ${claimed.length} line(s) claimed this period; the other ${lines.length - claimed.length} have nothing claimed.` : ''), fields, okText: 'Record certificate' });
   if (!v) return false;
   const payload = { cert_no: v.cert_no, cert_date: v.cert_date };
-  if (lines.length <= 40) payload.lines = lines.map((l, i) => ({ id: l.id, cert_cum_qty: v['l' + i] === null || v['l' + i] === '' ? num(l.cum_qty) : num(v['l' + i]) }));
+  if (claimed.length <= 40) payload.lines = lines.map((l, i) => {
+    const e = v['l' + i];
+    return { id: l.id, cert_cum_qty: e === undefined || e === null || e === '' ? num(l.cum_qty) : num(e) };
+  });
   return rpc('si_action', { p_inv: c.doc.id, p_action: 'CERTIFY', p_data: payload });
 }
 
